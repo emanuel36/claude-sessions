@@ -30,6 +30,8 @@ HEADER = (
 )
 # The limit bars, in the order the panel draws them
 LIMITS = (("five_hour", "5h limit"), ("seven_day", "7d limit"))
+# Where cost today and waiting time start: past the longest limit line, `resets Fri 09:00`
+USAGE_RIGHT = MARGIN + len("5h limit  ") + text.BAR_CELLS + len(" 100%  resets Fri 09:00") + 6
 MESSAGE_SECONDS = 4
 # A resumed session shows up as open once its first hook runs; until then Enter waits
 RESUME_SECONDS = 10
@@ -120,9 +122,7 @@ class PanelApp(App):
         if self.selected not in ids:
             self.selected = ids[0] if ids else None
         self.query_one("#header", Static).update(self.header_line())
-        usage = self.query_one("#usage", Static)
-        usage.display = bool(self.snapshot.limits)
-        usage.update(self.usage_lines(now))
+        self.query_one("#usage", Static).update(self.usage_lines(now))
         search = self.query_one("#search", Static)
         search.display = self.search is not None or bool(self.filter_text)
         search.update(self.search_line())
@@ -148,10 +148,20 @@ class PanelApp(App):
         return line
 
     def usage_lines(self, now):
-        """The limit bars present."""
+        """The limit bars present, with cost today and waiting time on their right."""
         snap = self.snapshot
         lefts = [self.limit_text(snap.limits.get(name), label, now) for name, label in LIMITS]
-        return Text("\n", end="").join(line for line in lefts if line)
+        today = Text("today  ", COLOURS["soft"])
+        today.append(text.money(snap.cost_today))
+        today.append(f"  ({text.money(snap.cost_open)} in open sessions)", COLOURS["soft"])
+        waited = Text("waited for you today  ", COLOURS["soft"])
+        waited.append(text.duration(snap.waited))
+        lines = []
+        for left, right in zip(lefts, (today, waited), strict=True):
+            line = left.copy()
+            line.pad_right(USAGE_RIGHT - line.cell_len)
+            lines.append(line + right)
+        return Text("\n", end="").join(lines)
 
     def limit_text(self, window, label, now):
         """A usage limit's bar and reset time; empty when the window is unknown."""

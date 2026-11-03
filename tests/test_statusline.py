@@ -1,10 +1,11 @@
+import datetime
 import io
 import json
 import os
 
 from claude_sessions import cli
 from claude_sessions.claude import statusline
-from claude_sessions.core import paths, state, store
+from claude_sessions.core import journal, paths, state, store
 
 # The status line input example from the Claude Code docs, trimmed to what usage reads
 FULL = {
@@ -181,6 +182,15 @@ def test_statusline_records_usage_without_touching_status(monkeypatch, capsys):
 def test_statusline_default_line_is_empty_until_cost_is_known(monkeypatch, capsys):
     early = {**STATUS_INPUT, "cost": None}
     assert cs_statusline(monkeypatch, capsys, json.dumps(early).encode()) == (0, "\n")
+
+
+def test_statusline_logs_the_cost_only_when_it_changes(monkeypatch, capsys):
+    store.write({**state.new_record("s1"), "status_since": 7.0})
+    stdin = json.dumps(STATUS_INPUT).encode()
+    cs_statusline(monkeypatch, capsys, stdin)
+    cs_statusline(monkeypatch, capsys, stdin)
+    events = journal.read_day(datetime.date.today())
+    assert [(e["id"], e["cost"]) for e in events if "cost" in e] == [("s1", 1.5)]
 
 
 def test_statusline_without_a_valid_session_still_saves_the_limits(monkeypatch, capsys):

@@ -1,8 +1,9 @@
 import json
 import os
+import time
 
 from claude_sessions.claude import files, statusline
-from claude_sessions.core import paths, state, store
+from claude_sessions.core import journal, paths, state, store
 from claude_sessions.panel.data import loader
 from claude_sessions.term.tmux import Window
 
@@ -86,8 +87,12 @@ def test_a_split_pane_on_this_server_is_open_here_not_elsewhere(monkeypatch):
     live("split", mux={"socket": "/s/claude", "pane": "%5"})
     live("away", mux={"socket": "/s/other", "pane": "%2"})
     with_windows(monkeypatch, [window("@2", "lead", state.IDLE)], {"@2": "2"})
-    snap = loader.PanelData().load(NOW)
+    now = time.mktime((*time.localtime()[:3], 12, 0, 0, 0, 0, -1))
+    for sid, cost in (("lead", 1.0), ("split", 2.0), ("away", 4.0)):
+        journal.append({"t": now - 60, "id": sid, "cost": cost})
+    snap = loader.PanelData().load(now)
     assert [(r.session_id, r.elsewhere) for r in snap.recent] == [("away", True)]
+    assert snap.cost_open == 3.0
 
 
 def test_recent_keeps_at_most_recent_rows(monkeypatch):
@@ -117,3 +122,20 @@ def test_open_rows_carry_usage_and_snapshot_the_limits(monkeypatch):
     assert [r.usage for r in snap.open] == [spent, {}]
     assert snap.limits == {"five_hour": {"pct": 64, "resets_at": NOW + 60}}
     assert loader.PanelData().load(NOW + 60).limits == {}
+
+
+def test_snapshot_sums_cost_and_waiting_of_today(monkeypatch):
+    with_windows(monkeypatch, [window("@2", "a", state.PERMISSION)], {})
+    # The journal keeps only recent days: today at noon
+    now = time.mktime((*time.localtime()[:3], 12, 0, 0, 0, 0, -1))
+    for event in (
+        {"t": now - 86400, "id": "a", "cost": 9.0},
+        {"t": now - 300, "id": "a", "cost": 1.25},
+        {"t": now - 200, "id": "gone", "cost": 2.0},
+        {"t": now - 120, "id": "a", "status": state.PERMISSION},
+        # Its record vanished without an `ended` event: the wait stops at its last event
+        {"t": now - 100, "id": "gone", "status": state.PERMISSION},
+    ):
+        journal.append(event)
+    snap = loader.PanelData().load(now)
+    assert (snap.cost_today, snap.cost_open, snap.waited) == (3.25, 1.25, 120.0)

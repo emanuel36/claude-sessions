@@ -10,7 +10,7 @@ import os
 import subprocess
 import sys
 
-from claude_sessions.core import paths, store
+from claude_sessions.core import journal, paths, store
 
 # The account's usage windows, as the status line input names them
 WINDOWS = ("five_hour", "seven_day")
@@ -142,8 +142,12 @@ def record_usage(data, now):
     with store.locked(session_id):
         record = store.read(session_id)
         if record is not None:
+            before = (record.get("usage") or {}).get("cost")
             record["usage"] = parse(data)
             store.write(record)
+            cost = record["usage"]["cost"]
+            if cost is not None and cost != before:
+                journal.append({"t": now, "id": session_id, "cost": cost})
 
 
 def print_statusline(raw, data):

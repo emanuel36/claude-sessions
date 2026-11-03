@@ -4,8 +4,9 @@ import contextlib
 import fcntl
 import json
 import os
+import time
 
-from claude_sessions.core import paths, state
+from claude_sessions.core import journal, paths, state
 
 STALE_LOCK_SECONDS = 60
 
@@ -43,14 +44,29 @@ def read(session_id):
 
 
 def write(record):
-    """Writes a record atomically, so readers never see a partial file."""
+    """Writes a record atomically, so readers never see a partial file.
+
+    A change of status, or a new session, also goes to the journal. Callers hold the lock, so
+    the record on disk is the one this write replaces.
+    """
+    before = read(record["id"])
     paths.write_json(_path(record["id"]), record)
+    if before is None or before.get("status") != record["status"]:
+        t = state.since(record) or time.time()
+        journal.append({"t": t, "id": record["id"], "status": record["status"]})
 
 
 def remove(session_id, keep_lock=False):
-    """Deletes a session's record and, unless a hook may still hold it, its lock."""
-    with contextlib.suppress(FileNotFoundError):
+    """Deletes a session's record and, unless a hook may still hold it, its lock.
+
+    Removing a record ends the session in the journal, so a wait it was in stops counting.
+    """
+    try:
         os.unlink(_path(session_id))
+    except FileNotFoundError:
+        pass
+    else:
+        journal.append({"t": time.time(), "id": session_id, "status": journal.ENDED})
     if not keep_lock:
         with contextlib.suppress(FileNotFoundError):
             os.unlink(_path(session_id) + ".lock")

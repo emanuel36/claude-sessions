@@ -290,6 +290,53 @@ def test_limit_bars_show_only_the_windows_present():
     run(go())
 
 
+def test_usage_block_shows_cost_today_and_waiting_beside_the_limits():
+    now = time.time()
+
+    async def go():
+        data = StubData(OPEN)
+        data.snapshot.cost_today, data.snapshot.cost_open = 11.4, 8.67
+        data.snapshot.waited = 47 * 60 + 5
+        data.snapshot.limits = {
+            "five_hour": {"pct": 64, "resets_at": now + 6720 + 30},
+            "seven_day": {"pct": 31, "resets_at": now + 3 * 86400},
+        }
+        app = panel_app.PanelApp(data)
+        async with app.run_test(size=(120, 20)) as pilot:
+            await pilot.pause()
+            text = screen_text(app)
+            five = next(line for line in text if "5h limit" in line)
+            seven = next(line for line in text if "7d limit" in line)
+            assert five.index("today") == seven.index("waited") == panel_app.USAGE_RIGHT
+            assert five[five.index("1h52m") :].split() == [
+                "1h52m",
+                "today",
+                "$11.40",
+                "($8.67",
+                "in",
+                "open",
+                "sessions)",
+            ]
+            assert five.rstrip().endswith("today  $11.40  ($8.67 in open sessions)")
+            assert seven.rstrip().endswith("waited for you today  47m")
+
+    run(go())
+
+
+def test_usage_block_without_limits_keeps_the_right_side():
+    async def go():
+        app = panel_app.PanelApp(StubData(OPEN))
+        async with app.run_test(size=(120, 20)) as pilot:
+            await pilot.pause()
+            text = screen_text(app)
+            cost = next(line for line in text if "today  $0.00" in line)
+            waited = next(line for line in text if "waited for you today  0m" in line)
+            assert cost.index("today") == waited.index("waited") == panel_app.USAGE_RIGHT
+            assert cost.split() == ["today", "$0.00", "($0.00", "in", "open", "sessions)"]
+
+    run(go())
+
+
 def test_a_failed_load_keeps_the_last_snapshot(monkeypatch):
     class Failing(StubData):
         def load(self, now):

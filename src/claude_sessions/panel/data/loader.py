@@ -1,10 +1,12 @@
 """What the panel shows: the open sessions, then the recent ones, without any drawing."""
 
+import datetime
 import os
 from collections import Counter
 from dataclasses import dataclass, field
 
 from claude_sessions.claude import files, hook, statusline
+from claude_sessions.core import journal
 from claude_sessions.term import tmux
 
 RECENT = 50
@@ -37,6 +39,11 @@ class Snapshot:
     counts: dict[str, int]
     # The account's usage windows that have not reset, as statusline.load_limits gives them
     limits: dict = field(default_factory=dict)
+    # Spent today, in all sessions and in the open ones, from the journal
+    cost_today: float = 0.0
+    cost_open: float = 0.0
+    # Seconds sessions spent asking for permission or input today
+    waited: float = 0.0
 
 
 class PanelData:
@@ -47,6 +54,7 @@ class PanelData:
         self.recent, self.recent_key = [], None
         # The parsed history is a new list each time the file changes
         self.history = None
+        self.journal = journal.DayReader()
 
     def load(self, now):
         """Returns the panel's contents at a moment.
@@ -89,7 +97,16 @@ class PanelData:
             self.recent = self.recent_rows(history, here, elsewhere)
             self.history, self.recent_key = history, key
         counts = Counter(row.window.status for row in opened)
-        return Snapshot(opened, self.recent, dict(counts), statusline.load_limits(now))
+        events = self.journal.read(datetime.date.fromtimestamp(now))
+        return Snapshot(
+            opened,
+            self.recent,
+            dict(counts),
+            statusline.load_limits(now),
+            cost_today=journal.cost_today(events),
+            cost_open=journal.cost_today(events, ids=here),
+            waited=journal.waited(events, now, here | elsewhere),
+        )
 
     def recent_rows(self, history, here, elsewhere):
         rows = []
