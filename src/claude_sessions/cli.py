@@ -3,6 +3,7 @@
 cs hook                                      read a hook event on stdin, update the session
 cs seen --tmux-pane %3 --tmux-socket PATH    mark the session in that pane as seen
 cs panel                                     show the open and recent sessions (tab 1)
+cs next                                      go to the next session that needs you
 """
 
 import argparse
@@ -13,6 +14,7 @@ import time
 
 from claude_sessions.claude import hook
 from claude_sessions.core import paths
+from claude_sessions.term import tmux
 
 
 def cmd_hook(_args):
@@ -36,6 +38,16 @@ def cmd_panel(_args):
     return 0
 
 
+def cmd_next(_args):
+    windows = tmux.windows_of(hook.live_sessions(time.time()))
+    target = tmux.next_pending(windows, tmux.run("display-message", "-p", "#{window_id}"))
+    if target is None:
+        tmux.run("display-message", "Nothing is waiting for you")
+    else:
+        tmux.select(target)
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="cs", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -47,5 +59,6 @@ def main(argv=None):
     p_seen.add_argument("--tmux-socket", required=True)
     p_seen.set_defaults(func=cmd_seen)
     sub.add_parser("panel").set_defaults(func=cmd_panel)
+    sub.add_parser("next").set_defaults(func=cmd_next)
     args = parser.parse_args(argv)
     return args.func(args)

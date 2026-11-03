@@ -97,6 +97,26 @@ def select(window):
     run("select-pane", "-t", window.pane)
 
 
+def next_pending(windows, current=None):
+    """Returns the pending window after the current one, wrapping around.
+
+    Pending windows are the ones that need the user, then the ones that finished, in the
+    order `windows_of` returns them, so repeated presses walk through all of them.
+
+    Args:
+        windows: The windows from `windows_of`.
+        current: The id of the window on screen, or None.
+    """
+    pending = [w for w in windows if w.status in state.NEEDS_YOU]
+    pending += [w for w in windows if w.status == state.DONE]
+    if not pending:
+        return None
+    ids = [w.window_id for w in pending]
+    if current not in ids:
+        return pending[0]
+    return pending[(ids.index(current) + 1) % len(pending)]
+
+
 def tmux_pane_in_view(where):
     """Tells whether the pane is the active one in a window someone is looking at."""
     fmt = "#{&&:#{&&:#{pane_active},#{window_active}},#{session_attached}}"

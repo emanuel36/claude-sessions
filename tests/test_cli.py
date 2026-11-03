@@ -41,3 +41,17 @@ def test_panel_runs_the_textual_app(monkeypatch):
     ran = []
     monkeypatch.setattr(app, "main", lambda: ran.append(True))
     assert cli.main(["panel"]) == 0 and ran == [True]
+
+
+def test_next_selects_the_pending_window_or_says_nothing_waits(monkeypatch):
+    shown, selected = [], []
+    monkeypatch.setattr(cli.hook, "live_sessions", lambda now: [])
+    monkeypatch.setattr(cli.tmux, "windows_of", lambda records: windows)
+    monkeypatch.setattr(cli.tmux, "run", lambda *args: shown.append(args) or "@1")
+    monkeypatch.setattr(cli.tmux, "select", selected.append)
+    windows = [cli.tmux.Window("@2", {"status": state.INPUT, "mux": {"pane": "%2"}})]
+    assert cli.main(["next"]) == 0
+    assert [w.window_id for w in selected] == ["@2"]
+    windows.clear()
+    assert cli.main(["next"]) == 0
+    assert shown[-1] == ("display-message", "Nothing is waiting for you")

@@ -51,6 +51,36 @@ def test_windows_of_keeps_this_server_and_the_most_urgent_per_window(monkeypatch
     assert [(w.window_id, w.lead["id"]) for w in windows] == [("@1", "a"), ("@2", "c")]
 
 
+def _window(window_id, status):
+    return tmux.Window(window_id, {"status": status})
+
+
+WINDOWS = [
+    _window("@2", state.PERMISSION),
+    _window("@4", state.INPUT),
+    _window("@5", state.DONE),
+    _window("@6", state.WORKING),
+]
+
+
+def test_next_pending_starts_with_the_first_that_needs_you():
+    assert tmux.next_pending(WINDOWS).window_id == "@2"
+    assert tmux.next_pending(WINDOWS, "@6").window_id == "@2"
+
+
+def test_next_pending_walks_through_all_pending_and_wraps():
+    seen = []
+    current = None
+    for _ in range(4):
+        current = tmux.next_pending(WINDOWS, current).window_id
+        seen.append(current)
+    assert seen == ["@2", "@4", "@5", "@2"]
+
+
+def test_next_pending_without_pending():
+    assert tmux.next_pending([_window("@6", state.WORKING)]) is None
+
+
 @pytest.fixture
 def server():
     """A throwaway tmux server with no configuration (no hooks), killed afterwards.
