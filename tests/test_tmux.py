@@ -19,6 +19,38 @@ def test_detect():
     assert tmux.detect(TMUX) == {"socket": "/tmp/ttmux-1000/claude", "pane": "%3"}
 
 
+def test_detect_finds_the_tab_attached_to_a_background_session(monkeypatch):
+    sid = "685e0c8a-d242-44fd-ab34-55ac744fd5ab"
+    panes = "/s/claude\t%1\t100\n/s/claude\t%2\t200"
+    commands = {"100": ["zsh"], "101": ["/bin/claude", "attach", "685e0c8a"], "200": ["claude"]}
+    monkeypatch.setattr(tmux, "run", lambda *args: panes)
+    monkeypatch.setattr(tmux, "_cmdline", lambda pid: commands.get(pid, []))
+    monkeypatch.setattr(tmux, "_children", lambda pid: ["101"] if pid == "100" else [])
+    bg = {"CLAUDE_CODE_SESSION_KIND": "bg"}
+    assert tmux.detect(bg, sid) == {"socket": "/s/claude", "pane": "%1"}
+    # What a hook sees: the kind is not passed on, the job folder is
+    job = {"CLAUDE_JOB_DIR": "/home/u/.claude/jobs/685e0c8a"}
+    assert tmux.detect(job, sid) == {"socket": "/s/claude", "pane": "%1"}
+    # Not attached anywhere, or not a background session: no pane
+    assert tmux.detect(bg, "ffffffff-0000") == {}
+    assert tmux.detect({}, sid) == {}
+    # The tmux pane a background session left behind does not count
+    assert tmux.detect({**bg, **TMUX}, sid) == {"socket": "/s/claude", "pane": "%1"}
+    # A line tmux did not format as asked is skipped
+    monkeypatch.setattr(tmux, "run", lambda *args: "warning\n" + panes)
+    assert tmux.detect(bg, sid) == {"socket": "/s/claude", "pane": "%1"}
+
+
+def test_attaches_matches_the_session_id_or_its_prefix():
+    sid = "685e0c8a-d242-44fd-ab34-55ac744fd5ab"
+    assert tmux.attaches(["/bin/claude", "attach", "685e0c8a"], sid)
+    assert tmux.attaches(["claude", "attach", sid], sid)
+    assert tmux.attaches(["node", "/lib/claude/cli.js", "attach", "685e0c8a"], sid)
+    assert not tmux.attaches(["claude", "attach", "685e"], sid)
+    assert not tmux.attaches(["claude", "--resume", "685e0c8a"], sid)
+    assert not tmux.attaches([], sid)
+
+
 def test_window_name_is_the_project_folder():
     assert tmux.window_name({"cwd": "/w/vehicle.k265"}) == "vehicle.k265"
     assert tmux.window_name({"cwd": "/w/notes/"}) == "notes"

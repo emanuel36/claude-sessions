@@ -5,21 +5,75 @@ import subprocess
 from dataclasses import dataclass
 
 from claude_sessions.core import state
+from claude_sessions.term.launcher import SOCKET
 
-# A hook makes up to 6 tmux calls; together they must stay under its 10 s timeout
+# A hook makes up to 7 tmux calls; together they must stay under its 10 s timeout
 TIMEOUT = 1
 WINDOW_NAME_LEN = 28
+# What Claude Code calls a session that runs in its daemon (moved to the background)
+BACKGROUND = "bg"
+# `claude attach` takes a session's id or its first 8 characters
+MIN_ID_PREFIX = 8
 
 
-def detect(env):
-    """Returns the tmux pane a process runs in, or {} outside tmux.
+def detect(env, session_id=None):
+    """Returns the tmux pane a session runs in, or {} outside tmux.
+
+    A background session runs in Claude Code's daemon, outside tmux, so its pane is the one
+    that shows it with `claude attach`.
 
     Args:
         env: The process environment.
+        session_id: The session's id, to find the pane of a background session.
     """
-    if not (env.get("TMUX") and env.get("TMUX_PANE")):
-        return {}
-    return {"socket": env["TMUX"].split(",")[0], "pane": env["TMUX_PANE"]}
+    # First: a session moved to the background may still carry the tmux pane it left
+    # Hooks get no session kind, only the job folder the daemon gives a background session
+    if env.get("CLAUDE_JOB_DIR") or env.get("CLAUDE_CODE_SESSION_KIND") == BACKGROUND:
+        return attached_pane(session_id) if session_id else {}
+    if env.get("TMUX") and env.get("TMUX_PANE"):
+        return {"socket": env["TMUX"].split(",")[0], "pane": env["TMUX_PANE"]}
+    return {}
+
+
+def attached_pane(session_id):
+    """Returns the claude-sessions pane that runs `claude attach` on a session, or {}."""
+    out = run("-L", SOCKET, "list-panes", "-a", "-F", "#{socket_path}\t#{pane_id}\t#{pane_pid}")
+    for line in out.splitlines():
+        fields = line.split("\t")
+        if len(fields) != 3:
+            continue
+        socket, pane, pid = fields
+        # The pane runs claude itself, or a shell that started it
+        if any(attaches(_cmdline(p), session_id) for p in (pid, *_children(pid))):
+            return {"socket": socket, "pane": pane}
+    return {}
+
+
+def attaches(argv, session_id):
+    """Tells whether a command line is `claude attach` on the session, by its id or a prefix."""
+    # Not always argv[1]: claude may run through node, or with flags before the subcommand
+    if "attach" not in argv:
+        return False
+    after = argv[argv.index("attach") + 1 :]
+    return any(len(a) >= MIN_ID_PREFIX and session_id.startswith(a) for a in after)
+
+
+def _cmdline(pid):
+    """A process's command line as a list; empty when it is gone."""
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            return f.read().decode(errors="replace").split("\0")[:-1]
+    except OSError:
+        return []
+
+
+def _children(pid):
+    """The ids of a process's direct children."""
+    try:
+        with open(f"/proc/{pid}/task/{pid}/children") as f:
+            return f.read().split()
+    except OSError:
+        return []
 
 
 @dataclass
