@@ -10,7 +10,7 @@ from claude_sessions.term import launcher
 
 
 @pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux is not installed")
-def test_creates_the_session_with_a_shell_in_tab_one_then_attaches(monkeypatch):
+def test_creates_the_session_with_the_panel_in_tab_one_then_attaches(monkeypatch):
     socket = f"cs-test-launcher-{uuid.uuid4().hex}"
     attached = []
     monkeypatch.setattr(launcher, "SOCKET", socket)
@@ -19,12 +19,20 @@ def test_creates_the_session_with_a_shell_in_tab_one_then_attaches(monkeypatch):
     try:
         launcher.main([])
         out = subprocess.run(
-            ["tmux", "-L", socket, "list-windows", "-F", "#{window_index} #{window_name}"],
+            [
+                "tmux",
+                "-L",
+                socket,
+                "list-panes",
+                "-a",
+                "-F",
+                "#{window_index} #{window_name} #{pane_start_command}",
+            ],
             capture_output=True,
             text=True,
             check=True,
         ).stdout
-        assert out.split("\n")[0] == "1 sessions"
+        assert out.split("\n")[0] == f'1 sessions "{launcher.PANEL}"'
         assert attached[0][-3:] == ["attach-session", "-t", "claude"]
         assert attached[0][2] == socket
     finally:

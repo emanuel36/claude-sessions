@@ -11,6 +11,7 @@ import sys
 
 SOCKET = "claude"
 SESSION = "claude"
+PANEL = "while :; do cs panel; sleep 1; done"
 
 
 def ghostty_command(cst):
@@ -53,7 +54,7 @@ def main(argv=None):
 def start_session(tmux):
     """Creates the `claude` tmux session, unless the server already has it."""
     if subprocess.run([*tmux, "has-session", "-t", SESSION], capture_output=True).returncode:
-        # Tab 1 is a plain shell
+        # Tab 1 is the panel, started again by the loop if it exits
         subprocess.run(
             [
                 *tmux,
@@ -65,6 +66,7 @@ def start_session(tmux):
                 "sessions",
                 "-c",
                 os.path.expanduser("~"),
+                PANEL,
             ],
             check=True,
         )

@@ -1,0 +1,29 @@
+/* The terminal's own background and text colour, with no boxes around sections */
+Screen {
+    background: ansi_default;
+    color: ansi_default;
+}
+
+#header {
+    height: 1;
+    margin: 1 0 1 0;
+}
+
+#search {
+    height: 1;
+    margin-bottom: 1;
+}
+
+#body {
+    height: 1fr;
+    scrollbar-size-vertical: 0;
+}
+
+#open {
+    margin-bottom: 1;
+}
+
+#keys {
+    dock: bottom;
+    height: 1;
+}

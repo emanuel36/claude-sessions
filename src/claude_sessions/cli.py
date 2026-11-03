@@ -2,6 +2,7 @@
 
 cs hook                                      read a hook event on stdin, update the session
 cs seen --tmux-pane %3 --tmux-socket PATH    mark the session in that pane as seen
+cs panel                                     show the open and recent sessions (tab 1)
 """
 
 import argparse
@@ -27,6 +28,14 @@ def cmd_seen(args):
     return 0
 
 
+def cmd_panel(_args):
+    # Imported here: the hook runs on every event and must not pay for loading Textual
+    from claude_sessions.panel import app
+
+    app.main()
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="cs", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -37,5 +46,6 @@ def main(argv=None):
     p_seen.add_argument("--tmux-pane", required=True)
     p_seen.add_argument("--tmux-socket", required=True)
     p_seen.set_defaults(func=cmd_seen)
+    sub.add_parser("panel").set_defaults(func=cmd_panel)
     args = parser.parse_args(argv)
     return args.func(args)

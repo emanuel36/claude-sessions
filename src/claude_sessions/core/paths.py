@@ -44,6 +44,11 @@ def state_dir():
     return base
 
 
+def config_dir():
+    """Returns the folder where Claude Code keeps its files."""
+    return os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")
+
+
 def write_text(path, text):
     """Writes a file atomically, so readers never see a partial one."""
     fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".tmp-")

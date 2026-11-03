@@ -1,6 +1,8 @@
 """Where a session runs in tmux, and how to tell tmux about its changes."""
 
+import os
 import subprocess
+from dataclasses import dataclass
 
 from claude_sessions.core import state
 
@@ -20,6 +22,22 @@ def detect(env):
     return {"socket": env["TMUX"].split(",")[0], "pane": env["TMUX_PANE"]}
 
 
+@dataclass
+class Window:
+    """A tmux window running Claude, led by its most urgent session (teammates share it)."""
+
+    window_id: str
+    lead: dict
+
+    @property
+    def status(self):
+        return self.lead["status"]
+
+    @property
+    def pane(self):
+        return self.lead["mux"]["pane"]
+
+
 def run(*args):
     """Runs a tmux command and returns its output, '' if it fails; never raises.
 
@@ -37,6 +55,46 @@ def run(*args):
 def tmux(socket, *args):
     """Runs a tmux command on the given server and returns its output, '' if it fails."""
     return run("-S", socket, *args)
+
+
+def table(*args):
+    """Runs a tmux listing whose format is two tab-separated fields, as a dict."""
+    pairs = (line.split("\t", 1) for line in run(*args).splitlines())
+    return dict(pair for pair in pairs if len(pair) == 2)
+
+
+def server_socket():
+    """Returns the socket of the tmux server this process runs in, '' outside tmux."""
+    return (os.environ.get("TMUX") or "").split(",")[0]
+
+
+def on_server(record, socket):
+    """Tells whether a session runs in a pane of the tmux server at `socket`."""
+    return bool(socket) and (record.get("mux") or {}).get("socket") == socket
+
+
+def windows_of(records):
+    """Groups live session records into the windows of this tmux server, most urgent first."""
+    panes = table("list-panes", "-a", "-F", "#{pane_id}\t#{window_id}")
+    socket = server_socket()
+    windows = {}
+    # Records arrive most urgent first, so the first one in a window leads it
+    for r in records:
+        window_id = panes.get((r.get("mux") or {}).get("pane"))
+        if on_server(r, socket) and window_id and window_id not in windows:
+            windows[window_id] = Window(window_id, r)
+    return sorted(windows.values(), key=lambda w: state.sort_key(w.lead))
+
+
+def window_tabs():
+    """Returns the tab number of each window of this tmux server, by window id."""
+    return table("list-windows", "-a", "-F", "#{window_id}\t#{window_index}")
+
+
+def select(window):
+    """Brings a window, and the pane of its leading session, on screen."""
+    run("select-window", "-t", window.window_id)
+    run("select-pane", "-t", window.pane)
 
 
 def tmux_pane_in_view(where):

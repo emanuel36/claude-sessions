@@ -1,0 +1,105 @@
+"""What the panel shows: the open sessions, then the recent ones, without any drawing."""
+
+import os
+from collections import Counter
+from dataclasses import dataclass
+
+from claude_sessions.claude import files, hook
+from claude_sessions.term import tmux
+
+RECENT = 50
+NEW_SESSION = "New session"
+
+
+@dataclass
+class Row:
+    """A line of the list: an open session (with its window) or a recent one."""
+
+    session_id: str
+    title: str
+    cwd: str
+    window: tmux.Window | None = None
+    tab: str = ""
+    last: float = 0.0
+    # Running on another tmux server, or outside tmux
+    elsewhere: bool = False
+
+
+@dataclass
+class Snapshot:
+    """Everything the panel draws at one moment."""
+
+    open: list[Row]
+    recent: list[Row]
+    # Open sessions per status
+    counts: dict[str, int]
+
+
+class PanelData:
+    """Reads the live sessions and Claude Code's history into snapshots for the panel."""
+
+    def __init__(self):
+        self.titles = files.Titles()
+        self.recent, self.recent_key = [], None
+        # The parsed history is a new list each time the file changes
+        self.history = None
+
+    def load(self, now):
+        """Returns the panel's contents at a moment.
+
+        Args:
+            now: Current time as a Unix timestamp.
+        """
+        history = files.load_history()
+        records = hook.live_sessions(now)
+        tabs = tmux.window_tabs()
+        known = {s.id: s for s in history}
+        opened = []
+        for w in tmux.windows_of(records):
+            r = w.lead
+            entry = known.get(r["id"])
+            title = (
+                self.titles.get(r["id"], r.get("transcript"))
+                or (entry.first_prompt if entry else "")
+                or NEW_SESSION
+            )
+            opened.append(Row(r["id"], title, r.get("cwd", ""), w, tabs.get(w.window_id, "")))
+        opened.sort(key=lambda row: int(row.tab) if row.tab.isdigit() else 0)
+        # A session in a split pane runs here too, though another one leads its window
+        socket = tmux.server_socket()
+        here = {row.session_id for row in opened}
+        here |= {r["id"] for r in records if tmux.on_server(r, socket)}
+        elsewhere = {r["id"] for r in records} - here
+        # The recent list changes only with the history or with what is open
+        key = (frozenset(here), frozenset(elsewhere))
+        if history is not self.history or key != self.recent_key:
+            self.recent = self.recent_rows(history, here, elsewhere)
+            self.history, self.recent_key = history, key
+        counts = Counter(row.window.status for row in opened)
+        return Snapshot(opened, self.recent, dict(counts))
+
+    def recent_rows(self, history, here, elsewhere):
+        rows = []
+        for s in history:
+            if s.id in here:
+                continue
+            path = files.transcript_path(s.id, s.cwd)
+            title = self.titles.get(s.id, path) or s.first_prompt
+            # Only commands were typed (a /resume that was left): nothing to come back to
+            if not title:
+                continue
+            rows.append(Row(s.id, title, s.cwd, last=s.last, elsewhere=s.id in elsewhere))
+            if len(rows) == RECENT:
+                break
+        return rows
+
+
+def filter_rows(rows, query):
+    """Keeps the rows whose title or folder holds every word of the query."""
+    words = query.lower().split()
+
+    def matches(row):
+        text = f"{row.title} {os.path.basename(row.cwd.rstrip('/'))}".lower()
+        return all(word in text for word in words)
+
+    return [r for r in rows if matches(r)]

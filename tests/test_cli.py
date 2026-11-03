@@ -33,3 +33,11 @@ def test_seen_marks_done_session_idle():
     )
     assert cli.main(["seen", "--tmux-pane", "%3", "--tmux-socket", "S"]) == 0
     assert store.read("s1")["status"] == state.IDLE
+
+
+def test_panel_runs_the_textual_app(monkeypatch):
+    from claude_sessions.panel import app
+
+    ran = []
+    monkeypatch.setattr(app, "main", lambda: ran.append(True))
+    assert cli.main(["panel"]) == 0 and ran == [True]

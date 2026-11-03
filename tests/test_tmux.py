@@ -33,6 +33,24 @@ def test_run_returns_empty_when_tmux_fails(monkeypatch):
     assert tmux.run("list-windows") == ""
 
 
+def test_windows_of_keeps_this_server_and_the_most_urgent_per_window(monkeypatch):
+    monkeypatch.setenv("TMUX", "/s/claude,1,0")
+    panes = "%1\t@1\n%2\t@1\n%3\t@2\n%4\t@3"
+    monkeypatch.setattr(tmux, "run", lambda *args: panes)
+
+    def record(session_id, status, pane, socket="/s/claude"):
+        return {"id": session_id, "status": status, "mux": {"socket": socket, "pane": pane}}
+
+    records = [
+        record("a", state.PERMISSION, "%2"),
+        record("b", state.WORKING, "%1"),
+        record("c", state.IDLE, "%3"),
+        record("d", state.PERMISSION, "%4", socket="/s/other"),
+    ]
+    windows = tmux.windows_of(records)
+    assert [(w.window_id, w.lead["id"]) for w in windows] == [("@1", "a"), ("@2", "c")]
+
+
 @pytest.fixture
 def server():
     """A throwaway tmux server with no configuration (no hooks), killed afterwards.
