@@ -57,6 +57,41 @@ def tmux(socket, *args):
     return run("-S", socket, *args)
 
 
+# What the tab bar's right side counts, in order: status, mark and tmux style
+SUMMARY = (
+    (state.PERMISSION, "!", "fg=red bold"),
+    (state.INPUT, "?", "fg=yellow bold"),
+    (state.DONE, "✓", "fg=green"),
+)
+
+
+def summary_text(counts, limits):
+    """Returns the tab bar's right side: tabs waiting or finished, and the 5h quota used.
+
+    Args:
+        counts: Open sessions per status.
+        limits: The usage windows, as `statusline.load_limits` gives them.
+
+    Returns:
+        Text with tmux style codes; empty when there is nothing to say.
+    """
+    tabs = " ".join(
+        f"#[{style}]{mark} {counts[status]}"
+        for status, mark, style in SUMMARY
+        if counts.get(status)
+    )
+    five = limits.get("five_hour")
+    quota = f"5h {round(five['pct'])}%" if five else ""
+    if tabs and quota:
+        return f"{tabs} #[default]· {quota}"
+    return tabs or quota
+
+
+def publish_summary(text):
+    """Sets the text the tab bar shows before the clock."""
+    run("set", "-g", "@cs-summary", text)
+
+
 def table(*args):
     """Runs a tmux listing whose format is two tab-separated fields, as a dict."""
     pairs = (line.split("\t", 1) for line in run(*args).splitlines())

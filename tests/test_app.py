@@ -2,6 +2,7 @@ import asyncio
 import itertools
 import time
 
+import pytest
 from rich.cells import cell_len
 
 from claude_sessions.core import state
@@ -19,6 +20,12 @@ OPEN = [
     loader.Row("b", "Weekly notes", "/w/notes", window("@3", state.WORKING), "3"),
 ]
 RECENT = [loader.Row("c", "Review the api retry", "/w/sync", last=1.0)]
+
+
+@pytest.fixture(autouse=True)
+def no_tab_bar(monkeypatch):
+    """The panel tells tmux what the tab bar shows; these tests have no tmux."""
+    monkeypatch.setattr(panel_app.tmux, "publish_summary", lambda text: None)
 
 
 class StubData:
@@ -404,3 +411,22 @@ def test_a_tick_after_the_app_stopped_does_nothing():
     run(go())
     # A timer that fires during teardown finds no widgets to draw on
     app.tick()
+
+
+def test_the_tab_bar_summary_is_sent_once_while_it_stays_the_same(monkeypatch):
+    sent = []
+    monkeypatch.setattr(panel_app.tmux, "publish_summary", sent.append)
+
+    async def go():
+        data = StubData(OPEN)
+        data.snapshot.counts = {state.PERMISSION: 1}
+        app = panel_app.PanelApp(data)
+        async with app.run_test(size=(80, 20)) as pilot:
+            await pilot.pause()
+            app.reload()
+            app.reload()
+            data.snapshot.counts = {state.PERMISSION: 1, state.DONE: 1}
+            app.reload()
+
+    run(go())
+    assert sent == ["#[fg=red bold]! 1", "#[fg=red bold]! 1 #[fg=green]✓ 1"]

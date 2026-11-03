@@ -47,6 +47,8 @@ class PanelApp(App):
         self.filter_text = ""
         self.message = ("", 0.0)
         self.resumed = {}
+        # The last text sent to the tab bar; None until the first one goes
+        self.summary = None
         # The last failed read that went to the error log; the same one is not logged again
         self.load_error = None
         # The row the list last scrolled to; it scrolls again only when the selection moves
@@ -81,7 +83,15 @@ class PanelApp(App):
             if error != self.load_error:
                 self.load_error = error
                 paths.log_error()
+        self.publish_summary()
         self.redraw(now)
+
+    def publish_summary(self):
+        """Tells tmux what the tab bar shows on its right; only when it changed."""
+        summary = tmux.summary_text(self.snapshot.counts, self.snapshot.limits)
+        if summary != self.summary:
+            self.summary = summary
+            tmux.publish_summary(summary)
 
     def tick(self):
         # A tick that lands while the app shuts down finds its widgets gone

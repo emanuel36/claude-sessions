@@ -204,3 +204,17 @@ def test_throwaway_servers_have_their_own_names_and_leave_no_socket():
     for _, kill in servers:
         kill()
     assert not any(os.path.exists(socket) for socket in sockets)
+
+
+def test_summary_text_counts_the_tabs_that_need_you_and_the_5h_quota():
+    counts = {state.PERMISSION: 1, state.INPUT: 2, state.DONE: 1, state.WORKING: 3}
+    limits = {"five_hour": {"pct": 62.4, "resets_at": 1}}
+    assert tmux.summary_text(counts, limits) == (
+        "#[fg=red bold]! 1 #[fg=yellow bold]? 2 #[fg=green]✓ 1 #[default]· 5h 62%"
+    )
+
+
+def test_summary_text_leaves_out_what_is_unknown():
+    assert tmux.summary_text({state.WORKING: 2}, {}) == ""
+    assert tmux.summary_text({}, {"five_hour": {"pct": 8, "resets_at": 1}}) == "5h 8%"
+    assert tmux.summary_text({state.DONE: 1}, {}) == "#[fg=green]✓ 1"

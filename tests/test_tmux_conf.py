@@ -56,3 +56,9 @@ def test_tab_one_is_the_session_list_mark(run):
 
 def test_alt_g_bound(run):
     assert "tig" in run("list-keys", "-T", "root", "M-g")
+
+
+def test_status_right_shows_the_summary_and_the_clock(run):
+    run("set", "-g", "@cs-summary", "SUMMARY-TEXT")
+    right = run("display", "-p", "#{T:status-right}")
+    assert "SUMMARY-TEXT" in right and re.search(r"\d\d:\d\d", right)
