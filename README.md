@@ -1,8 +1,7 @@
 # claude-sessions
 
 Run several Claude Code sessions in tmux and see at a glance which one needs you. Each tab is
-one session, coloured by its status; tab 1 is a panel with cost, usage limits and a timeline
-of the day.
+one session, coloured by its status; tab 1 is a panel with quota, sessions and spend.
 
 <p align="center">
   <img src="docs/screenshots/panel.svg" width="640"
@@ -12,8 +11,7 @@ of the day.
 - **Status on every tab:** permission, question, finished, working or idle, with how long it
   has waited for you.
 - **One key to what needs you:** Alt+n jumps to the next waiting session.
-- **A panel in tab 1:** cost, time, model and lines per session; 5-hour and 7-day limits; cost
-  today; a timeline of the day; recent sessions to resume.
+- **Counts in the tab bar:** tabs waiting or finished, and the 5-hour quota, before the clock.
 - **Keeps your setup:** `cs install` adds hooks and keeps your own status line; `cs uninstall`
   puts everything back.
 
@@ -27,16 +25,53 @@ of the day.
 | Working | blue `●`, blinking | Running tools or background tasks |
 | Idle | grey | Seen, or interrupted with Esc |
 
+## Keys
+
+Every shortcut is Alt plus one key, from any tab.
+
+| Keys | Does |
+|---|---|
+| Alt+1 | The panel (tab 1) |
+| Alt+2 … Alt+9 | The tab with that number |
+| Alt+0 | Back to the tab you were on before |
+| Alt+← / Alt+→ | Previous / next tab |
+| Alt+n | The next session that needs you |
+| Alt+c | New session: pick a folder, with a preview of its git state |
+| Alt+g | Commit history of the tab's project in a split on the right; again to close |
+| Alt+r | Rename the tab |
+
+## The panel
+
+- **Quota:** your 5-hour and 7-day usage, when each resets, and when the 5-hour limit fills at
+  the current pace.
+- **Sessions:** one row per open session with its state, model, branch, context use, time
+  open, lines changed and cost. Enter goes to its tab.
+- **Spend:** what each project cost over the last 7 days.
+- **Recent:** earlier sessions to resume with Enter; `n` starts a new one and `/` searches.
+
 ## Get started
 
-On Linux with tmux 3.3+ and fzf, one command installs it and registers it with Claude Code:
+On Linux with tmux 3.3 or newer, fzf, uv and Claude Code, the
+[install script](https://github.com/emanuel36/claude-sessions/blob/main/install.sh) sets
+everything up and registers it with Claude Code. Then open it with `cst`. tig is optional, for
+Alt+g.
 
-```sh
-curl -fsSL https://raw.githubusercontent.com/emanuel36/claude-sessions/main/install.sh | sh
-```
+- **What it changes:** a hook on 11 Claude Code events and the status line setting in
+  `settings.json`. Your own hooks and status line keep working, and a backup of your settings
+  is kept beside them.
+- **Ghostty:** `cst --ghostty` opens a window that leaves the Alt keys to tmux.
+- **Update:** run the install script again. A running tmux server keeps its old configuration
+  until you quit it and open `cst` again.
+- **Uninstall:** `cs uninstall` restores your settings, then remove the package with uv.
 
-Then open it with `cst`. Details in the [install guide](docs/install.md); keys and the panel
-in the [usage guide](docs/usage.md).
+## Troubleshooting
+
+| Symptom | Cause |
+|---|---|
+| A tab never changes colour | The session is not in a `cst` tab, or the hooks are missing: run `cs install` and check `hook-errors.log` in the runtime folder |
+| Model, cost or context cells are empty | The status line has not reported yet, or another tool replaced it: run `cs install` again |
+| Quota is missing | Claude Code reports usage limits only to subscribers, after the first response |
+| The Alt+c popup closes at once | fzf is not on the tmux server's `PATH` |
 
 ## How it is organised
 
@@ -44,12 +79,12 @@ in the [usage guide](docs/usage.md).
 claude-sessions/
 ├── src/claude_sessions/
 │   ├── cli.py       the cs command
-│   ├── core/        session status, live records, history of the day
+│   ├── core/        session status, live records, history of costs
 │   ├── claude/      Claude Code side: the hook, the status line, its files, cs install
 │   ├── term/        tmux side: tab colours, the cst launcher, tmux config, new-session picker
 │   └── panel/       tab 1: data/ loads what it shows, view/ draws it, app.py runs it
 ├── install.sh       the one-command install
-├── docs/            install and usage guides, screenshots
+├── docs/            screenshots
 ├── scripts/         screenshots.py, which redraws the screenshots
 └── tests/
 ```
