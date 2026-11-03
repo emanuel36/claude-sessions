@@ -1,12 +1,15 @@
 import io
+import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
 
 from claude_sessions import cli
+from claude_sessions.claude import files
 from claude_sessions.core import paths, state, store
 
 
@@ -120,3 +123,38 @@ def test_new_preview_of_a_repo_shows_branch_changes_and_commits(capsys, tmp_path
 def test_new_preview_of_a_plain_folder_says_so(capsys, tmp_path):
     assert cli.main(["new", "--preview", str(tmp_path)]) == 0
     assert "not a git repository" in capsys.readouterr().out
+
+
+def write_history(*entries):
+    os.makedirs(paths.config_dir(), exist_ok=True)
+    with open(files.history_path(), "w") as f:
+        for session_id, project, seconds_ago, display in entries:
+            stamp = int((time.time() - seconds_ago) * 1000)
+            line = {"sessionId": session_id, "project": project, "timestamp": stamp}
+            f.write(json.dumps({**line, "display": display}) + "\n")
+
+
+def test_new_sessions_lists_new_first_then_the_projects_sessions_newest_first(capsys):
+    write_history(
+        ("old", "/w/api", 3 * 86400, "fix timeout"),
+        ("other", "/w/docs", 60, "write guide"),
+        ("recent", "/w/api", 2 * 3600, "adjust routes"),
+        ("cmd", "/w/api", 30, "/resume"),
+    )
+    assert cli.main(["new", "--sessions", "/w/api"]) == 0
+    assert capsys.readouterr().out.splitlines() == [
+        "+\t+ new session",
+        "recent\t↺ adjust routes  2h ago",
+        "old\t↺ fix timeout  3d ago",
+    ]
+
+
+def test_new_sessions_of_an_unknown_folder_is_empty(capsys):
+    assert cli.main(["new", "--sessions", "/w/none"]) == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_new_preview_shows_the_latest_sessions_of_the_folder(capsys, tmp_path):
+    write_history(("a", str(tmp_path), 7200, "adjust routes"))
+    assert cli.main(["new", "--preview", str(tmp_path)]) == 0
+    assert "adjust routes" in capsys.readouterr().out

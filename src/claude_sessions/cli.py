@@ -62,6 +62,9 @@ def cmd_panel(_args):
 def cmd_new(args):
     if args.preview:
         print(picker.preview(args.preview))
+    elif args.sessions:
+        for line in picker.session_lines(args.sessions):
+            print(line)
     elif args.projects:
         home = os.path.expanduser("~")
         # The folders of open sessions first, then the recent ones
@@ -118,6 +121,7 @@ def main(argv=None):
     group.add_argument("--pick", action="store_true")
     group.add_argument("--projects", action="store_true")
     group.add_argument("--preview", metavar="PATH")
+    group.add_argument("--sessions", metavar="PATH")
     p_new.set_defaults(func=cmd_new)
     sub.add_parser("next").set_defaults(func=cmd_next)
     p_tig = sub.add_parser("tig")

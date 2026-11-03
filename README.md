@@ -11,7 +11,7 @@ one session, coloured by its status; tab 1 is a panel with quota, sessions and s
 - **Status on every tab:** permission, question, finished, working or idle, with how long it
   has waited for you.
 - **One key to what needs you:** Alt+n jumps to the next waiting session.
-- **Counts in the tab bar:** tabs waiting or finished, and the 5-hour quota, before the clock.
+- **Info in the tab bar:** the current tab's mode, branch, cost and context, then the tabs waiting or finished and the 5-hour quota, before the clock.
 - **Keeps your setup:** `cs install` adds hooks and keeps your own status line; `cs uninstall`
   puts everything back.
 
@@ -36,7 +36,7 @@ Every shortcut is Alt plus one key, from any tab.
 | Alt+0 | Back to the tab you were on before |
 | Alt+← / Alt+→ | Previous / next tab |
 | Alt+n | The next session that needs you |
-| Alt+c | New session: pick a folder, with a preview of its git state |
+| Alt+c | New session: pick a folder (with its git state and sessions beside it), then start a new session or resume an earlier one |
 | Alt+g | Commit history of the tab's project in a split on the right; again to close |
 | Alt+r | Rename the tab |
 
