@@ -6,6 +6,8 @@ cs seen --tmux-pane %3 --tmux-socket PATH    mark the session in that pane as se
 cs panel                                     show the open and recent sessions (tab 1)
 cs new --pick                                pick a folder and start a session there (Alt+c)
 cs next                                      go to the next session that needs you
+cs install                                   register cs in Claude Code's settings.json
+cs uninstall                                 take it out again
 """
 
 import argparse
@@ -14,7 +16,7 @@ import os
 import sys
 import time
 
-from claude_sessions.claude import files, hook, statusline
+from claude_sessions.claude import files, hook, install, statusline
 from claude_sessions.core import paths
 from claude_sessions.term import tmux
 
@@ -81,6 +83,14 @@ def cmd_next(_args):
     return 0
 
 
+def cmd_install(_args):
+    return install.install(os.path.abspath(sys.argv[0]))
+
+
+def cmd_uninstall(_args):
+    return install.uninstall()
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="cs", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -100,5 +110,7 @@ def main(argv=None):
     group.add_argument("--projects", action="store_true")
     p_new.set_defaults(func=cmd_new)
     sub.add_parser("next").set_defaults(func=cmd_next)
+    sub.add_parser("install").set_defaults(func=cmd_install)
+    sub.add_parser("uninstall").set_defaults(func=cmd_uninstall)
     args = parser.parse_args(argv)
     return args.func(args)

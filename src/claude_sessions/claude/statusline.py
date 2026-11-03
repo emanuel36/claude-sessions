@@ -120,7 +120,7 @@ def save_limits(limits, now):
 
 
 def saved_statusline_path():
-    """Where the user's own `statusLine` setting is kept, to run it in a chain."""
+    """Where `cs install` keeps the user's own `statusLine` setting, to run it in a chain."""
     return os.path.join(paths.state_home(), "statusline.json")
 
 

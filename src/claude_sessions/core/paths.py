@@ -62,15 +62,24 @@ def config_dir():
     return os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")
 
 
-def write_text(path, text):
+def write_text(path, text, mode=None):
     """Writes a file atomically, so readers never see a partial one.
 
     A failed write leaves no temporary file behind.
+
+    Args:
+        path: The file to write.
+        text: Its new content.
+        mode: The new file's permission bits; by default the old file's, if there is one.
     """
     fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".tmp-")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(text)
+        if mode is None and os.path.exists(path):
+            mode = os.stat(path).st_mode
+        if mode is not None:
+            os.chmod(tmp, stat.S_IMODE(mode))
         os.replace(tmp, path)
     except BaseException:
         with contextlib.suppress(FileNotFoundError):

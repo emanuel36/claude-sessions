@@ -2,7 +2,7 @@ import fcntl
 import json
 import os
 
-from claude_sessions.claude import hook
+from claude_sessions.claude import hook, install
 from claude_sessions.core import paths, state, store
 
 ENV = {"CLAUDE_PID": str(os.getpid())}
@@ -188,3 +188,8 @@ def test_an_interrupt_is_pushed_while_the_lock_is_held(tmp_path, monkeypatch):
     store.write(live_record(status=state.WORKING))
     hook.settle_interrupted("s1", 100)
     assert held == [True]
+
+
+def test_the_tmux_calls_of_a_hook_fit_in_its_timeout():
+    # A prompt: name_window makes 3 tmux calls and notify 3; Stop at most 1 + 3
+    assert 6 * hook.tmux.TIMEOUT < install.HOOK_TIMEOUT
