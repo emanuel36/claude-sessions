@@ -1,7 +1,7 @@
 import json
 import os
 
-from claude_sessions.claude import files
+from claude_sessions.claude import files, statusline
 from claude_sessions.core import paths, state, store
 from claude_sessions.panel.data import loader
 from claude_sessions.term.tmux import Window
@@ -105,3 +105,15 @@ def test_filter_rows_matches_all_words_in_title_or_folder():
     assert [r.session_id for r in loader.filter_rows(rows, "api")] == ["1", "3"]
     assert [r.session_id for r in loader.filter_rows(rows, "API fix")] == ["1"]
     assert [r.session_id for r in loader.filter_rows(rows, "")] == ["1", "2", "3"]
+
+
+def test_open_rows_carry_usage_and_snapshot_the_limits(monkeypatch):
+    spent = {"cost": 4.12, "duration": 6000.0, "model": "Opus", "added": 1, "removed": 2}
+    lead = window("@2", "a", state.IDLE)
+    lead.lead["usage"] = spent
+    with_windows(monkeypatch, [lead, window("@3", "b", state.IDLE)], {})
+    statusline.save_limits({"five_hour": {"pct": 64, "resets_at": NOW + 60}}, NOW)
+    snap = loader.PanelData().load(NOW)
+    assert [r.usage for r in snap.open] == [spent, {}]
+    assert snap.limits == {"five_hour": {"pct": 64, "resets_at": NOW + 60}}
+    assert loader.PanelData().load(NOW + 60).limits == {}

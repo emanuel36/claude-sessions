@@ -2,9 +2,9 @@
 
 import os
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
-from claude_sessions.claude import files, hook
+from claude_sessions.claude import files, hook, statusline
 from claude_sessions.term import tmux
 
 RECENT = 50
@@ -23,6 +23,8 @@ class Row:
     last: float = 0.0
     # Running on another tmux server, or outside tmux
     elsewhere: bool = False
+    # What the session's status line reports (cost, model, lines), once known
+    usage: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -33,6 +35,8 @@ class Snapshot:
     recent: list[Row]
     # Open sessions per status
     counts: dict[str, int]
+    # The account's usage windows that have not reset, as statusline.load_limits gives them
+    limits: dict = field(default_factory=dict)
 
 
 class PanelData:
@@ -63,7 +67,16 @@ class PanelData:
                 or (entry.first_prompt if entry else "")
                 or NEW_SESSION
             )
-            opened.append(Row(r["id"], title, r.get("cwd", ""), w, tabs.get(w.window_id, "")))
+            opened.append(
+                Row(
+                    r["id"],
+                    title,
+                    r.get("cwd", ""),
+                    w,
+                    tabs.get(w.window_id, ""),
+                    usage=r.get("usage") or {},
+                )
+            )
         opened.sort(key=lambda row: int(row.tab) if row.tab.isdigit() else 0)
         # A session in a split pane runs here too, though another one leads its window
         socket = tmux.server_socket()
@@ -76,7 +89,7 @@ class PanelData:
             self.recent = self.recent_rows(history, here, elsewhere)
             self.history, self.recent_key = history, key
         counts = Counter(row.window.status for row in opened)
-        return Snapshot(opened, self.recent, dict(counts))
+        return Snapshot(opened, self.recent, dict(counts), statusline.load_limits(now))
 
     def recent_rows(self, history, here, elsewhere):
         rows = []

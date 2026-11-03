@@ -1,6 +1,7 @@
 """`cs`: the Claude Code hook, and the command tmux runs when you look at a session.
 
 cs hook                                      read a hook event on stdin, update the session
+cs statusline                                record usage, then print the status line
 cs seen --tmux-pane %3 --tmux-socket PATH    mark the session in that pane as seen
 cs panel                                     show the open and recent sessions (tab 1)
 cs new --pick                                pick a folder and start a session there (Alt+c)
@@ -13,7 +14,7 @@ import os
 import sys
 import time
 
-from claude_sessions.claude import files, hook
+from claude_sessions.claude import files, hook, statusline
 from claude_sessions.core import paths
 from claude_sessions.term import tmux
 
@@ -22,6 +23,23 @@ def cmd_hook(_args):
     try:
         hook.handle_event(json.load(sys.stdin.buffer), dict(os.environ), time.time())
     except Exception:  # noqa: BLE001 - a hook must never break the session
+        paths.log_error()
+    return 0
+
+
+def cmd_statusline(_args):
+    # Claude Code cancels this script when the next update comes: record first, print after
+    raw = sys.stdin.buffer.read()
+    data = {}
+    try:
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            statusline.record_usage(data, time.time())
+    except Exception:  # noqa: BLE001 - the status line must print whatever happens
+        paths.log_error()
+    try:
+        statusline.print_statusline(raw, data if isinstance(data, dict) else {})
+    except Exception:  # noqa: BLE001
         paths.log_error()
     return 0
 
@@ -69,6 +87,7 @@ def main(argv=None):
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("hook").set_defaults(func=cmd_hook)
+    sub.add_parser("statusline").set_defaults(func=cmd_statusline)
     p_seen = sub.add_parser("seen")
     p_seen.add_argument("--tmux-pane", required=True)
     p_seen.add_argument("--tmux-socket", required=True)

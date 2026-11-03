@@ -11,7 +11,7 @@ STALE_LOCK_SECONDS = 60
 
 
 def _is_record(name):
-    return name.endswith(".json")
+    return name.endswith(".json") and name != paths.LIMITS_FILE
 
 
 def is_session_id(value):

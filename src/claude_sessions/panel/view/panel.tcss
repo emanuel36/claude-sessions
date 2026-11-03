@@ -27,3 +27,10 @@ Screen {
     dock: bottom;
     height: 1;
 }
+
+#usage {
+    height: auto;
+    margin-bottom: 1;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}

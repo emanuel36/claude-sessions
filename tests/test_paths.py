@@ -7,6 +7,16 @@ import pytest
 from claude_sessions.core import paths
 
 
+def test_a_failed_write_leaves_no_temporary_file(monkeypatch):
+    def fail(src, dst):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(paths.os, "replace", fail)
+    with pytest.raises(OSError):
+        paths.write_json(os.path.join(paths.state_dir(), "limits.json"), {})
+    assert os.listdir(paths.state_dir()) == []
+
+
 @pytest.fixture
 def no_runtime_dir(tmp_path, monkeypatch):
     """No XDG_RUNTIME_DIR: the records go to the temporary folder, here tmp_path."""
@@ -44,6 +54,17 @@ def test_a_folder_the_user_chose_is_taken_as_it_is(tmp_path, monkeypatch):
     chosen.chmod(0o775)
     monkeypatch.setenv("CLAUDE_SESSIONS_DIR", str(chosen))
     assert paths.state_dir() == str(chosen)
+
+
+def test_log_error_starts_over_past_the_size_limit():
+    log = Path(paths.state_dir(), paths.ERROR_LOG)
+    log.write_text("x" * (paths.LOG_BYTES + 1))
+    try:
+        raise ValueError("boom")
+    except ValueError:
+        paths.log_error()
+    text = log.read_text()
+    assert "ValueError: boom" in text and not text.startswith("x")
 
 
 def test_log_error_never_raises(monkeypatch, tmp_path):

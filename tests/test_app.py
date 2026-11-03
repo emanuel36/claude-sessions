@@ -1,8 +1,11 @@
 import asyncio
+import itertools
+import time
 
 from claude_sessions.core import state
 from claude_sessions.panel import app as panel_app
 from claude_sessions.panel.data import loader
+from claude_sessions.panel.view import layout
 from claude_sessions.term.tmux import Window
 
 
@@ -217,6 +220,122 @@ def test_ctrl_c_does_not_quit():
             assert app.is_running
 
     run(go())
+
+
+SPENT = {"cost": 4.12, "duration": 6000.0, "model": "Opus 5.5", "added": 820, "removed": 310}
+
+
+def usage_rows():
+    return [
+        loader.Row(
+            "a", "Restructure the config", "/w/a", window("@2", state.IDLE), "2", usage=SPENT
+        ),
+        loader.Row("b", "No status line yet", "/w/b", window("@3", state.IDLE), "3"),
+    ]
+
+
+def test_open_rows_show_usage_columns_under_their_header():
+    async def go():
+        app = panel_app.PanelApp(StubData(usage_rows()))
+        async with app.run_test(size=(120, 20)) as pilot:
+            await pilot.pause()
+            text = screen_text(app)
+            header = next(line for line in text if "Open" in line)
+            row = next(line for line in text if "Restructure" in line)
+            empty = next(line for line in text if "No status line yet" in line)
+            assert header.split()[1:] == ["cost", "time", "model", "lines"]
+            assert row.index("$4.12") + 5 == header.index("cost") + 4
+            assert row.index("1h40m") + 5 == header.index("time") + 4
+            assert row.index("Opus 5.5") == header.index("model")
+            assert "+820 −310" in row and row.index("tab 2") == empty.index("tab 3")
+            assert empty.split() == ["No", "status", "line", "yet", "tab", "3"]
+
+    run(go())
+
+
+def test_narrow_panel_shrinks_the_title_then_drops_columns_from_the_right():
+    async def go():
+        app = panel_app.PanelApp(StubData(usage_rows()))
+        async with app.run_test(size=(80, 20)) as pilot:
+            await pilot.pause()
+            text = screen_text(app)
+            header = next(line for line in text if "Open" in line)
+            row = next(line for line in text if "Restructure" in line)
+            assert header.split()[1:] == ["cost", "time", "model"]
+            assert "Opus 5.5" in row and "+820" not in row and "tab 2" in row
+            title = row[4 : row.index("$4.12")].rstrip()
+            assert title.endswith("…") and len(title) >= layout.MIN_TITLE
+        narrow = panel_app.PanelApp(StubData(usage_rows()))
+        async with narrow.run_test(size=(40, 20)) as pilot:
+            await pilot.pause()
+            header = next(line for line in screen_text(narrow) if "Open" in line)
+            assert header.split()[1:] == ["cost"]
+
+    run(go())
+
+
+def test_limit_bars_show_only_the_windows_present():
+    now = time.time()
+
+    async def go():
+        data = StubData(OPEN)
+        data.snapshot.limits = {"five_hour": {"pct": 72, "resets_at": now + 6720 + 30}}
+        app = panel_app.PanelApp(data)
+        async with app.run_test(size=(100, 20)) as pilot:
+            await pilot.pause()
+            text = "\n".join(screen_text(app))
+            assert "5h limit  " + "▰" * 14 + "▱" * 6 + "  72%  resets in 1h52m" in text
+            assert "7d limit" not in text
+
+    run(go())
+
+
+def test_a_failed_load_keeps_the_last_snapshot(monkeypatch):
+    class Failing(StubData):
+        def load(self, now):
+            if self.calls:
+                raise OSError("gone")
+            self.calls += 1
+            return self.snapshot
+
+    data = Failing(OPEN)
+    data.calls = 0
+
+    async def go():
+        app = panel_app.PanelApp(data)
+        async with app.run_test(size=(80, 20)) as pilot:
+            await pilot.pause()
+            timers = []
+            monkeypatch.setattr(app, "set_timer", lambda *args: timers.append(args))
+            # No await in between: the running timer chain cannot fire meanwhile
+            app.reload()
+            app.reload()
+            assert timers == []
+            app.tick()
+            assert len(timers) == 1
+            await pilot.pause()
+            assert "Weekly notes" in "\n".join(screen_text(app))
+
+    run(go())
+
+
+def test_a_failed_load_is_logged_once_per_error(monkeypatch):
+    logged = []
+    monkeypatch.setattr(panel_app.paths, "log_error", lambda: logged.append(True))
+    errors = itertools.chain([OSError("gone")] * 2, itertools.repeat(ValueError("torn")))
+
+    class Failing(StubData):
+        def load(self, now):
+            raise next(errors)
+
+    async def go():
+        app = panel_app.PanelApp(Failing(OPEN))
+        async with app.run_test(size=(80, 20)):
+            app.reload()
+            app.reload()
+
+    run(go())
+    assert len(logged) == 2
 
 
 def test_a_tick_after_the_app_stopped_does_nothing():

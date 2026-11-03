@@ -13,11 +13,11 @@ class RowList(Widget):
 
     DEFAULT_CSS = "RowList { height: auto; }"
 
-    def __init__(self, label, folder=False, **kwargs):
+    def __init__(self, label, data=False, **kwargs):
         super().__init__(**kwargs)
         self.label = label
-        # Whether the rows show their project folder (recent sessions)
-        self.folder = folder
+        # Whether the rows have data columns (open sessions) rather than a folder (recent ones)
+        self.data = data
         self.rows = []
         self.selected = None
         self.now = 0.0
@@ -34,7 +34,7 @@ class RowList(Widget):
     def render(self):
         width = self.size.width
         rights = [text.status_cell(row, self.now)[2] for row in self.rows]
-        lay = layout(width, rights, self.folder)
+        lay = layout(width, rights, self.data)
         lines = [label_line(self.label, lay, width)]
         for row in self.rows:
             lines.append(row_line(row, lay, width, self.now, row.session_id == self.selected))

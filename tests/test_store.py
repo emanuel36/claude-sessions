@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 
@@ -40,3 +41,12 @@ def test_locks_left_by_ended_sessions_are_swept():
     assert lock.exists()
     store.load_all(os.path.getmtime(lock) + store.STALE_LOCK_SECONDS + 1)
     assert not lock.exists()
+
+
+def test_load_all_skips_the_limits_file():
+    store.write(live_record("s1"))
+    with open(os.path.join(paths.state_dir(), paths.LIMITS_FILE), "w") as f:
+        json.dump({"five_hour": {"pct": 1, "resets_at": 2}}, f)
+    assert [r["id"] for r in store.load_all(0)] == ["s1"]
+    store.remove_replaced({"id": "s2", "pid": -1, "pid_start": -1})
+    assert sorted(os.listdir(paths.state_dir())) == ["limits.json", "s1.json", "s1.json.lock"]

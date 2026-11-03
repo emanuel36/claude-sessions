@@ -59,3 +59,41 @@ def test_fit_counts_terminal_columns():
     # Wide characters take two columns each
     assert text.fit("日本語です", 5) == "日本…"
     assert text.fit("x", 0) == ""
+
+
+def test_money():
+    assert text.money(4.123) == "$4.12"
+    assert text.money(0) == "$0.00"
+    assert text.money(None) == ""
+
+
+def test_duration_formats():
+    assert text.duration(240) == "4m"
+    assert text.duration(2100) == "35m"
+    assert text.duration(6000) == "1h40m"
+    assert text.duration(3660) == "1h01m"
+    assert text.duration(None) == ""
+
+
+def test_lines():
+    assert text.lines(820, 310) == ("+820", "−310")
+    assert text.lines(0, 0) == ("+0", "−0")
+    assert text.lines(None, None) == ("", "")
+
+
+def test_limit_bar_and_colour():
+    assert text.limit_bar(64) == "▰" * 13 + "▱" * 7
+    assert text.limit_bar(0) == "▱" * 20 and text.limit_bar(120) == "▰" * 20
+    assert [text.limit_colour(p) for p in (69.9, 70, 84.9, 85)] == [
+        "soft",
+        "yellow",
+        "yellow",
+        "red",
+    ]
+
+
+def test_resets_in_under_a_day_else_weekday_and_time():
+    now = time.mktime((2026, 11, 2, 15, 0, 0, 0, 0, -1))
+    assert text.resets(now + 6720, now) == "resets in 1h52m"
+    friday = time.mktime((2026, 11, 6, 9, 0, 0, 0, 0, -1))
+    assert text.resets(friday, now) == "resets Fri 09:00"

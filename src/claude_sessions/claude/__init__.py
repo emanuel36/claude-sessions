@@ -1,1 +1,1 @@
-"""The Claude Code side: its hook events and files."""
+"""The Claude Code side: its hook events, status line and files."""

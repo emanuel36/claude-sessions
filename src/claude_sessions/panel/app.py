@@ -13,7 +13,7 @@ from textual.binding import Binding
 from textual.geometry import Region
 from textual.widgets import Static
 
-from claude_sessions.core import state
+from claude_sessions.core import paths, state
 from claude_sessions.panel.data import loader
 from claude_sessions.panel.view import text
 from claude_sessions.panel.view.layout import BOLD, COLOURS, MARGIN
@@ -28,6 +28,8 @@ HEADER = (
     (state.DONE, "✓ ", "green"),
     (state.IDLE, "", "soft"),
 )
+# The limit bars, in the order the panel draws them
+LIMITS = (("five_hour", "5h limit"), ("seven_day", "7d limit"))
 MESSAGE_SECONDS = 4
 # A resumed session shows up as open once its first hook runs; until then Enter waits
 RESUME_SECONDS = 10
@@ -56,15 +58,18 @@ class PanelApp(App):
         self.filter_text = ""
         self.message = ("", 0.0)
         self.resumed = {}
+        # The last failed read that went to the error log; the same one is not logged again
+        self.load_error = None
         # The row the list last scrolled to; it scrolls again only when the selection moves
         self.scrolled_to = None
 
     def compose(self) -> ComposeResult:
         yield Static(id="header")
+        yield Static(id="usage")
         yield Static(id="search")
         with Body(id="body"):
-            yield RowList("Open", id="open")
-            yield RowList("Recent", folder=True, id="recent")
+            yield RowList("Open", data=True, id="open")
+            yield RowList("Recent", id="recent")
             yield Static(id="empty")
         yield Static(id="keys")
 
@@ -76,15 +81,28 @@ class PanelApp(App):
 
     # data -------------------------------------------------------------------------------------
 
+    def reload(self):
+        """Reads the sessions again and redraws; a failed read leaves the last ones on screen."""
+        now = time.time()
+        try:
+            self.snapshot = self.data.load(now)
+        except Exception as e:  # noqa: BLE001 - a file caught mid-change must not stop the panel
+            # Once a second, a lasting failure would fill the log
+            error = f"{type(e).__name__}: {e}"
+            if error != self.load_error:
+                self.load_error = error
+                paths.log_error()
+        self.redraw(now)
+
     def tick(self):
         # A tick that lands while the app shuts down finds its widgets gone
         if not self.is_running:
             return
+        # The only place that schedules: one timer chain, however often reload runs
         now = time.time()
         # Wake on the next second, when the tab bar blinks too
         self.set_timer(1 - now % 1, self.tick)
-        self.snapshot = self.data.load(now)
-        self.redraw(now)
+        self.reload()
 
     def rows(self):
         """The rows on screen, after the search."""
@@ -102,6 +120,9 @@ class PanelApp(App):
         if self.selected not in ids:
             self.selected = ids[0] if ids else None
         self.query_one("#header", Static).update(self.header_line())
+        usage = self.query_one("#usage", Static)
+        usage.display = bool(self.snapshot.limits)
+        usage.update(self.usage_lines(now))
         search = self.query_one("#search", Static)
         search.display = self.search is not None or bool(self.filter_text)
         search.update(self.search_line())
@@ -124,6 +145,23 @@ class PanelApp(App):
             count = self.snapshot.counts.get(status)
             if count:
                 line.append(f"   {mark}{count} {text.STATUS_WORDS[status]}", COLOURS[colour])
+        return line
+
+    def usage_lines(self, now):
+        """The limit bars present."""
+        snap = self.snapshot
+        lefts = [self.limit_text(snap.limits.get(name), label, now) for name, label in LIMITS]
+        return Text("\n", end="").join(line for line in lefts if line)
+
+    def limit_text(self, window, label, now):
+        """A usage limit's bar and reset time; empty when the window is unknown."""
+        if not window:
+            return Text(end="")
+        pct, colour = window["pct"], COLOURS[text.limit_colour(window["pct"])]
+        line = Text(" " * MARGIN + label + "  ", COLOURS["soft"], end="")
+        line.append(text.limit_bar(pct), colour)
+        line.append(f"{round(pct)}%".rjust(5), colour)
+        line.append("  " + text.resets(window["resets_at"], now), COLOURS["soft"])
         return line
 
     def search_line(self):
