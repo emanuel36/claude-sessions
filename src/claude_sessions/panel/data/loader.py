@@ -44,6 +44,10 @@ class Snapshot:
     cost_open: float = 0.0
     # Seconds sessions spent asking for permission or input today
     waited: float = 0.0
+    # Today's bars: when the first open session started, now, and each open session's title,
+    # id and journal events (the app cuts them into cells to fit its width); None when
+    # there is nothing to draw yet
+    timeline: tuple[float, float, list[tuple[str, str, list[dict]]]] | None = None
 
 
 class PanelData:
@@ -106,7 +110,20 @@ class PanelData:
             cost_today=journal.cost_today(events),
             cost_open=journal.cost_today(events, ids=here),
             waited=journal.waited(events, now, here | elsewhere),
+            timeline=self.timeline(opened, events, now),
         )
+
+    def timeline(self, opened, events, now):
+        """The span and rows of today's bars for the open sessions, or None when empty."""
+        by_id = {row.session_id: [] for row in opened}
+        for e in events:
+            if e.get("id") in by_id:
+                by_id[e["id"]].append(e)
+        times = [e["t"] for session in by_id.values() for e in session]
+        if not times or min(times) >= now:
+            return None
+        rows = [(r.title, r.session_id, by_id[r.session_id]) for r in opened]
+        return min(times), now, rows
 
     def recent_rows(self, history, here, elsewhere):
         rows = []

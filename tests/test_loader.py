@@ -139,3 +139,17 @@ def test_snapshot_sums_cost_and_waiting_of_today(monkeypatch):
         journal.append(event)
     snap = loader.PanelData().load(now)
     assert (snap.cost_today, snap.cost_open, snap.waited) == (3.25, 1.25, 120.0)
+
+
+def test_snapshot_timeline_spans_the_open_sessions_events_of_today(monkeypatch):
+    with_windows(monkeypatch, [window("@2", "a", state.WORKING)], {})
+    now = time.mktime((*time.localtime()[:3], 12, 0, 0, 0, 0, -1))
+    for event in (
+        {"t": now - 3600, "id": "gone", "status": state.WORKING},
+        {"t": now - 600, "id": "a", "status": state.WORKING},
+    ):
+        journal.append(event)
+    start, end, rows = loader.PanelData().load(now).timeline
+    assert (start, end) == (now - 600, now)
+    assert [(sid, [e["t"] for e in events]) for _, sid, events in rows] == [("a", [now - 600])]
+    assert loader.PanelData().load(now - 600).timeline is None

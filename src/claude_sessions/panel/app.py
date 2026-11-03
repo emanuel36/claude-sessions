@@ -17,7 +17,7 @@ from claude_sessions.core import paths, state
 from claude_sessions.panel.data import loader
 from claude_sessions.panel.view import text
 from claude_sessions.panel.view.layout import BOLD, COLOURS, MARGIN
-from claude_sessions.panel.view.widgets import Body, RowList
+from claude_sessions.panel.view.widgets import Body, RowList, Timeline
 from claude_sessions.term import tmux
 
 # The header's counts, in the order the spec draws them
@@ -71,6 +71,7 @@ class PanelApp(App):
         yield Static(id="search")
         with Body(id="body"):
             yield RowList("Open", data=True, id="open")
+            yield Timeline(id="timeline")
             yield RowList("Recent", id="recent")
             yield Static(id="empty")
         yield Static(id="keys")
@@ -127,6 +128,7 @@ class PanelApp(App):
         search.display = self.search is not None or bool(self.filter_text)
         search.update(self.search_line())
         self.query_one("#open", RowList).show(opened, self.selected, now)
+        self.query_one("#timeline", Timeline).show(self.snapshot.timeline)
         self.query_one("#recent", RowList).show(recent, self.selected, now)
         empty = self.query_one("#empty", Static)
         empty.display = not ids

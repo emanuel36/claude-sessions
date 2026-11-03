@@ -34,3 +34,7 @@ Screen {
     text-wrap: nowrap;
     text-overflow: ellipsis;
 }
+
+#timeline {
+    margin-bottom: 1;
+}

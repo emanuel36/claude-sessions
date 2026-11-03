@@ -2,10 +2,12 @@ import asyncio
 import itertools
 import time
 
+from rich.cells import cell_len
+
 from claude_sessions.core import state
 from claude_sessions.panel import app as panel_app
-from claude_sessions.panel.data import loader
-from claude_sessions.panel.view import layout
+from claude_sessions.panel.data import loader, timeline
+from claude_sessions.panel.view import layout, widgets
 from claude_sessions.term.tmux import Window
 
 
@@ -383,6 +385,135 @@ def test_a_failed_load_is_logged_once_per_error(monkeypatch):
 
     run(go())
     assert len(logged) == 2
+
+
+def timeline_snapshot(start, end):
+    events = [
+        {"t": start, "id": "a", "status": state.WORKING},
+        {"t": start + 3600, "id": "a", "status": state.PERMISSION},
+    ]
+    data = StubData(OPEN, RECENT)
+    data.snapshot.timeline = (start, end, [("Fix the API timeout", "a", events)])
+    return data
+
+
+def test_timeline_renders_axis_and_legend():
+    start = time.mktime((2026, 11, 2, 8, 30, 0, 0, 0, -1))
+
+    async def go():
+        app = panel_app.PanelApp(timeline_snapshot(start, start + 4 * 3600))
+        async with app.run_test(size=(100, 24)) as pilot:
+            await pilot.pause()
+            lines = screen_text(app)
+            text = "\n".join(lines)
+            assert "today" in text and "09:00" in text and "10:00" in text
+            legend = next(line for line in lines if "finished, not seen" in line)
+            words = [legend.index(w) for w in ("working", "permission", "question", "idle")]
+            assert words == sorted(words)
+            assert text.index("Open") < text.index("finished, not seen") < text.index("Recent")
+
+    run(go())
+
+
+def bar_of(app, title_start):
+    """The column where the coloured cells of a row start, and how many there are."""
+    strip = next(
+        s
+        for s in app.screen._compositor.render_strips()
+        if title_start in s.text and "tab" not in s.text
+    )
+    col, first, count = 0, None, 0
+    for seg in strip:
+        if seg.style and seg.style.bgcolor and seg.style.bgcolor.number is not None:
+            first = col if first is None else first
+            count += len(seg.text)
+        col += cell_len(seg.text)
+    return first, count
+
+
+def test_timeline_bars_are_coloured_by_status_and_follow_the_width():
+    start = time.mktime((2026, 11, 2, 8, 30, 0, 0, 0, -1))
+    end = start + 2 * 3600
+    data = timeline_snapshot(start, end)
+    # The session began half an hour in, so the first cells have no colour
+    _, _, rows = data.snapshot.timeline
+    rows[0][2][0]["t"] = start + 1800
+
+    async def go():
+        app = panel_app.PanelApp(data)
+        async with app.run_test(size=(60, 24)) as pilot:
+            await pilot.pause()
+            for width in (60, 80):
+                await pilot.resize_terminal(width, 24)
+                await pilot.pause()
+                bar = width - 2 * 2 - 22
+                cut = timeline.timeline({"a": rows[0][2]}, start, end, bar)["a"]
+                assert None in cut and state.PERMISSION in cut
+                first, count = bar_of(app, "Fix the API timeout")
+                assert first == 2 + 22 + cut.index(state.WORKING)
+                assert count == len([c for c in cut if c])
+
+    run(go())
+
+
+def test_timeline_bar_starts_at_the_same_column_for_wide_titles():
+    start = time.mktime((2026, 11, 2, 8, 30, 0, 0, 0, -1))
+    data = timeline_snapshot(start, start + 4 * 3600)
+    _, _, rows = data.snapshot.timeline
+    rows.append(("日本語🙂" * 8, "b", [{"t": start, "id": "b", "status": state.WORKING}]))
+
+    async def go():
+        app = panel_app.PanelApp(data)
+        async with app.run_test(size=(100, 24)) as pilot:
+            await pilot.pause()
+            assert bar_of(app, "日本語")[0] == bar_of(app, "Fix the API timeout")[0] == 2 + 22
+
+    run(go())
+
+
+def test_timeline_legend_fits_in_80_columns():
+    start = time.mktime((2026, 11, 2, 8, 30, 0, 0, 0, -1))
+
+    async def go():
+        app = panel_app.PanelApp(timeline_snapshot(start, start + 4 * 3600))
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+            legend = next(line for line in screen_text(app) if "working" in line and "idle" in line)
+            assert "finished, not seen" in legend and legend.rstrip().endswith("idle")
+
+    run(go())
+
+
+def test_timeline_legend_swatches_are_two_cells_apart_from_their_gaps():
+    start = time.mktime((2026, 11, 2, 8, 30, 0, 0, 0, -1))
+
+    async def go():
+        app = panel_app.PanelApp(timeline_snapshot(start, start + 4 * 3600))
+        async with app.run_test(size=(100, 24)) as pilot:
+            await pilot.pause()
+            strip = next(
+                s for s in app.screen._compositor.render_strips() if "finished, not" in s.text
+            )
+            swatches, run_cells = [], 0
+            for seg in strip:
+                if seg.style and seg.style.bgcolor and not seg.style.bgcolor.is_default:
+                    run_cells += cell_len(seg.text)
+                elif run_cells:
+                    swatches.append(run_cells)
+                    run_cells = 0
+            assert swatches == [2] * len(widgets.LEGEND)
+
+    run(go())
+
+
+def test_timeline_hidden_without_a_span():
+    async def go():
+        app = panel_app.PanelApp(StubData(OPEN, RECENT))
+        async with app.run_test(size=(100, 24)) as pilot:
+            await pilot.pause()
+            assert "finished, not seen" not in "\n".join(screen_text(app))
+
+    run(go())
 
 
 def test_a_tick_after_the_app_stopped_does_nothing():
