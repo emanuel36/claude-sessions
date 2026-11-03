@@ -139,7 +139,7 @@ class PanelApp(App):
         if self.search is not None:
             keys = [("enter", "done"), ("esc", "clear")]
         else:
-            keys = [("enter", "open"), ("/", "search")]
+            keys = [("enter", "open"), ("n", "new session"), ("/", "search")]
         line = Text(" " * MARGIN)
         for i, (key, does) in enumerate(keys):
             line.append(("    " if i else "") + key, COLOURS["light"] + BOLD)
@@ -208,6 +208,8 @@ class PanelApp(App):
             self.move(1)
         elif key == "enter":
             self.open_selected()
+        elif key == "n":
+            tmux.new_session_popup()
         elif key == "slash":
             self.search = ""
         elif key == "escape":

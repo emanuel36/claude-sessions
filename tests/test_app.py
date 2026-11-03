@@ -55,7 +55,7 @@ def test_header_and_sections():
             text = "\n".join(screen_text(app))
             assert "Claude sessions" in text and "! 1 permission" in text and "1 working" in text
             assert "Open" in text and "Recent" in text and "sync" in text
-            assert "enter open    / search" in text
+            assert "enter open    n new session    / search" in text
 
     run(go())
 
@@ -151,6 +151,21 @@ def test_enter_on_gone_folder_or_elsewhere_says_why(monkeypatch):
             assert "This session is already open in another terminal" in text
 
     run(go())
+
+
+def test_n_opens_new_session(monkeypatch):
+    calls = []
+    monkeypatch.setattr(panel_app.tmux, "run", lambda *args: calls.append(args) or "")
+
+    async def go():
+        app = panel_app.PanelApp(StubData(OPEN))
+        async with app.run_test(size=(80, 20)) as pilot:
+            await pilot.press("n")
+            await pilot.pause()
+            assert "n new session" in "\n".join(screen_text(app))
+
+    run(go())
+    assert [c[0] for c in calls] == ["display-popup"]
 
 
 def test_search_filters_and_escape_clears():

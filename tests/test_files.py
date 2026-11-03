@@ -45,6 +45,14 @@ def test_load_history_reads_again_only_when_the_file_changes():
     assert [s.id for s in files.load_history()] == ["b", "a"]
 
 
+def test_recent_projects_newest_first_and_still_there(tmp_path):
+    old, new = tmp_path / "old", tmp_path / "new"
+    old.mkdir()
+    new.mkdir()
+    write_history(entry("a", str(old), 10), entry("b", str(new), 20), entry("c", "/gone", 30))
+    assert files.recent_projects() == [str(new), str(old)]
+
+
 def test_transcript_path_follows_claude_code_folder_names(tmp_path):
     path = files.transcript_path("abc", "/home/me/projects/app")
     assert path == str(tmp_path / "claude" / "projects" / "-home-me-projects-app" / "abc.jsonl")

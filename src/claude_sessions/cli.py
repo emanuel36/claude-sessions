@@ -3,6 +3,7 @@
 cs hook                                      read a hook event on stdin, update the session
 cs seen --tmux-pane %3 --tmux-socket PATH    mark the session in that pane as seen
 cs panel                                     show the open and recent sessions (tab 1)
+cs new --pick                                pick a folder and start a session there (Alt+c)
 cs next                                      go to the next session that needs you
 """
 
@@ -12,7 +13,7 @@ import os
 import sys
 import time
 
-from claude_sessions.claude import hook
+from claude_sessions.claude import files, hook
 from claude_sessions.core import paths
 from claude_sessions.term import tmux
 
@@ -38,6 +39,20 @@ def cmd_panel(_args):
     return 0
 
 
+def cmd_new(args):
+    if args.projects:
+        home = os.path.expanduser("~")
+        for path in files.recent_projects():
+            print(path.replace(home, "~", 1) if path.startswith(home) else path)
+    else:
+        # Imported here: the hook runs on every event and needs none of it
+        import importlib.resources
+
+        script = importlib.resources.files("claude_sessions.term") / "data" / "new_session.sh"
+        os.execvp("bash", ["bash", str(script)])
+    return 0
+
+
 def cmd_next(_args):
     windows = tmux.windows_of(hook.live_sessions(time.time()))
     target = tmux.next_pending(windows, tmux.run("display-message", "-p", "#{window_id}"))
@@ -59,6 +74,12 @@ def main(argv=None):
     p_seen.add_argument("--tmux-socket", required=True)
     p_seen.set_defaults(func=cmd_seen)
     sub.add_parser("panel").set_defaults(func=cmd_panel)
+    p_new = sub.add_parser("new")
+    # Both flags serve the popup: --pick is what it runs, --projects feeds its list
+    group = p_new.add_mutually_exclusive_group(required=True)
+    group.add_argument("--pick", action="store_true")
+    group.add_argument("--projects", action="store_true")
+    p_new.set_defaults(func=cmd_new)
     sub.add_parser("next").set_defaults(func=cmd_next)
     args = parser.parse_args(argv)
     return args.func(args)

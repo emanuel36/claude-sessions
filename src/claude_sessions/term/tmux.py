@@ -97,6 +97,11 @@ def select(window):
     run("select-pane", "-t", window.pane)
 
 
+def new_session_popup():
+    """Opens the popup where the user picks a folder for a new session."""
+    run("display-popup", "-E", "-w", "70%", "-h", "60%", "-T", " New session ", "cs new --pick")
+
+
 def next_pending(windows, current=None):
     """Returns the pending window after the current one, wrapping around.
 

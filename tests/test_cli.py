@@ -4,6 +4,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from claude_sessions import cli
 from claude_sessions.core import paths, state, store
 
@@ -55,3 +57,30 @@ def test_next_selects_the_pending_window_or_says_nothing_waits(monkeypatch):
     windows.clear()
     assert cli.main(["next"]) == 0
     assert shown[-1] == ("display-message", "Nothing is waiting for you")
+
+
+def test_new_projects_prints_tilde_paths(monkeypatch, capsys, tmp_path):
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(
+        cli.files, "recent_projects", lambda: [str(home / "work" / "api"), "/srv/other"]
+    )
+    assert cli.main(["new", "--projects"]) == 0
+    assert capsys.readouterr().out.splitlines() == ["~/work/api", "/srv/other"]
+
+
+def test_new_needs_pick_or_projects(monkeypatch):
+    calls = []
+    monkeypatch.setattr(cli.tmux, "run", lambda *args: calls.append(args) or "")
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main(["new"])
+    assert exit_info.value.code == 2 and calls == []
+
+
+def test_new_pick_runs_the_packaged_script(monkeypatch):
+    execs = []
+    monkeypatch.setattr(cli.os, "execvp", lambda *args: execs.append(args))
+    cli.main(["new", "--pick"])
+    ((file, argv),) = execs
+    assert file == "bash" and argv[0] == "bash" and argv[1].endswith("data/new_session.sh")
+    assert os.path.isfile(argv[1])
