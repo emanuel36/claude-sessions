@@ -2,6 +2,8 @@
 
 import datetime
 import os
+import subprocess
+import time
 from collections import Counter
 from dataclasses import dataclass, field
 
@@ -11,6 +13,54 @@ from claude_sessions.term import tmux
 
 RECENT = 50
 NEW_SESSION = "New session"
+# The usage windows' lengths in seconds, as the status line input names them
+WINDOW_SECONDS = {"five_hour": 5 * 3600, "seven_day": 7 * 86400}
+# The days the spend section adds up, today included
+SPEND_DAYS = 7
+# How long a folder's branch is trusted before git is asked again
+BRANCH_SECONDS = 5
+_branches = {}
+
+
+def branch_of(cwd):
+    """Returns the branch checked out in a folder, or "" if it is not a git repository.
+
+    Args:
+        cwd: The folder; one that is gone gives "".
+    """
+    now = time.monotonic()
+    cached = _branches.get(cwd)
+    if cached and now - cached[0] < BRANCH_SECONDS:
+        return cached[1]
+    try:
+        out = subprocess.run(
+            ["git", "-C", cwd, "branch", "--show-current"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        branch = out.stdout.strip() if out.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError):
+        branch = ""
+    _branches[cwd] = (now, branch)
+    return branch
+
+
+def pace(window, window_seconds, now):
+    """Returns the seconds until a usage window is full at its average rate so far.
+
+    Args:
+        window: `{"pct", "resets_at"}`, as `statusline.load_limits` gives it.
+        window_seconds: The length of the window.
+        now: Current time as a Unix timestamp.
+
+    Returns:
+        None when nothing was used yet or the window is over.
+    """
+    elapsed = now - (window["resets_at"] - window_seconds)
+    if window["resets_at"] <= now or elapsed <= 0 or window["pct"] <= 0:
+        return None
+    return (100 - window["pct"]) * elapsed / window["pct"]
 
 
 @dataclass
@@ -27,6 +77,8 @@ class Row:
     elsewhere: bool = False
     # What the session's status line reports (cost, model, lines), once known
     usage: dict = field(default_factory=dict)
+    # The branch checked out in `cwd`; empty outside a git repository
+    branch: str = ""
 
 
 @dataclass
@@ -39,15 +91,10 @@ class Snapshot:
     counts: dict[str, int]
     # The account's usage windows that have not reset, as statusline.load_limits gives them
     limits: dict = field(default_factory=dict)
-    # Spent today, in all sessions and in the open ones, from the journal
-    cost_today: float = 0.0
-    cost_open: float = 0.0
-    # Seconds sessions spent asking for permission or input today
-    waited: float = 0.0
-    # Today's bars: when the first open session started, now, and each open session's title,
-    # id and journal events (the app cuts them into cells to fit its width); None when
-    # there is nothing to draw yet
-    timeline: tuple[float, float, list[tuple[str, str, list[dict]]]] | None = None
+    # Seconds until each usage window is full at its average rate, as `pace` gives it
+    pace: dict = field(default_factory=dict)
+    # Dollars spent in the last SPEND_DAYS days per project folder, largest first
+    spend: list[tuple[str, float]] = field(default_factory=list)
 
 
 class PanelData:
@@ -58,7 +105,8 @@ class PanelData:
         self.recent, self.recent_key = [], None
         # The parsed history is a new list each time the file changes
         self.history = None
-        self.journal = journal.DayReader()
+        # One reader per day: past days are parsed once, today's only for its new lines
+        self.journals = {}
 
     def load(self, now):
         """Returns the panel's contents at a moment.
@@ -87,6 +135,7 @@ class PanelData:
                     w,
                     tabs.get(w.window_id, ""),
                     usage=r.get("usage") or {},
+                    branch=branch_of(r.get("cwd", "")),
                 )
             )
         opened.sort(key=lambda row: int(row.tab) if row.tab.isdigit() else 0)
@@ -101,29 +150,30 @@ class PanelData:
             self.recent = self.recent_rows(history, here, elsewhere)
             self.history, self.recent_key = history, key
         counts = Counter(row.window.status for row in opened)
-        events = self.journal.read(datetime.date.fromtimestamp(now))
+        limits = statusline.load_limits(now)
         return Snapshot(
             opened,
             self.recent,
             dict(counts),
-            statusline.load_limits(now),
-            cost_today=journal.cost_today(events),
-            cost_open=journal.cost_today(events, ids=here),
-            waited=journal.waited(events, now, here | elsewhere),
-            timeline=self.timeline(opened, events, now),
+            limits,
+            pace={n: pace(w, WINDOW_SECONDS[n], now) for n, w in limits.items()},
+            spend=self.spend(known, now),
         )
 
-    def timeline(self, opened, events, now):
-        """The span and rows of today's bars for the open sessions, or None when empty."""
-        by_id = {row.session_id: [] for row in opened}
-        for e in events:
-            if e.get("id") in by_id:
-                by_id[e["id"]].append(e)
-        times = [e["t"] for session in by_id.values() for e in session]
-        if not times or min(times) >= now:
-            return None
-        rows = [(r.title, r.session_id, by_id[r.session_id]) for r in opened]
-        return min(times), now, rows
+    def spend(self, known, now):
+        """The last days' cost per project folder, from the journal, largest first."""
+        today = datetime.date.fromtimestamp(now)
+        days = [today - datetime.timedelta(days=n) for n in range(SPEND_DAYS - 1, -1, -1)]
+        # One day before the window gives the cost the sessions had already run up
+        days.insert(0, days[0] - datetime.timedelta(days=1))
+        self.journals = {d: self.journals.get(d) or journal.DayReader() for d in days}
+        events = {d: self.journals[d].read(d) for d in days}
+        totals = {}
+        for sid, cost in journal.spend_by_session(events, first_day=days[1]).items():
+            if sid in known and known[sid].cwd and cost > 0:
+                name = os.path.basename(known[sid].cwd.rstrip("/"))
+                totals[name] = totals.get(name, 0.0) + cost
+        return sorted(totals.items(), key=lambda item: -item[1])
 
     def recent_rows(self, history, here, elsewhere):
         rows = []

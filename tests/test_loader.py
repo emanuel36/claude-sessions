@@ -1,5 +1,6 @@
 import json
 import os
+import subprocess
 import time
 
 from claude_sessions.claude import files, statusline
@@ -87,12 +88,8 @@ def test_a_split_pane_on_this_server_is_open_here_not_elsewhere(monkeypatch):
     live("split", mux={"socket": "/s/claude", "pane": "%5"})
     live("away", mux={"socket": "/s/other", "pane": "%2"})
     with_windows(monkeypatch, [window("@2", "lead", state.IDLE)], {"@2": "2"})
-    now = time.mktime((*time.localtime()[:3], 12, 0, 0, 0, 0, -1))
-    for sid, cost in (("lead", 1.0), ("split", 2.0), ("away", 4.0)):
-        journal.append({"t": now - 60, "id": sid, "cost": cost})
-    snap = loader.PanelData().load(now)
+    snap = loader.PanelData().load(NOW)
     assert [(r.session_id, r.elsewhere) for r in snap.recent] == [("away", True)]
-    assert snap.cost_open == 3.0
 
 
 def test_recent_keeps_at_most_recent_rows(monkeypatch):
@@ -124,32 +121,52 @@ def test_open_rows_carry_usage_and_snapshot_the_limits(monkeypatch):
     assert loader.PanelData().load(NOW + 60).limits == {}
 
 
-def test_snapshot_sums_cost_and_waiting_of_today(monkeypatch):
-    with_windows(monkeypatch, [window("@2", "a", state.PERMISSION)], {})
-    # The journal keeps only recent days: today at noon
-    now = time.mktime((*time.localtime()[:3], 12, 0, 0, 0, 0, -1))
+def noon_today():
+    return time.mktime((*time.localtime()[:3], 12, 0, 0, 0, 0, -1))
+
+
+def test_snapshot_spend_groups_by_folder_name_and_skips_unknown_sessions(monkeypatch):
+    with_windows(monkeypatch, [], {})
+    now = noon_today()
+    history(("a", "/w/api", now - 900, "x"), ("b", "/w/docs", now - 800, "y"))
     for event in (
-        {"t": now - 86400, "id": "a", "cost": 9.0},
-        {"t": now - 300, "id": "a", "cost": 1.25},
-        {"t": now - 200, "id": "gone", "cost": 2.0},
-        {"t": now - 120, "id": "a", "status": state.PERMISSION},
-        # Its record vanished without an `ended` event: the wait stops at its last event
-        {"t": now - 100, "id": "gone", "status": state.PERMISSION},
+        {"t": now - 7 * 86400, "id": "a", "cost": 1.0},
+        {"t": now - 300, "id": "a", "cost": 3.5},
+        {"t": now - 200, "id": "b", "cost": 0.75},
+        {"t": now - 100, "id": "unknown", "cost": 9.0},
     ):
         journal.append(event)
     snap = loader.PanelData().load(now)
-    assert (snap.cost_today, snap.cost_open, snap.waited) == (3.25, 1.25, 120.0)
+    assert snap.spend == [("api", 2.5), ("docs", 0.75)]
 
 
-def test_snapshot_timeline_spans_the_open_sessions_events_of_today(monkeypatch):
-    with_windows(monkeypatch, [window("@2", "a", state.WORKING)], {})
-    now = time.mktime((*time.localtime()[:3], 12, 0, 0, 0, 0, -1))
-    for event in (
-        {"t": now - 3600, "id": "gone", "status": state.WORKING},
-        {"t": now - 600, "id": "a", "status": state.WORKING},
-    ):
-        journal.append(event)
-    start, end, rows = loader.PanelData().load(now).timeline
-    assert (start, end) == (now - 600, now)
-    assert [(sid, [e["t"] for e in events]) for _, sid, events in rows] == [("a", [now - 600])]
-    assert loader.PanelData().load(now - 600).timeline is None
+def test_branch_of_a_repo(tmp_path):
+    subprocess.run(["git", "init", "-q", "-b", "trunk", str(tmp_path)], check=True)
+    assert loader.branch_of(str(tmp_path)) == "trunk"
+
+
+def test_branch_of_a_plain_or_missing_folder_is_empty(tmp_path):
+    assert loader.branch_of(str(tmp_path)) == ""
+    assert loader.branch_of(str(tmp_path / "gone")) == ""
+
+
+def test_open_rows_carry_the_branch(monkeypatch):
+    with_windows(monkeypatch, [window("@2", "a", state.IDLE)], {})
+    monkeypatch.setattr(loader, "branch_of", lambda cwd: "feat/x")
+    assert [r.branch for r in loader.PanelData().load(NOW).open] == ["feat/x"]
+
+
+def test_pace_is_the_time_to_the_limit_at_the_average_rate():
+    window_5h = {"pct": 50, "resets_at": NOW + 4 * 3600}
+    assert loader.pace(window_5h, 5 * 3600, NOW) == 3600.0
+
+
+def test_pace_is_unknown_without_use_or_after_the_reset():
+    assert loader.pace({"pct": 0, "resets_at": NOW + 3600}, 5 * 3600, NOW) is None
+    assert loader.pace({"pct": 40, "resets_at": NOW - 1}, 5 * 3600, NOW) is None
+
+
+def test_snapshot_pace_follows_the_limits(monkeypatch):
+    with_windows(monkeypatch, [], {})
+    statusline.save_limits({"five_hour": {"pct": 50, "resets_at": NOW + 4 * 3600}}, NOW)
+    assert loader.PanelData().load(NOW).pace == {"five_hour": 3600.0}

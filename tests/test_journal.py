@@ -16,72 +16,16 @@ def day_path(day):
     return os.path.join(journal.journal_dir(), f"{day.isoformat()}.jsonl")
 
 
-def test_cost_today_takes_last_per_session():
-    events = [
-        {"t": 1.0, "id": "a", "cost": 1.0},
-        {"t": 2.0, "id": "b", "cost": 0.5},
-        {"t": 3.0, "id": "a", "status": state.WORKING},
-        {"t": 4.0, "id": "a", "cost": 2.25},
-    ]
-    assert journal.cost_today(events) == 2.75
-    assert journal.cost_today(events, ids={"a"}) == 2.25
-    assert journal.cost_today([]) == 0.0
-
-
-def test_waited_sums_permission_and_input_until_now():
-    events = [
-        {"t": 100.0, "id": "a", "status": state.WORKING},
-        {"t": 110.0, "id": "a", "status": state.PERMISSION},
-        {"t": 115.0, "id": "a", "cost": 1.0},
-        {"t": 170.0, "id": "a", "status": state.WORKING},
-        {"t": 200.0, "id": "a", "status": state.INPUT},
-        # Logged out of order, as concurrent hooks can: the sum sorts by time
-        {"t": 150.0, "id": "b", "status": state.INPUT},
-        {"t": 160.0, "id": "b", "status": state.DONE},
-    ]
-    assert journal.waited(events, now=230.0, live_ids={"a", "b"}) == 60 + 30 + 10
-
-
-def test_waited_sums_every_wait_of_one_session():
-    events = [
-        {"t": 100.0, "id": "a", "status": state.PERMISSION},
-        {"t": 130.0, "id": "a", "status": state.IDLE},
-        {"t": 200.0, "id": "a", "status": state.PERMISSION},
-        {"t": 250.0, "id": "a", "status": state.WORKING},
-    ]
-    assert journal.waited(events, now=300.0, live_ids={"a"}) == 30 + 50
-
-
-def test_waited_ignores_time_before_the_first_event_today():
-    # Waiting since yesterday: today's file starts with the end of that wait
-    yesterday = {"t": 50.0, "id": "a", "status": state.PERMISSION}
-    today = [{"t": 100.0, "id": "a", "status": state.WORKING}]
-    assert journal.waited(today, now=200.0, live_ids={"a"}) == 0.0
-    assert journal.waited([yesterday, *today], now=200.0, live_ids={"a"}) == 50.0
-
-
-def test_a_wait_of_a_vanished_session_ends_at_its_last_event():
-    # A reboot wipes the records without an `ended` event
-    events = [
-        {"t": 100.0, "id": "gone", "status": state.PERMISSION},
-        {"t": 130.0, "id": "gone", "cost": 1.0},
-        {"t": 100.0, "id": "live", "status": state.INPUT},
-    ]
-    assert journal.waited(events, now=10_000.0, live_ids={"live"}) == 30 + 9_900
-
-
-def test_removing_a_waiting_session_ends_its_wait(monkeypatch):
+def test_removing_a_session_logs_its_end(monkeypatch):
     start = noon()
     monkeypatch.setattr(store.time, "time", lambda: start + 60)
     store.write({**state.new_record("s1"), "status": state.PERMISSION, "status_since": start})
     store.remove("s1")
     store.remove("s1")
-    events = journal.read_day(datetime.date.fromtimestamp(start))
-    assert events == [
+    assert journal.read_day(datetime.date.fromtimestamp(start)) == [
         {"t": start, "id": "s1", "status": state.PERMISSION},
         {"t": start + 60, "id": "s1", "status": journal.ENDED},
     ]
-    assert journal.waited(events, now=start + 1000, live_ids=set()) == 60.0
 
 
 def test_read_day_skips_torn_line():
@@ -176,3 +120,19 @@ def test_day_reader_starts_over_on_a_new_day_or_a_shorter_file():
     assert reader.read(day) == [{"t": start, "id": "b", "cost": 3.0}]
     assert reader.read(day + datetime.timedelta(days=1)) == []
     assert reader.read(day) == [{"t": start, "id": "b", "cost": 3.0}]
+
+
+
+def test_spend_counts_only_cost_added_in_the_window():
+    day1, day2 = datetime.date(2026, 1, 1), datetime.date(2026, 1, 2)
+    days = {
+        day1: [{"t": 1.0, "id": "s", "cost": 3.0}],
+        day2: [{"t": 2.0, "id": "s", "cost": 4.0}, {"t": 3.0, "id": "s", "cost": 5.0}],
+    }
+    assert journal.spend_by_session(days, first_day=day2) == {"s": 2.0}
+
+
+def test_spend_of_a_session_born_in_the_window_is_its_highest_cost():
+    day = datetime.date(2026, 1, 2)
+    days = {day: [{"t": 1.0, "id": "s", "cost": 1.5}, {"t": 2.0, "id": "s", "status": "idle"}]}
+    assert journal.spend_by_session(days, first_day=day) == {"s": 1.5}

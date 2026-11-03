@@ -10,7 +10,7 @@ import json
 import os
 import time
 
-from claude_sessions.core import paths, state
+from claude_sessions.core import paths
 
 KEEP_DAYS = 7
 # The status a session leaves the journal with when its record goes away; not a live status
@@ -133,45 +133,25 @@ class DayReader:
         return self.events
 
 
-def cost_today(events, ids=None):
-    """The sum, over sessions, of the last cost each one reported.
+def spend_by_session(day_events, first_day):
+    """The cost each session added from `first_day` on.
+
+    Costs are running totals, so a session that began earlier counts only what it grew by:
+    its highest cost in the window minus its last cost before it.
 
     Args:
-        events: The day's events.
-        ids: When given, only these sessions count.
+        day_events: The events of each day, by `datetime.date`.
+        first_day: The first day of the window.
     """
-    last = {}
-    for event in events:
-        if isinstance(event.get("cost"), (int, float)):
-            last[event.get("id")] = event["cost"]
-    return float(sum(cost for sid, cost in last.items() if ids is None or sid in ids))
-
-
-def waited(events, now, live_ids):
-    """The seconds sessions spent asking for permission or for input.
-
-    A wait ends at the session's next status change, `ended` included. One still open runs to
-    `now` only while its session lives; a session that vanished without `ended` (a reboot wipes
-    the records) stopped waiting at its last event. Each session counts from its first event of
-    the day: a wait that began before it is not seen.
-
-    Args:
-        events: The day's events.
-        now: Current time as a Unix timestamp.
-        live_ids: The sessions that still run.
-    """
-    last = {}
-    for event in events:
-        last[event.get("id")] = max(event["t"], last.get(event.get("id"), event["t"]))
-    changes = sorted((e for e in events if "status" in e), key=lambda e: e["t"])
-    entered = {}
-    total = 0.0
-    for event in changes:
-        sid = event.get("id")
-        if sid in entered:
-            total += event["t"] - entered.pop(sid)
-        if event["status"] in state.NEEDS_YOU:
-            entered[sid] = event["t"]
-    for sid, t in entered.items():
-        total += max(0.0, (now if sid in live_ids else last[sid]) - t)
-    return total
+    before, peak = {}, {}
+    for day in sorted(day_events):
+        for event in day_events[day]:
+            cost = event.get("cost")
+            if not isinstance(cost, int | float):
+                continue
+            sid = event.get("id")
+            if day < first_day:
+                before[sid] = cost
+            else:
+                peak[sid] = max(peak.get(sid, 0.0), cost)
+    return {sid: peak[sid] - before.get(sid, 0.0) for sid in peak}
