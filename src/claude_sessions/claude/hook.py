@@ -1,0 +1,91 @@
+"""`cs hook` and what follows from Claude Code's events: the live sessions, as they really are.
+
+Esc fires no hook, so a session the user interrupted is settled here, when it is read.
+"""
+
+import os
+
+from claude_sessions.claude import files
+from claude_sessions.core import state, store
+from claude_sessions.term import tmux
+
+# Events after which the window takes the session's folder name
+NAMING_EVENTS = {"SessionStart", "UserPromptSubmit"}
+# How a session starts when it takes the place of another in the same Claude process
+REPLACING = {"clear", "resume"}
+# Esc fires no hook, so these statuses can outlive an interrupted turn or a rejected prompt
+INTERRUPTIBLE = (state.WORKING, *state.NEEDS_YOU)
+# A working session with no hook for this long is checked for an Esc interrupt
+QUIET_SECONDS = 3.0
+
+
+def claude_pid(env):
+    """Returns the PID of the Claude process that ran the hook."""
+    pid = env.get("CLAUDE_PID")
+    return int(pid) if pid and pid.isdigit() else os.getppid()
+
+
+def handle_event(event, env, now):
+    """Applies one hook event to its session record and tells tmux.
+
+    Args:
+        event: The hook input.
+        env: The environment the hook inherited from Claude Code.
+        now: Current time as a Unix timestamp.
+    """
+    session_id = event.get("session_id")
+    with store.locked(session_id):
+        if event.get("hook_event_name") == "SessionEnd":
+            record = store.read(session_id)
+            # The lock stays: a hook may be waiting on it, and the dead-process sweep removes it
+            store.remove(session_id, keep_lock=True)
+            if record:
+                tmux.notify(record, ended=True)
+            return
+        record = state.apply_event(store.read(session_id), event, now)
+        pid = claude_pid(env)
+        record.update(pid=pid, pid_start=store.process_start(pid), mux=tmux.detect(env))
+        record = tmux.settle_if_viewed(record, now)
+        store.write(record)
+        # Told under the lock, so overlapping hooks reach tmux in the order they hit the disk
+        if event.get("hook_event_name") in NAMING_EVENTS:
+            tmux.name_window(record)
+        tmux.notify(record)
+    if event.get("hook_event_name") == "SessionStart" and event.get("source") in REPLACING:
+        store.remove_replaced(record)
+
+
+def live_sessions(now):
+    """Returns the records of all live sessions, ordered for display.
+
+    Records of dead processes are deleted, and sessions the user interrupted with Esc (in the
+    middle of a turn, or at a prompt) are settled as idle, on disk and in tmux.
+
+    Args:
+        now: Current time as a Unix timestamp.
+    """
+    records = []
+    for record in store.load_all(now):
+        if (
+            record["status"] in INTERRUPTIBLE
+            and not record.get("background")
+            and now - record.get("updated_at", 0) > QUIET_SECONDS
+            and files.was_interrupted(record.get("transcript"))
+        ):
+            record = settle_interrupted(record["id"], now) or record
+        records.append(record)
+    # Settling changes a status, and with it the order
+    return sorted(records, key=state.sort_key)
+
+
+def settle_interrupted(session_id, now):
+    """Writes an Esc interrupt to disk, unless a hook changed the session meanwhile."""
+    with store.locked(session_id):
+        current = store.read(session_id)
+        if current is None or current["status"] not in INTERRUPTIBLE:
+            return current
+        settled = state.mark_interrupted(current, now)
+        store.write(settled)
+        # Under the lock, so a hook that changes the session next is told to tmux after this
+        tmux.notify(settled)
+    return settled

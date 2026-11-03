@@ -1,4 +1,4 @@
-"""Where everything lives on disk, and how files are written there.
+"""Where everything lives on disk, how files are written there, and the error log.
 
 Paths are resolved on each call, so the variables can change while the process runs (tests
 point them at a temporary folder).
@@ -8,6 +8,10 @@ import json
 import os
 import stat
 import tempfile
+import time
+import traceback
+
+ERROR_LOG = "hook-errors.log"
 
 
 def state_dir():
@@ -51,3 +55,15 @@ def write_text(path, text):
 def write_json(path, value):
     """Writes JSON atomically, so readers never see a partial file."""
     write_text(path, json.dumps(value))
+
+
+def log_error():
+    """Appends the exception being handled to the error log; never raises."""
+    try:
+        path = os.path.join(state_dir(), ERROR_LOG)
+        # A symlink planted in its place must not make the hook write somewhere else
+        flags = os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_APPEND
+        with os.fdopen(os.open(path, flags, 0o600), "w") as log:
+            log.write(f"{time.strftime('%F %T')} {traceback.format_exc()}\n")
+    except OSError:
+        pass

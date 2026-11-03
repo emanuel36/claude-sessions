@@ -1,5 +1,6 @@
 import os
 import stat
+from pathlib import Path
 
 import pytest
 
@@ -43,6 +44,27 @@ def test_a_folder_the_user_chose_is_taken_as_it_is(tmp_path, monkeypatch):
     chosen.chmod(0o775)
     monkeypatch.setenv("CLAUDE_SESSIONS_DIR", str(chosen))
     assert paths.state_dir() == str(chosen)
+
+
+def test_log_error_never_raises(monkeypatch, tmp_path):
+    # A file where the state directory should be
+    (tmp_path / "blocked").write_text("")
+    monkeypatch.setenv("CLAUDE_SESSIONS_DIR", str(tmp_path / "blocked"))
+    try:
+        raise ValueError("boom")
+    except ValueError:
+        paths.log_error()
+
+
+def test_log_error_does_not_follow_a_symlink(tmp_path):
+    target = tmp_path / "target"
+    target.write_text("mine")
+    os.symlink(target, Path(paths.state_dir(), paths.ERROR_LOG))
+    try:
+        raise ValueError("boom")
+    except ValueError:
+        paths.log_error()
+    assert target.read_text() == "mine"
 
 
 def test_a_symlink_in_place_of_the_temporary_folder_is_refused(tmp_path, no_runtime_dir):
