@@ -1,10 +1,11 @@
 import io
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 from claude_sessions import cli
-from claude_sessions.core import paths
+from claude_sessions.core import paths, state, store
 
 
 def test_hook_bad_stdin_logs_and_returns_0(monkeypatch):
@@ -17,3 +18,18 @@ def test_hook_bad_stdin_logs_and_returns_0(monkeypatch):
 def test_cli_does_not_import_textual_or_rich():
     code = "import claude_sessions.cli, sys; assert not {'textual', 'rich'} & set(sys.modules)"
     subprocess.run([sys.executable, "-c", code], check=True)
+
+
+def test_seen_marks_done_session_idle():
+    pid = os.getpid()
+    store.write(
+        {
+            **state.new_record("s1"),
+            "pid": pid,
+            "pid_start": store.process_start(pid),
+            "status": state.DONE,
+            "mux": {"socket": "S", "pane": "%3"},
+        }
+    )
+    assert cli.main(["seen", "--tmux-pane", "%3", "--tmux-socket", "S"]) == 0
+    assert store.read("s1")["status"] == state.IDLE

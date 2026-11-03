@@ -89,3 +89,25 @@ def settle_interrupted(session_id, now):
         # Under the lock, so a hook that changes the session next is told to tmux after this
         tmux.notify(settled)
     return settled
+
+
+def seen(pane, socket, now):
+    """Marks the finished session in a tmux pane as seen, on disk and in tmux.
+
+    Args:
+        pane: The pane's id, such as `%3`.
+        socket: The socket of the pane's tmux server.
+        now: Current time as a Unix timestamp.
+    """
+    for r in live_sessions(now):
+        where = r.get("mux", {})
+        # Pane ids repeat across tmux servers; only the server's own session counts
+        if where.get("pane") != pane or where.get("socket") != socket:
+            continue
+        with store.locked(r["id"]):
+            current = store.read(r["id"])
+            if current is None or current["status"] != state.DONE:
+                continue
+            current = state.mark_seen(current, now)
+            store.write(current)
+            tmux.notify(current)

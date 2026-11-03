@@ -8,6 +8,7 @@ dependencies = ["textual>=8.2,<9"]
 
 [project.scripts]
 cs = "claude_sessions.cli:main"
+cst = "claude_sessions.term.launcher:main"
 
 [build-system]
 requires = ["hatchling"]

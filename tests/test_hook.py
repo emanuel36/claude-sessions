@@ -63,6 +63,25 @@ def test_hook_session_end_removes_the_record():
     assert store.read("s1") is None
 
 
+def test_seen_ignores_the_same_pane_on_another_tmux_server():
+    pid = os.getpid()
+
+    def done(session_id, socket):
+        return {
+            **state.new_record(session_id),
+            "pid": pid,
+            "pid_start": store.process_start(pid),
+            "status": state.DONE,
+            "mux": {"socket": socket, "pane": "%3"},
+        }
+
+    store.write(done("mine", "/tmp/a"))
+    store.write(done("other", "/tmp/b"))
+    hook.seen("%3", "/tmp/a", 0)
+    assert store.read("mine")["status"] == state.IDLE
+    assert store.read("other")["status"] == state.DONE
+
+
 def lock_is_held(session_id):
     """Tells whether someone holds the session's lock, by trying to take it."""
     with open(os.path.join(paths.state_dir(), f"{session_id}.json.lock"), "a") as f:
@@ -81,6 +100,23 @@ def test_hook_tells_tmux_while_it_holds_the_lock(monkeypatch):
     hook.handle_event({"session_id": "s1", "hook_event_name": "UserPromptSubmit"}, ENV, 1.0)
     hook.handle_event({"session_id": "s1", "hook_event_name": "SessionEnd"}, ENV, 2.0)
     assert held == [True, True, True]
+
+
+def test_seen_tells_tmux_while_it_holds_the_lock(monkeypatch):
+    pid = os.getpid()
+    store.write(
+        {
+            **state.new_record("s1"),
+            "pid": pid,
+            "pid_start": store.process_start(pid),
+            "status": state.DONE,
+            "mux": {"socket": "S", "pane": "%3"},
+        }
+    )
+    held = []
+    monkeypatch.setattr(hook.tmux, "notify", lambda r: held.append(lock_is_held("s1")))
+    hook.seen("%3", "S", 0)
+    assert held == [True]
 
 
 def test_interrupted_working_session_is_shown_idle(tmp_path):
