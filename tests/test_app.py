@@ -6,8 +6,7 @@ from rich.cells import cell_len
 
 from claude_sessions.core import state
 from claude_sessions.panel import app as panel_app
-from claude_sessions.panel.data import loader, timeline
-from claude_sessions.panel.view import layout, widgets
+from claude_sessions.panel.data import loader
 from claude_sessions.term.tmux import Window
 
 
@@ -53,13 +52,11 @@ def test_empty_tiny_terminal():
 def test_header_and_sections():
     async def go():
         data = StubData(OPEN, RECENT)
-        data.snapshot.counts = {state.PERMISSION: 1, state.WORKING: 1}
         app = panel_app.PanelApp(data)
         async with app.run_test(size=(100, 20)) as pilot:
             await pilot.pause()
             text = "\n".join(screen_text(app))
-            assert "Claude sessions" in text and "! 1 permission" in text and "1 working" in text
-            assert "Open" in text and "Recent" in text and "sync" in text
+            assert "Sessions" in text and "Recent" in text and "sync" in text
             assert "enter open    n new session    / search" in text
 
     run(go())
@@ -224,13 +221,26 @@ def test_ctrl_c_does_not_quit():
     run(go())
 
 
-SPENT = {"cost": 4.12, "duration": 6000.0, "model": "Opus 5.5", "added": 820, "removed": 310}
+SPENT = {
+    "cost": 4.12,
+    "duration": 6000.0,
+    "model": "Opus 5.5",
+    "added": 820,
+    "removed": 310,
+    "context": 72.0,
+}
 
 
 def usage_rows():
     return [
         loader.Row(
-            "a", "Restructure the config", "/w/a", window("@2", state.IDLE), "2", usage=SPENT
+            "a",
+            "Restructure the config",
+            "/w/a",
+            window("@2", state.IDLE),
+            "2",
+            usage=SPENT,
+            branch="feat/x",
         ),
         loader.Row("b", "No status line yet", "/w/b", window("@3", state.IDLE), "3"),
     ]
@@ -239,102 +249,83 @@ def usage_rows():
 def test_open_rows_show_usage_columns_under_their_header():
     async def go():
         app = panel_app.PanelApp(StubData(usage_rows()))
-        async with app.run_test(size=(120, 20)) as pilot:
+        async with app.run_test(size=(140, 20)) as pilot:
             await pilot.pause()
             text = screen_text(app)
-            header = next(line for line in text if "Open" in line)
+            header = next(line for line in text if "Sessions" in line)
             row = next(line for line in text if "Restructure" in line)
             empty = next(line for line in text if "No status line yet" in line)
-            assert header.split()[1:] == ["cost", "time", "model", "lines"]
-            assert row.index("$4.12") + 5 == header.index("cost") + 4
-            assert row.index("1h40m") + 5 == header.index("time") + 4
+            assert header.split()[1:] == ["model", "branch", "context", "time", "lines", "cost"]
             assert row.index("Opus 5.5") == header.index("model")
+            assert row.index("feat/x") == header.index("branch")
+            assert row.index("72%") + 3 == header.index("context") + 7
+            assert row.index("$4.12") + 5 == header.index("cost") + 4
             assert "+820 −310" in row and row.index("tab 2") == empty.index("tab 3")
+            # A session that has not reported yet leaves its cells empty
             assert empty.split() == ["No", "status", "line", "yet", "tab", "3"]
 
     run(go())
 
 
-def test_narrow_panel_shrinks_the_title_then_drops_columns_from_the_right():
+def test_narrow_panel_shrinks_the_title_then_drops_columns():
     async def go():
         app = panel_app.PanelApp(StubData(usage_rows()))
         async with app.run_test(size=(80, 20)) as pilot:
             await pilot.pause()
-            text = screen_text(app)
-            header = next(line for line in text if "Open" in line)
-            row = next(line for line in text if "Restructure" in line)
-            assert header.split()[1:] == ["cost", "time", "model"]
-            assert "Opus 5.5" in row and "+820" not in row and "tab 2" in row
-            title = row[4 : row.index("$4.12")].rstrip()
-            assert title.endswith("…") and len(title) >= layout.MIN_TITLE
+            header = next(line for line in screen_text(app) if "Sessions" in line)
+            assert header.split()[1:] == ["model", "context", "cost"]
         narrow = panel_app.PanelApp(StubData(usage_rows()))
         async with narrow.run_test(size=(40, 20)) as pilot:
             await pilot.pause()
-            header = next(line for line in screen_text(narrow) if "Open" in line)
+            header = next(line for line in screen_text(narrow) if "Sessions" in line)
             assert header.split()[1:] == ["cost"]
 
     run(go())
 
 
-def test_limit_bars_show_only_the_windows_present():
-    now = time.time()
-
+def test_quota_strip_shows_both_windows_and_when_the_5h_one_fills():
     async def go():
         data = StubData(OPEN)
-        data.snapshot.limits = {"five_hour": {"pct": 72, "resets_at": now + 6720 + 30}}
+        now = time.time()
+        data.snapshot.limits = {
+            "five_hour": {"pct": 62, "resets_at": now + 6000},
+            "seven_day": {"pct": 35, "resets_at": now + 4 * 86400},
+        }
+        data.snapshot.pace = {"five_hour": 3600.0, "seven_day": None}
         app = panel_app.PanelApp(data)
         async with app.run_test(size=(100, 20)) as pilot:
             await pilot.pause()
-            text = "\n".join(screen_text(app))
-            assert "5h limit  " + "▰" * 14 + "▱" * 6 + "  72%  resets in 1h52m" in text
-            assert "7d limit" not in text
-
-    run(go())
-
-
-def test_usage_block_shows_cost_today_and_waiting_beside_the_limits():
-    now = time.time()
-
-    async def go():
-        data = StubData(OPEN)
-        data.snapshot.cost_today, data.snapshot.cost_open = 11.4, 8.67
-        data.snapshot.waited = 47 * 60 + 5
-        data.snapshot.limits = {
-            "five_hour": {"pct": 64, "resets_at": now + 6720 + 30},
-            "seven_day": {"pct": 31, "resets_at": now + 3 * 86400},
-        }
-        app = panel_app.PanelApp(data)
-        async with app.run_test(size=(120, 20)) as pilot:
-            await pilot.pause()
             text = screen_text(app)
-            five = next(line for line in text if "5h limit" in line)
-            seven = next(line for line in text if "7d limit" in line)
-            assert five.index("today") == seven.index("waited") == panel_app.USAGE_RIGHT
-            assert five[five.index("1h52m") :].split() == [
-                "1h52m",
-                "today",
-                "$11.40",
-                "($8.67",
-                "in",
-                "open",
-                "sessions)",
-            ]
-            assert five.rstrip().endswith("today  $11.40  ($8.67 in open sessions)")
-            assert seven.rstrip().endswith("waited for you today  47m")
+            five = next(line for line in text if "5h" in line)
+            seven = next(line for line in text if "7d" in line)
+            assert "62%" in five and "hits the limit in ~1h00m" in five
+            assert "35%" in seven and "hits the limit" not in seven
 
     run(go())
 
 
-def test_usage_block_without_limits_keeps_the_right_side():
+def test_quota_strip_is_hidden_without_limits():
     async def go():
         app = panel_app.PanelApp(StubData(OPEN))
-        async with app.run_test(size=(120, 20)) as pilot:
+        async with app.run_test(size=(100, 20)) as pilot:
+            await pilot.pause()
+            assert not app.query_one("#quota").display
+
+    run(go())
+
+
+def test_spend_section_lists_the_projects_with_bars_scaled_to_the_largest():
+    async def go():
+        data = StubData(OPEN)
+        data.snapshot.spend = [("api", 31.0), ("docs", 15.5)]
+        app = panel_app.PanelApp(data)
+        async with app.run_test(size=(100, 24)) as pilot:
             await pilot.pause()
             text = screen_text(app)
-            cost = next(line for line in text if "today  $0.00" in line)
-            waited = next(line for line in text if "waited for you today  0m" in line)
-            assert cost.index("today") == waited.index("waited") == panel_app.USAGE_RIGHT
-            assert cost.split() == ["today", "$0.00", "($0.00", "in", "open", "sessions)"]
+            api = next(line for line in text if "api" in line and "$31.00" in line)
+            docs = next(line for line in text if "docs" in line and "$15.50" in line)
+            assert api.count("▰") == 12 and docs.count("▰") == 6
+            assert any("Spend 7d by project" in line for line in text)
 
     run(go())
 
@@ -387,34 +378,6 @@ def test_a_failed_load_is_logged_once_per_error(monkeypatch):
     assert len(logged) == 2
 
 
-def timeline_snapshot(start, end):
-    events = [
-        {"t": start, "id": "a", "status": state.WORKING},
-        {"t": start + 3600, "id": "a", "status": state.PERMISSION},
-    ]
-    data = StubData(OPEN, RECENT)
-    data.snapshot.timeline = (start, end, [("Fix the API timeout", "a", events)])
-    return data
-
-
-def test_timeline_renders_axis_and_legend():
-    start = time.mktime((2026, 11, 2, 8, 30, 0, 0, 0, -1))
-
-    async def go():
-        app = panel_app.PanelApp(timeline_snapshot(start, start + 4 * 3600))
-        async with app.run_test(size=(100, 24)) as pilot:
-            await pilot.pause()
-            lines = screen_text(app)
-            text = "\n".join(lines)
-            assert "today" in text and "09:00" in text and "10:00" in text
-            legend = next(line for line in lines if "finished, not seen" in line)
-            words = [legend.index(w) for w in ("working", "permission", "question", "idle")]
-            assert words == sorted(words)
-            assert text.index("Open") < text.index("finished, not seen") < text.index("Recent")
-
-    run(go())
-
-
 def bar_of(app, title_start):
     """The column where the coloured cells of a row start, and how many there are."""
     strip = next(
@@ -429,91 +392,6 @@ def bar_of(app, title_start):
             count += len(seg.text)
         col += cell_len(seg.text)
     return first, count
-
-
-def test_timeline_bars_are_coloured_by_status_and_follow_the_width():
-    start = time.mktime((2026, 11, 2, 8, 30, 0, 0, 0, -1))
-    end = start + 2 * 3600
-    data = timeline_snapshot(start, end)
-    # The session began half an hour in, so the first cells have no colour
-    _, _, rows = data.snapshot.timeline
-    rows[0][2][0]["t"] = start + 1800
-
-    async def go():
-        app = panel_app.PanelApp(data)
-        async with app.run_test(size=(60, 24)) as pilot:
-            await pilot.pause()
-            for width in (60, 80):
-                await pilot.resize_terminal(width, 24)
-                await pilot.pause()
-                bar = width - 2 * 2 - 22
-                cut = timeline.timeline({"a": rows[0][2]}, start, end, bar)["a"]
-                assert None in cut and state.PERMISSION in cut
-                first, count = bar_of(app, "Fix the API timeout")
-                assert first == 2 + 22 + cut.index(state.WORKING)
-                assert count == len([c for c in cut if c])
-
-    run(go())
-
-
-def test_timeline_bar_starts_at_the_same_column_for_wide_titles():
-    start = time.mktime((2026, 11, 2, 8, 30, 0, 0, 0, -1))
-    data = timeline_snapshot(start, start + 4 * 3600)
-    _, _, rows = data.snapshot.timeline
-    rows.append(("日本語🙂" * 8, "b", [{"t": start, "id": "b", "status": state.WORKING}]))
-
-    async def go():
-        app = panel_app.PanelApp(data)
-        async with app.run_test(size=(100, 24)) as pilot:
-            await pilot.pause()
-            assert bar_of(app, "日本語")[0] == bar_of(app, "Fix the API timeout")[0] == 2 + 22
-
-    run(go())
-
-
-def test_timeline_legend_fits_in_80_columns():
-    start = time.mktime((2026, 11, 2, 8, 30, 0, 0, 0, -1))
-
-    async def go():
-        app = panel_app.PanelApp(timeline_snapshot(start, start + 4 * 3600))
-        async with app.run_test(size=(80, 24)) as pilot:
-            await pilot.pause()
-            legend = next(line for line in screen_text(app) if "working" in line and "idle" in line)
-            assert "finished, not seen" in legend and legend.rstrip().endswith("idle")
-
-    run(go())
-
-
-def test_timeline_legend_swatches_are_two_cells_apart_from_their_gaps():
-    start = time.mktime((2026, 11, 2, 8, 30, 0, 0, 0, -1))
-
-    async def go():
-        app = panel_app.PanelApp(timeline_snapshot(start, start + 4 * 3600))
-        async with app.run_test(size=(100, 24)) as pilot:
-            await pilot.pause()
-            strip = next(
-                s for s in app.screen._compositor.render_strips() if "finished, not" in s.text
-            )
-            swatches, run_cells = [], 0
-            for seg in strip:
-                if seg.style and seg.style.bgcolor and not seg.style.bgcolor.is_default:
-                    run_cells += cell_len(seg.text)
-                elif run_cells:
-                    swatches.append(run_cells)
-                    run_cells = 0
-            assert swatches == [2] * len(widgets.LEGEND)
-
-    run(go())
-
-
-def test_timeline_hidden_without_a_span():
-    async def go():
-        app = panel_app.PanelApp(StubData(OPEN, RECENT))
-        async with app.run_test(size=(100, 24)) as pilot:
-            await pilot.pause()
-            assert "finished, not seen" not in "\n".join(screen_text(app))
-
-    run(go())
 
 
 def test_a_tick_after_the_app_stopped_does_nothing():

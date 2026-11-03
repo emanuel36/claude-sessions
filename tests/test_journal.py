@@ -122,7 +122,6 @@ def test_day_reader_starts_over_on_a_new_day_or_a_shorter_file():
     assert reader.read(day) == [{"t": start, "id": "b", "cost": 3.0}]
 
 
-
 def test_spend_counts_only_cost_added_in_the_window():
     day1, day2 = datetime.date(2026, 1, 1), datetime.date(2026, 1, 2)
     days = {

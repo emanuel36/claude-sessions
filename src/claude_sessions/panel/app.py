@@ -13,25 +13,12 @@ from textual.binding import Binding
 from textual.geometry import Region
 from textual.widgets import Static
 
-from claude_sessions.core import paths, state
+from claude_sessions.core import paths
 from claude_sessions.panel.data import loader
-from claude_sessions.panel.view import text
 from claude_sessions.panel.view.layout import BOLD, COLOURS, MARGIN
-from claude_sessions.panel.view.widgets import Body, RowList, Timeline
+from claude_sessions.panel.view.widgets import Body, Quota, RowList, Spend
 from claude_sessions.term import tmux
 
-# The header's counts, in the order the spec draws them
-HEADER = (
-    (state.PERMISSION, "! ", "red"),
-    (state.INPUT, "? ", "yellow"),
-    (state.WORKING, "● ", "blue"),
-    (state.DONE, "✓ ", "green"),
-    (state.IDLE, "", "soft"),
-)
-# The limit bars, in the order the panel draws them
-LIMITS = (("five_hour", "5h limit"), ("seven_day", "7d limit"))
-# Where cost today and waiting time start: past the longest limit line, `resets Fri 09:00`
-USAGE_RIGHT = MARGIN + len("5h limit  ") + text.BAR_CELLS + len(" 100%  resets Fri 09:00") + 6
 MESSAGE_SECONDS = 4
 # A resumed session shows up as open once its first hook runs; until then Enter waits
 RESUME_SECONDS = 10
@@ -66,12 +53,11 @@ class PanelApp(App):
         self.scrolled_to = None
 
     def compose(self) -> ComposeResult:
-        yield Static(id="header")
-        yield Static(id="usage")
+        yield Quota(id="quota")
         yield Static(id="search")
         with Body(id="body"):
-            yield RowList("Open", data=True, id="open")
-            yield Timeline(id="timeline")
+            yield RowList("Sessions", data=True, id="open")
+            yield Spend(id="spend")
             yield RowList("Recent", id="recent")
             yield Static(id="empty")
         yield Static(id="keys")
@@ -122,13 +108,12 @@ class PanelApp(App):
         ids = [r.session_id for r in opened + recent]
         if self.selected not in ids:
             self.selected = ids[0] if ids else None
-        self.query_one("#header", Static).update(self.header_line())
-        self.query_one("#usage", Static).update(self.usage_lines(now))
+        self.query_one("#quota", Quota).show(self.snapshot.limits, self.snapshot.pace, now)
         search = self.query_one("#search", Static)
         search.display = self.search is not None or bool(self.filter_text)
         search.update(self.search_line())
         self.query_one("#open", RowList).show(opened, self.selected, now)
-        self.query_one("#timeline", Timeline).show(self.snapshot.timeline)
+        self.query_one("#spend", Spend).show(self.snapshot.spend)
         self.query_one("#recent", RowList).show(recent, self.selected, now)
         empty = self.query_one("#empty", Static)
         empty.display = not ids
@@ -139,42 +124,6 @@ class PanelApp(App):
         if self.selected != self.scrolled_to:
             self.scrolled_to = self.selected
             self.call_after_refresh(self.scroll_to_selected)
-
-    def header_line(self):
-        line = Text(" " * MARGIN)
-        line.append("Claude sessions", BOLD)
-        for status, mark, colour in HEADER:
-            count = self.snapshot.counts.get(status)
-            if count:
-                line.append(f"   {mark}{count} {text.STATUS_WORDS[status]}", COLOURS[colour])
-        return line
-
-    def usage_lines(self, now):
-        """The limit bars present, with cost today and waiting time on their right."""
-        snap = self.snapshot
-        lefts = [self.limit_text(snap.limits.get(name), label, now) for name, label in LIMITS]
-        today = Text("today  ", COLOURS["soft"])
-        today.append(text.money(snap.cost_today))
-        today.append(f"  ({text.money(snap.cost_open)} in open sessions)", COLOURS["soft"])
-        waited = Text("waited for you today  ", COLOURS["soft"])
-        waited.append(text.duration(snap.waited))
-        lines = []
-        for left, right in zip(lefts, (today, waited), strict=True):
-            line = left.copy()
-            line.pad_right(USAGE_RIGHT - line.cell_len)
-            lines.append(line + right)
-        return Text("\n", end="").join(lines)
-
-    def limit_text(self, window, label, now):
-        """A usage limit's bar and reset time; empty when the window is unknown."""
-        if not window:
-            return Text(end="")
-        pct, colour = window["pct"], COLOURS[text.limit_colour(window["pct"])]
-        line = Text(" " * MARGIN + label + "  ", COLOURS["soft"], end="")
-        line.append(text.limit_bar(pct), colour)
-        line.append(f"{round(pct)}%".rjust(5), colour)
-        line.append("  " + text.resets(window["resets_at"], now), COLOURS["soft"])
-        return line
 
     def search_line(self):
         line = Text(" " * MARGIN)
