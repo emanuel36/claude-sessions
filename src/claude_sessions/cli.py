@@ -83,6 +83,11 @@ def cmd_next(_args):
     return 0
 
 
+def cmd_tig(args):
+    tmux.toggle_tig(args.window, args.path)
+    return 0
+
+
 def cmd_install(_args):
     return install.install(os.path.abspath(sys.argv[0]))
 
@@ -110,6 +115,10 @@ def main(argv=None):
     group.add_argument("--projects", action="store_true")
     p_new.set_defaults(func=cmd_new)
     sub.add_parser("next").set_defaults(func=cmd_next)
+    p_tig = sub.add_parser("tig")
+    p_tig.add_argument("window")
+    p_tig.add_argument("path")
+    p_tig.set_defaults(func=cmd_tig)
     sub.add_parser("install").set_defaults(func=cmd_install)
     sub.add_parser("uninstall").set_defaults(func=cmd_uninstall)
     args = parser.parse_args(argv)

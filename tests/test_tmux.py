@@ -2,6 +2,7 @@ import os
 import pty
 import shutil
 import signal
+import subprocess
 import time
 
 import pytest
@@ -218,3 +219,28 @@ def test_summary_text_leaves_out_what_is_unknown():
     assert tmux.summary_text({state.WORKING: 2}, {}) == ""
     assert tmux.summary_text({}, {"five_hour": {"pct": 8, "resets_at": 1}}) == "5h 8%"
     assert tmux.summary_text({state.DONE: 1}, {}) == "#[fg=green]✓ 1"
+
+
+def git_repo(path):
+    subprocess.run(["git", "init", "-q", str(path)], check=True)
+    return str(path)
+
+
+def test_toggle_tig_splits_to_the_right_then_closes(server, monkeypatch, tmp_path):
+    monkeypatch.setattr(tmux, "run", lambda *args: server(*args).rstrip("\n"))
+    window = server("display", "-p", "#{window_id}").strip()
+    tmux.toggle_tig(window, git_repo(tmp_path), command="sleep 60")
+    panes = server("list-panes", "-t", window, "-F", "#{pane_left}\t#{pane_width}\t#{@cs-tig}")
+    (left_pane, tig_pane) = (line.split("\t") for line in panes.splitlines())
+    assert left_pane[0] == "0" and left_pane[2] == "" and tig_pane[2] == "1"
+    assert abs(int(left_pane[1]) - int(tig_pane[1])) <= 2
+    tmux.toggle_tig(window, str(tmp_path), command="sleep 60")
+    assert len(server("list-panes", "-t", window).splitlines()) == 1
+
+
+def test_toggle_tig_outside_a_repo_says_so(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(tmux, "run", lambda *args: calls.append(args) or "")
+    tmux.toggle_tig("@1", str(tmp_path))
+    assert [c[0] for c in calls] == ["list-panes", "display-message"]
+    assert "Not a git repository" in calls[1][-1]

@@ -84,3 +84,10 @@ def test_new_pick_runs_the_packaged_script(monkeypatch):
     ((file, argv),) = execs
     assert file == "bash" and argv[0] == "bash" and argv[1].endswith("data/new_session.sh")
     assert os.path.isfile(argv[1])
+
+
+def test_tig_command_toggles_tig_for_the_window_and_folder(monkeypatch):
+    calls = []
+    monkeypatch.setattr(cli.tmux, "toggle_tig", lambda *args: calls.append(args))
+    assert cli.main(["tig", "@3", "/w/api"]) == 0
+    assert calls == [("@3", "/w/api")]

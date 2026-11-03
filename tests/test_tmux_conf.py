@@ -54,8 +54,9 @@ def test_tab_one_is_the_session_list_mark(run):
     assert "≡" in tab(run, 1)
 
 
-def test_alt_g_bound(run):
-    assert "tig" in run("list-keys", "-T", "root", "M-g")
+def test_alt_g_toggles_tig_outside_tab_one(run):
+    binding = run("list-keys", "-T", "root", "M-g")
+    assert "cs tig" in binding and "window_index" in binding and "display-popup" not in binding
 
 
 def test_status_right_shows_the_summary_and_the_clock(run):

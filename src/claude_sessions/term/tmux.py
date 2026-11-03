@@ -87,6 +87,41 @@ def summary_text(counts, limits):
     return tabs or quota
 
 
+def toggle_tig(window_id, path, command="tig"):
+    """Opens tig in a pane on the right half of a window, or closes the one already there.
+
+    Args:
+        window_id: The tmux window the key was pressed in.
+        path: The folder of the pane, the project whose history tig shows.
+        command: What runs in the new pane.
+    """
+    panes = table("list-panes", "-t", window_id, "-F", "#{pane_id}\t#{@cs-tig}")
+    open_tig = [pane for pane, flag in panes.items() if flag]
+    if open_tig:
+        run("kill-pane", "-t", open_tig[0])
+        return
+    repo = subprocess.run(["git", "-C", path, "rev-parse", "--git-dir"], capture_output=True)
+    if repo.returncode != 0:
+        run("display-message", f" Not a git repository: {path}")
+        return
+    pane = run(
+        "split-window",
+        "-h",
+        "-p",
+        "50",
+        "-c",
+        path,
+        "-t",
+        window_id,
+        "-P",
+        "-F",
+        "#{pane_id}",
+        command,
+    )
+    if pane:
+        run("set-option", "-p", "-t", pane, "@cs-tig", "1")
+
+
 def publish_summary(text):
     """Sets the text the tab bar shows before the clock."""
     run("set", "-g", "@cs-summary", text)
