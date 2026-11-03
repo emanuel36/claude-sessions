@@ -44,7 +44,8 @@ def parse(data):
 
     Returns:
         `cost` (USD) and `duration` (seconds), None until known; `model`, the display name
-        or else the id, None until known; `added` and `removed` lines, 0 until known.
+        or else the id, None until known; `added` and `removed` lines, 0 until known;
+        `context`, the percentage of the context window in use, None until known.
     """
     duration = _number(_get(data, "cost", "total_duration_ms"))
     return {
@@ -53,6 +54,7 @@ def parse(data):
         "model": _text(_get(data, "model", "display_name")) or _text(_get(data, "model", "id")),
         "added": int(_number(_get(data, "cost", "total_lines_added")) or 0),
         "removed": int(_number(_get(data, "cost", "total_lines_removed")) or 0),
+        "context": _number(_get(data, "context_window", "used_percentage")),
     }
 
 

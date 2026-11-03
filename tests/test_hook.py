@@ -38,6 +38,15 @@ def test_hook_outside_tmux_writes_record():
     assert (r["status"], r["pid"], r["mux"]) == (state.WORKING, os.getpid(), {})
 
 
+def test_hook_records_the_permission_mode():
+    event = {"session_id": "s1", "hook_event_name": "UserPromptSubmit", "cwd": "/w"}
+    hook.handle_event({**event, "permission_mode": "acceptEdits"}, ENV, 5.0)
+    assert store.read("s1")["mode"] == "acceptEdits"
+    # An event without the field keeps the last mode
+    hook.handle_event(event, ENV, 6.0)
+    assert store.read("s1")["mode"] == "acceptEdits"
+
+
 def test_hook_with_dead_tmux_socket_does_not_raise():
     env = {**ENV, "TMUX": "/nonexistent,1,0", "TMUX_PANE": "%1"}
     hook.handle_event(
