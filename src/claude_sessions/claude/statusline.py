@@ -7,13 +7,25 @@ may be missing or null, early in a session above all.
 
 import json
 import os
+import re
 import subprocess
 import sys
+import unicodedata
 
 from claude_sessions.core import journal, paths, store
+from claude_sessions.term import tmux
 
 # The account's usage windows, as the status line input names them
 WINDOWS = ("five_hour", "seven_day")
+# What Claude Code's own mode line says for each permission mode; the default mode says nothing
+MODES = {
+    "acceptEdits": "⏵⏵ accept edits on",
+    "plan": "⏸ plan mode on",
+    "bypassPermissions": "⏵⏵ bypass permissions on",
+}
+# Columns Claude Code keeps free around the status line
+EDGE = 2
+ANSI = re.compile(r"\x1b\[[0-9;]*m")
 # Claude Code cancels a status line that runs past its next update anyway
 CHAIN_TIMEOUT = 5
 
@@ -152,13 +164,54 @@ def record_usage(data, now):
                 journal.append({"t": now, "id": session_id, "cost": cost})
 
 
+def _cells(text):
+    """How many terminal columns a text takes."""
+    return sum(
+        0 if unicodedata.combining(ch) else 2 if unicodedata.east_asian_width(ch) in "WF" else 1
+        for ch in text
+    )
+
+
+def pane_width():
+    """Returns the width of the tmux pane the status line is drawn in, or None if unknown."""
+    pane = os.environ.get("TMUX_PANE")
+    width = tmux.run("display", "-p", "-t", pane, "#{pane_width}") if pane else ""
+    return int(width) if width.isdigit() else None
+
+
+def with_mode(line, mode, width):
+    """Pads a line so the mode ends at the right edge; the line alone if there is no room.
+
+    Args:
+        line: The status line, which may hold colour codes.
+        mode: The text to put on the right.
+        width: The columns available.
+    """
+    room = width - _cells(ANSI.sub("", line)) - _cells(mode)
+    return f"{line}{' ' * room}{mode}" if mode and room >= 1 else line
+
+
+def add_mode(out, data):
+    """Puts the session's permission mode on the right of the last line of the status line."""
+    record = (
+        store.read(data.get("session_id")) if store.is_session_id(data.get("session_id")) else None
+    )
+    mode = MODES.get((record or {}).get("mode"), "")
+    width = pane_width() if mode else None
+    if not mode or width is None:
+        return out
+    *head, last = out.rstrip("\n").split("\n")
+    return "\n".join([*head, with_mode(last, mode, width - EDGE)]) + "\n"
+
+
 def print_statusline(raw, data):
     """Prints the user's own status line, given the same input, or else a short default."""
     command = saved_command()
     if command is None:
         spent = parse(data)
         known = spent["model"] is not None and spent["cost"] is not None
-        print(f"{spent['model']}  ${spent['cost']:.2f}" if known else "")
+        line = f"{spent['model']}  ${spent['cost']:.2f}" if known else ""
+        sys.stdout.write(add_mode(line + "\n", data))
         return
     try:
         out = subprocess.run(
@@ -167,5 +220,7 @@ def print_statusline(raw, data):
     except subprocess.TimeoutExpired:
         return
     sys.stdout.flush()
-    sys.stdout.buffer.write(out)
+    text = out.decode(errors="replace")
+    moded = add_mode(text, data)
+    sys.stdout.buffer.write(out if moded == text else moded.encode())
     sys.stdout.buffer.flush()
