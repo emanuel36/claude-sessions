@@ -202,8 +202,8 @@ def notify(record, ended=False):
     """Pushes a status change to the tmux pane the session runs in.
 
     tmux keeps the status as a pane option that its status line reads, and, while the session
-    needs the user, since when as @cs-since, from which the tab counts the wait. Never raises:
-    the hook must not break the session.
+    needs the user or waits on a shell command, since when as @cs-since, from which the tab
+    counts the wait. Never raises: the hook must not break the session.
 
     Args:
         record: The session record after the change.
@@ -213,7 +213,7 @@ def notify(record, ended=False):
     if not where:
         return
     status = None if ended else record["status"]
-    since = str(int(state.since(record))) if status in state.NEEDS_YOU else None
+    since = str(int(state.since(record))) if status in state.TIMED else None
     for option, value in (("@claude_status", status), ("@cs-since", since)):
         if value:
             tmux(where["socket"], "set-option", "-p", "-t", where["pane"], option, value)

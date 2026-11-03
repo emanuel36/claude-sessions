@@ -7,27 +7,32 @@ PERMISSION = "permission"
 INPUT = "input"
 DONE = "done"
 WORKING = "working"
+# The turn ended with only shell commands left running in the background, such as a build
+SHELL = "shell"
 IDLE = "idle"
 
 # Display order: what needs the user first
-STATUSES = (PERMISSION, INPUT, DONE, WORKING, IDLE)
+STATUSES = (PERMISSION, INPUT, DONE, WORKING, SHELL, IDLE)
 # Blocked on the user: an approval, or an answer
 NEEDS_YOU = (PERMISSION, INPUT)
+# Statuses that show how long the session has been in them
+TIMED = (*NEEDS_YOU, SHELL)
 
 # Tools that stop and wait for the user: a question, a plan to approve
 ASKING_TOOLS = {"AskUserQuestion", "ExitPlanMode"}
 NOTIFICATIONS = {"permission_prompt": PERMISSION, "elicitation_dialog": INPUT}
 FINISHED_TASKS = {"completed", "failed", "killed", "stopped", "cancelled"}
+SHELL_TASK = "shell"
 MAIN_AGENT = "main"
 # Stands for a prompt known only from a notification, not from a hook of its own
 NOTIFIED = "notification"
 
 
 def running_tasks(tasks):
-    """Counts background tasks that have not finished."""
+    """Returns the background tasks that have not finished."""
     if not isinstance(tasks, list):
-        return 0
-    return sum(1 for t in tasks if isinstance(t, dict) and t.get("status") not in FINISHED_TASKS)
+        return []
+    return [t for t in tasks if isinstance(t, dict) and t.get("status") not in FINISHED_TASKS]
 
 
 def new_record(session_id):
@@ -84,8 +89,9 @@ def apply_event(record, event, now):
             pending.clear()
             r.update(status=IDLE, background=0)
     elif name == "UserPromptSubmit":
+        # The next Stop counts the background tasks again; until then the turn can be interrupted
         pending.clear()
-        r["status"] = WORKING
+        r.update(status=WORKING, background=0)
     elif name == "PreToolUse":
         done_waiting(agent)
         if event.get("tool_name") in ASKING_TOOLS:
@@ -106,8 +112,14 @@ def apply_event(record, event, now):
         done_waiting(agent)
     elif name == "Stop":
         pending.clear()
-        r["background"] = running_tasks(event.get("background_tasks"))
-        r["status"] = WORKING if r["background"] else DONE
+        running = running_tasks(event.get("background_tasks"))
+        r["background"] = len(running)
+        if not running:
+            r["status"] = DONE
+        elif all(t.get("type") == SHELL_TASK for t in running):
+            r["status"] = SHELL
+        else:
+            r["status"] = WORKING
     elif name == "StopFailure":
         # A failed turn is over too
         pending.clear()

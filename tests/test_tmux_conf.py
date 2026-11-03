@@ -8,7 +8,7 @@ from conftest import throwaway_tmux
 pytestmark = pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux is not installed")
 
 CONF = importlib.resources.files("claude_sessions.term") / "data" / "tmux.conf"
-MARKS = ("! ", "? ", "✓ ", "●", "○")
+MARKS = ("! ", "? ", "✓ ", "⧗ ", "●", "○")
 
 
 @pytest.fixture
@@ -35,6 +35,7 @@ def test_windows_are_numbered_from_one(run):
         ("permission", "! "),
         ("input", "? "),
         ("done", "✓ "),
+        ("shell", "⧗ "),
         ("working", None),
         ("idle", ""),
     ],

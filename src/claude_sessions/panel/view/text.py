@@ -13,6 +13,7 @@ STATUS_WORDS = {
     state.PERMISSION: "permission",
     state.INPUT: "question",
     state.WORKING: "working",
+    state.SHELL: "shell",
     state.DONE: "finished",
     state.IDLE: "idle",
 }
@@ -20,6 +21,7 @@ MARKS = {
     state.PERMISSION: ("!", "red"),
     state.INPUT: ("?", "yellow"),
     state.DONE: ("✓", "green"),
+    state.SHELL: ("⧗", "cyan"),
     state.IDLE: (" ", "soft"),
 }
 BAR_CELLS = 20
@@ -52,7 +54,7 @@ def status_cell(row, now):
     if w.status == state.WORKING:
         return spin_frame(now), "blue", f"tab {row.tab}  working"
     mark, colour = MARKS.get(w.status, MARKS[state.IDLE])
-    if w.status in state.NEEDS_YOU:
+    if w.status in state.TIMED:
         waited = waiting_label(now - state.since(w.lead))
         return mark, colour, f"tab {row.tab}  {STATUS_WORDS[w.status]} {waited}".rstrip()
     if w.status == state.DONE:

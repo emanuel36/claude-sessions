@@ -8,8 +8,8 @@ one session, coloured by its status; tab 1 is a panel with quota, sessions and s
        alt="The panel in tab 1, with the tab bar below it">
 </p>
 
-- **Status on every tab:** permission, question, finished, working or idle, with how long it
-  has waited for you.
+- **Status on every tab:** permission, question, finished, working, shell or idle, with how
+  long it has waited for you or on a command.
 - **One key to what needs you:** Alt+n jumps to the next waiting session.
 - **Info in the tab bar:** the current tab's mode, branch, cost and context, then the tabs waiting or finished and the 5-hour quota, before the clock.
 - **Keeps your setup:** `cs install` adds hooks and keeps your own status line; `cs uninstall`
@@ -22,7 +22,8 @@ one session, coloured by its status; tab 1 is a panel with quota, sessions and s
 | Permission | red `!` | Claude needs your approval to run something |
 | Question | amber `?` | Claude asked you something, or has a plan to approve |
 | Finished | green `✓` | The turn ended and you have not looked yet |
-| Working | blue `●`, blinking | Running tools or background tasks |
+| Working | blue `●`, blinking | Running tools, or waiting on background agents |
+| Shell | cyan `⧗` | The turn ended and a shell command, such as a build, still runs in the background |
 | Idle | grey | Seen, or interrupted with Esc |
 
 ## Keys

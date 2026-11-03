@@ -16,6 +16,7 @@ COLOURS = {
     "yellow": Style(color="yellow"),
     "green": Style(color="green"),
     "blue": Style(color="blue"),
+    "cyan": Style(color="cyan"),
     "soft": Style(color="color(244)"),
     "faint": Style(color="color(240)"),
     "light": Style(color="color(250)"),

@@ -138,6 +138,9 @@ def test_notify_sets_then_unsets_the_status_and_since(server):
     tmux.notify({**record, "status": state.WORKING})
     assert pane_option(server, mux, "@claude_status") == state.WORKING
     assert pane_option(server, mux, "@cs-since") == ""
+    # A shell wait counts its time too
+    tmux.notify({**record, "status": state.SHELL})
+    assert pane_option(server, mux, "@cs-since") == "123"
     tmux.notify(record, ended=True)
     assert pane_option(server, mux, "@claude_status") == ""
     assert pane_option(server, mux, "@cs-since") == ""

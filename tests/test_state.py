@@ -96,6 +96,22 @@ def test_stop_with_background_tasks_keeps_working():
     assert (r["status"], r["background"]) == (state.WORKING, 2)
 
 
+def test_stop_with_only_shell_commands_running_waits_on_the_shell():
+    tasks = [{"type": "shell", "status": "running"}, {"type": "subagent", "status": "completed"}]
+    r = run(event("UserPromptSubmit", prompt="x"), event("Stop", background_tasks=tasks))
+    assert (r["status"], r["background"]) == (state.SHELL, 1)
+    # The command finishes and wakes Claude, which works again
+    assert run(event("PreToolUse", tool_name="Read"), record=r)["status"] == state.WORKING
+    # A prompt while the build runs starts a turn that Esc can interrupt
+    again = run(event("UserPromptSubmit", prompt="y"), record=r)
+    assert (again["status"], again["background"]) == (state.WORKING, 0)
+
+
+def test_stop_with_a_subagent_running_keeps_working():
+    tasks = [{"type": "shell", "status": "running"}, {"type": "subagent", "status": "running"}]
+    assert run(event("Stop", background_tasks=tasks))["status"] == state.WORKING
+
+
 def test_seen_settles_a_finished_session_as_idle():
     seen = state.mark_seen(run(event("Stop")), NOW + 5)
     assert (seen["status"], seen["status_since"]) == (state.IDLE, NOW + 5)

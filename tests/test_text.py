@@ -39,6 +39,11 @@ def test_status_cell_working_blinks():
     assert text.status_cell(row, 11.2)[0] == "○"
 
 
+def test_status_cell_shell_shows_the_wait():
+    row = Row("s", "t", "/w", window("@4", "s", state.SHELL, NOW - 400), tab="4")
+    assert text.status_cell(row, NOW) == ("⧗", "cyan", "tab 4  shell 6m")
+
+
 def test_waiting_label():
     assert text.waiting_label(30) == ""
     assert text.waiting_label(125) == "2m"
