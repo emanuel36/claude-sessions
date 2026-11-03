@@ -170,3 +170,24 @@ def test_snapshot_pace_follows_the_limits(monkeypatch):
     with_windows(monkeypatch, [], {})
     statusline.save_limits({"five_hour": {"pct": 50, "resets_at": NOW + 4 * 3600}}, NOW)
     assert loader.PanelData().load(NOW).pace == {"five_hour": 3600.0}
+
+
+def test_pace_is_unknown_once_the_window_is_full():
+    assert loader.pace({"pct": 100, "resets_at": NOW + 3600}, 5 * 3600, NOW) is None
+
+
+def test_spend_is_not_recomputed_while_the_journal_has_no_new_events(monkeypatch):
+    with_windows(monkeypatch, [], {})
+    now = noon_today()
+    history(("a", "/w/api", now - 900, "x"))
+    journal.append({"t": now - 300, "id": "a", "cost": 3.5})
+    calls = []
+    real = loader.journal.spend_by_session
+    monkeypatch.setattr(
+        loader.journal, "spend_by_session", lambda *a, **k: calls.append(1) or real(*a, **k)
+    )
+    data = loader.PanelData()
+    first = data.load(now).spend
+    assert data.load(now + 1).spend == first and len(calls) == 1
+    journal.append({"t": now - 100, "id": "a", "cost": 4.0})
+    assert data.load(now + 2).spend == [("api", 4.0)] and len(calls) == 2

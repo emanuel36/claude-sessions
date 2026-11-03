@@ -63,3 +63,9 @@ def test_status_right_shows_the_summary_and_the_clock(run):
     run("set", "-g", "@cs-summary", "SUMMARY-TEXT")
     right = run("display", "-p", "#{T:status-right}")
     assert "SUMMARY-TEXT" in right and re.search(r"\d\d:\d\d", right)
+
+
+def test_alt_g_passes_the_path_escaped_not_inside_single_quotes(run):
+    # q: escapes with backslashes, which a single-quoted shell word keeps as they are
+    binding = run("list-keys", "-T", "root", "M-g")
+    assert "#{q:pane_current_path}" in binding and "'#{q:pane_current_path}'" not in binding

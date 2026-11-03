@@ -55,10 +55,10 @@ def pace(window, window_seconds, now):
         now: Current time as a Unix timestamp.
 
     Returns:
-        None when nothing was used yet or the window is over.
+        None when nothing was used yet, the window is full or it is over.
     """
     elapsed = now - (window["resets_at"] - window_seconds)
-    if window["resets_at"] <= now or elapsed <= 0 or window["pct"] <= 0:
+    if window["resets_at"] <= now or elapsed <= 0 or not 0 < window["pct"] < 100:
         return None
     return (100 - window["pct"]) * elapsed / window["pct"]
 
@@ -107,6 +107,8 @@ class PanelData:
         self.history = None
         # One reader per day: past days are parsed once, today's only for its new lines
         self.journals = {}
+        # The last spend, with the days, event lists and history it came from
+        self.spent = None
 
     def load(self, now):
         """Returns the panel's contents at a moment.
@@ -168,12 +170,19 @@ class PanelData:
         days.insert(0, days[0] - datetime.timedelta(days=1))
         self.journals = {d: self.journals.get(d) or journal.DayReader() for d in days}
         events = {d: self.journals[d].read(d) for d in days}
+        # A reader hands back the same list until its file grows: nothing new, nothing to redo
+        inputs = (days, *events.values(), self.history)
+        if self.spent and self.spent[0][0] == days:
+            if all(a is b for a, b in zip(self.spent[0][1:], inputs[1:], strict=True)):
+                return self.spent[1]
         totals = {}
         for sid, cost in journal.spend_by_session(events, first_day=days[1]).items():
             if sid in known and known[sid].cwd and cost > 0:
                 name = os.path.basename(known[sid].cwd.rstrip("/"))
                 totals[name] = totals.get(name, 0.0) + cost
-        return sorted(totals.items(), key=lambda item: -item[1])
+        result = sorted(totals.items(), key=lambda item: -item[1])
+        self.spent = (inputs, result)
+        return result
 
     def recent_rows(self, history, here, elsewhere):
         rows = []

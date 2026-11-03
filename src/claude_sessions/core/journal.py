@@ -123,7 +123,10 @@ class DayReader:
                 f.seek(self.offset)
                 raw = f.read()
         except FileNotFoundError:
-            self.file, self.offset, self.events = None, 0, []
+            self.file, self.offset = None, 0
+            # The same empty list while the file stays missing, so callers can tell nothing changed
+            if self.events:
+                self.events = []
             return self.events
         complete = raw[: raw.rfind(b"\n") + 1]
         if complete:
