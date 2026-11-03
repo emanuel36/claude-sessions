@@ -52,3 +52,7 @@ def test_tab_shows_the_status_mark(run, status, present):
 
 def test_tab_one_is_the_session_list_mark(run):
     assert "≡" in tab(run, 1)
+
+
+def test_alt_g_bound(run):
+    assert "tig" in run("list-keys", "-T", "root", "M-g")
