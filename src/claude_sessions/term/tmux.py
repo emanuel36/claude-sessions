@@ -169,7 +169,7 @@ def select(window):
 
 def new_session_popup():
     """Opens the popup where the user picks a folder for a new session."""
-    run("display-popup", "-E", "-w", "70%", "-h", "60%", "-T", " New session ", "cs new --pick")
+    run("display-popup", "-E", "-w", "80%", "-h", "70%", "-T", " New session ", "cs new --pick")
 
 
 def next_pending(windows, current=None):

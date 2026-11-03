@@ -91,3 +91,32 @@ def test_tig_command_toggles_tig_for_the_window_and_folder(monkeypatch):
     monkeypatch.setattr(cli.tmux, "toggle_tig", lambda *args: calls.append(args))
     assert cli.main(["tig", "@3", "/w/api"]) == 0
     assert calls == [("@3", "/w/api")]
+
+
+def test_new_projects_lists_open_folders_first_without_repeats(monkeypatch, capsys, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(cli.hook, "live_sessions", lambda now: [{"cwd": "/w/b"}, {"cwd": "/w/a"}])
+    monkeypatch.setattr(cli.files, "recent_projects", lambda: ["/w/a", "/w/c"])
+    assert cli.main(["new", "--projects"]) == 0
+    assert capsys.readouterr().out.splitlines() == ["/w/b", "/w/a", "/w/c"]
+
+
+def test_new_preview_of_a_repo_shows_branch_changes_and_commits(capsys, tmp_path):
+    def git(*args):
+        subprocess.run(
+            ["git", "-C", str(tmp_path), "-c", "user.name=t", "-c", "user.email=t@t", *args],
+            check=True,
+            capture_output=True,
+        )
+
+    git("init", "-q", "-b", "trunk")
+    git("commit", "-q", "--allow-empty", "-m", "feat: first")
+    (tmp_path / "new.txt").write_text("x")
+    assert cli.main(["new", "--preview", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "trunk" in out and "1 changed" in out and "feat: first" in out
+
+
+def test_new_preview_of_a_plain_folder_says_so(capsys, tmp_path):
+    assert cli.main(["new", "--preview", str(tmp_path)]) == 0
+    assert "not a git repository" in capsys.readouterr().out

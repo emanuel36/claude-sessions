@@ -5,6 +5,7 @@ set -uo pipefail
 # nothing matched (the typed path is the answer) and 130 on Esc
 out=$(cs new --projects \
     | fzf --reverse --print-query --prompt 'New session in: ' \
+          --preview 'cs new --preview {}' --preview-window 'right,45%' \
           --header 'Enter opens it. A path that is not listed works too. Esc cancels.')
 case $? in
     0|1) ;;
