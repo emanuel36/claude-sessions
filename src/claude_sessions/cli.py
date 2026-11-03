@@ -18,7 +18,7 @@ import time
 
 from claude_sessions.claude import files, hook, install, statusline
 from claude_sessions.core import paths
-from claude_sessions.term import tmux
+from claude_sessions.term import picker, tmux
 
 
 def cmd_hook(_args):
@@ -60,9 +60,16 @@ def cmd_panel(_args):
 
 
 def cmd_new(args):
-    if args.projects:
+    if args.preview:
+        print(picker.preview(args.preview))
+    elif args.sessions:
+        for line in picker.session_lines(args.sessions):
+            print(line)
+    elif args.projects:
         home = os.path.expanduser("~")
-        for path in files.recent_projects():
+        # The folders of open sessions first, then the recent ones
+        open_now = [r["cwd"] for r in hook.live_sessions(time.time()) if r.get("cwd")]
+        for path in dict.fromkeys([*open_now, *files.recent_projects()]):
             print(path.replace(home, "~", 1) if path.startswith(home) else path)
     else:
         # Imported here: the hook runs on every event and needs none of it
@@ -80,6 +87,11 @@ def cmd_next(_args):
         tmux.run("display-message", "Nothing is waiting for you")
     else:
         tmux.select(target)
+    return 0
+
+
+def cmd_tig(args):
+    tmux.toggle_tig(args.window, args.path)
     return 0
 
 
@@ -108,8 +120,14 @@ def main(argv=None):
     group = p_new.add_mutually_exclusive_group(required=True)
     group.add_argument("--pick", action="store_true")
     group.add_argument("--projects", action="store_true")
+    group.add_argument("--preview", metavar="PATH")
+    group.add_argument("--sessions", metavar="PATH")
     p_new.set_defaults(func=cmd_new)
     sub.add_parser("next").set_defaults(func=cmd_next)
+    p_tig = sub.add_parser("tig")
+    p_tig.add_argument("window")
+    p_tig.add_argument("path")
+    p_tig.set_defaults(func=cmd_tig)
     sub.add_parser("install").set_defaults(func=cmd_install)
     sub.add_parser("uninstall").set_defaults(func=cmd_uninstall)
     args = parser.parse_args(argv)

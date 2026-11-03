@@ -5,11 +5,12 @@ def names(lay):
     return [name for name, _, _ in lay.columns]
 
 
-def test_layout_shrinks_the_title_then_drops_columns_from_the_right():
-    assert names(layout.layout(120, [], True)) == ["cost", "time", "model", "lines"]
+def test_layout_shrinks_the_title_then_drops_columns_in_priority_order():
+    full = ["model", "branch", "context", "time", "lines", "cost"]
+    assert names(layout.layout(160, [], True)) == full
     narrow = layout.layout(80, [], True)
-    assert names(narrow) == ["cost", "time", "model"] and narrow.title >= layout.MIN_TITLE
-    assert names(layout.layout(40, [], True)) == ["cost", "time"]
+    assert names(narrow) == ["model", "context", "cost"] and narrow.title >= layout.MIN_TITLE
+    assert names(layout.layout(40, [], True)) == ["cost"]
 
 
 def test_layout_gives_recent_rows_a_folder_only_when_wide():

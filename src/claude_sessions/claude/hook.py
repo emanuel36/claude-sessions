@@ -45,6 +45,8 @@ def handle_event(event, env, now):
         record = state.apply_event(store.read(session_id), event, now)
         pid = claude_pid(env)
         record.update(pid=pid, pid_start=store.process_start(pid), mux=tmux.detect(env))
+        # Only hook input carries the mode; it stays until a later event tells another one
+        record["mode"] = event.get("permission_mode") or record.get("mode")
         record = tmux.settle_if_viewed(record, now)
         store.write(record)
         # Told under the lock, so overlapping hooks reach tmux in the order they hit the disk

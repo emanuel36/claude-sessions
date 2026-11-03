@@ -4,8 +4,7 @@ Screen {
     color: ansi_default;
 }
 
-#header {
-    height: 1;
+#quota {
     margin: 1 0 1 0;
 }
 
@@ -28,13 +27,6 @@ Screen {
     height: 1;
 }
 
-#usage {
-    height: auto;
-    margin-bottom: 1;
-    text-wrap: nowrap;
-    text-overflow: ellipsis;
-}
-
-#timeline {
+#spend {
     margin-bottom: 1;
 }

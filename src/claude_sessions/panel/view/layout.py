@@ -28,9 +28,17 @@ PROJECT_WIDTH = 20
 RIGHT_WIDTH = 24
 # Narrower than this, recent rows leave out the project folder and the right column shrinks
 WIDE = 80
-# The open rows' data columns: header, width, alignment. When the panel is narrow, the title
-# shrinks to MIN_TITLE cells first, then these drop from the right.
-COLUMNS = (("cost", 7, "right"), ("time", 6, "right"), ("model", 11, "left"), ("lines", 11, "left"))
+# The open rows' data columns, in the order they are drawn: header, width, alignment. When the
+# panel is narrow, the title shrinks to MIN_TITLE cells first, then columns drop in DROP order.
+COLUMNS = (
+    ("model", 11, "left"),
+    ("branch", 14, "left"),
+    ("context", 7, "right"),
+    ("time", 6, "right"),
+    ("lines", 11, "left"),
+    ("cost", 7, "right"),
+)
+DROP = ("lines", "branch", "time", "context", "model", "cost")
 MIN_TITLE = 14
 
 
@@ -90,7 +98,8 @@ def layout(width, rights, data):
         return width - fixed - sum(w + GAP for _, w, _ in columns)
 
     while columns and title_width() < MIN_TITLE:
-        columns = columns[:-1]
+        dropped = next(name for name in DROP if any(c[0] == name for c in columns))
+        columns = tuple(c for c in columns if c[0] != dropped)
     return Layout(max(0, title_width()), columns, project, right)
 
 
@@ -103,8 +112,11 @@ def data_cells(row, columns):
         lines.append(added.rjust(5), COLOURS["green"])
         lines.append(" ")
         lines.append(removed, COLOURS["red"])
+    context = spent.get("context")
     values = {
         "cost": text.money(spent.get("cost")),
+        "branch": row.branch,
+        "context": "" if context is None else f"{round(context)}%",
         "time": text.duration(spent.get("duration")),
         "model": spent.get("model"),
         "lines": lines,

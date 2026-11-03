@@ -2,7 +2,7 @@
 
 The demo is a tmux server of its own (`tmux -L cs-demo`, its socket in a temporary folder)
 with the packaged tmux config, five sessions with neutral names (one per status), their usage
-and limits, a journal of the day and a fake Claude Code history. A tmux client attaches to it
+and limits, a journal of costs and a fake Claude Code history. A tmux client attaches to it
 inside a pseudo-terminal of a fixed size; its output feeds a `pyte` screen, which Rich exports
 to SVG. Nothing touches the user's own tmux server, settings or session records. The
 temporary folder follows TMPDIR and is deleted at the end, with the demo server.
@@ -10,7 +10,6 @@ temporary folder follows TMPDIR and is deleted at the end, with the demo server.
 Run it with `uv run python scripts/screenshots.py`. Alt+g's shot needs tig, Alt+c's fzf.
 """
 
-import datetime
 import fcntl
 import importlib.resources
 import io
@@ -53,51 +52,29 @@ OPEN = (
     ("release-notes", "Write the release notes", state.DONE, 4 * MINUTE),
     ("infra", "Explore tmux popup styles", state.IDLE, 25 * MINUTE),
 )
-# What their status lines reported: cost, duration, model, lines added and removed
+# What their status lines reported: cost, duration, model, lines added and removed, context use
 SPENT = {
-    "api": (4.12, 100 * MINUTE, "Opus 5.5", 820, 310),
-    "docs-site": (1.30, 35 * MINUTE, "Sonnet 5.5", 44, 12),
-    "dashboards": (2.75, 52 * MINUTE, "Opus 5.5", 210, 95),
-    "release-notes": (0.08, 4 * MINUTE, "Haiku 5.5", 0, 0),
-    "infra": (0.42, 18 * MINUTE, "Opus 5.5", 6, 2),
+    "api": (4.12, 100 * MINUTE, "Opus 5.5", 820, 310, 72),
+    "docs-site": (1.30, 35 * MINUTE, "Sonnet 5.5", 44, 12, 41),
+    "dashboards": (2.75, 52 * MINUTE, "Opus 5.5", 210, 95, 58),
+    "release-notes": (0.08, 4 * MINUTE, "Haiku 5.5", 0, 0, 9),
+    "infra": (0.42, 18 * MINUTE, "Opus 5.5", 6, 2, 27),
 }
-# Closed sessions: folder, title, how long ago, cost (counted in today's total when today)
+# The branch each open session's project has checked out
+BRANCHES = {
+    "api": "feat/config-loader",
+    "docs-site": "docs/fix-links",
+    "dashboards": "feat/usage-v2",
+    "release-notes": "main",
+    "infra": "main",
+}
+# Closed sessions: folder, title, how long ago, cost (counted in the 7-day spend)
 RECENT = (
     ("sync-service", "Review the retry logic", 2 * HOUR, 2.10),
     ("notes", "Weekly notes", DAY + 3 * HOUR, 0.85),
     ("docs-site", "Update the onboarding guide", 2 * DAY, 1.40),
     ("dashboards", "Profile slow queries", 3 * DAY, 3.05),
 )
-# Each open session's day, as (fraction of the span drawn, status), before its current status
-DAYS = {
-    "api": (
-        (0.0, state.WORKING),
-        (0.18, state.PERMISSION),
-        (0.21, state.WORKING),
-        (0.55, state.DONE),
-        (0.6, state.IDLE),
-        (0.7, state.WORKING),
-    ),
-    "docs-site": (
-        (0.25, state.WORKING),
-        (0.4, state.INPUT),
-        (0.47, state.WORKING),
-        (0.8, state.DONE),
-        (0.83, state.IDLE),
-        (0.88, state.WORKING),
-    ),
-    "dashboards": (
-        (0.1, state.WORKING),
-        (0.3, state.DONE),
-        (0.42, state.IDLE),
-        (0.5, state.WORKING),
-        (0.62, state.PERMISSION),
-        (0.64, state.WORKING),
-        (0.85, state.IDLE),
-    ),
-    "release-notes": ((0.9, state.WORKING),),
-    "infra": ((0.35, state.WORKING), (0.52, state.DONE), (0.58, state.IDLE), (0.75, state.WORKING)),
-}
 COMMITS = (
     "Add a health check endpoint",
     "Read the config from one place",
@@ -157,10 +134,10 @@ def write_transcript(cwd, session_id, title):
     return path
 
 
-def make_repo(env, path, now):
-    """Gives a project a short, neutral commit history for Alt+g."""
+def make_repo(env, path, now, branch="main"):
+    """Gives a project a short, neutral commit history on a branch, for Alt+g."""
     git_env = {**env, **AUTHOR}
-    subprocess.run(["git", "init", "-q", "-b", "main", path], env=git_env, check=True)
+    subprocess.run(["git", "init", "-q", "-b", branch, path], env=git_env, check=True)
     for i, message in enumerate(COMMITS):
         stamp = f"@{int(now - (len(COMMITS) - i) * 5 * HOUR)} {time.strftime('%z')}"
         with open(os.path.join(path, "CHANGES"), "a") as f:
@@ -186,8 +163,8 @@ def start_server(env):
     return tmux(env, "display-message", "-p", "#{socket_path}")
 
 
-def add_open(env, socket, name, title, status, waited, start, now):
-    """Opens a tab for a session, with its record, its tmux status and its day in the journal.
+def add_open(env, socket, name, title, status, waited, now):
+    """Opens a tab for a session, with its record, its tmux status and its cost in the journal.
 
     Returns:
         The session id.
@@ -198,11 +175,8 @@ def add_open(env, socket, name, title, status, waited, start, now):
     pane, pid = tmux(env, "new-window", *window, "sleep 86400").split()
     session_id = str(uuid.uuid4())
     since = now - waited
-    for fraction, step in DAYS[name]:
-        t = min(start + fraction * (now - start), since - 1)
-        journal.append({"t": t, "id": session_id, "status": step})
-    journal.append({"t": since, "id": session_id, "status": status})
-    spent = dict(zip(("cost", "duration", "model", "added", "removed"), SPENT[name], strict=True))
+    keys = ("cost", "duration", "model", "added", "removed", "context")
+    spent = dict(zip(keys, SPENT[name], strict=True))
     journal.append({"t": now - MINUTE, "id": session_id, "cost": spent["cost"]})
     record = {
         **state.new_record(session_id),
@@ -223,34 +197,31 @@ def add_open(env, socket, name, title, status, waited, start, now):
     return session_id
 
 
-def add_closed(env, name, title, ended, cost, start):
-    """Leaves a closed session in the history and, if it ran today, in the journal.
+def add_closed(env, name, title, ended, cost):
+    """Leaves a closed session in the history, and its cost in the journal.
 
     Returns:
         The session id.
     """
     session_id = str(uuid.uuid4())
     write_transcript(project_dir(env, name), session_id, title)
-    if ended >= start:
-        steps = ((HOUR, state.WORKING), (20 * MINUTE, state.INPUT), (15 * MINUTE, state.WORKING))
-        for before, step in steps:
-            journal.append({"t": ended - before, "id": session_id, "status": step})
-        journal.append({"t": ended, "id": session_id, "cost": cost})
-        journal.append({"t": ended, "id": session_id, "status": journal.ENDED})
+    journal.append({"t": ended, "id": session_id, "cost": cost})
     return session_id
 
 
 def build_world(env, now):
     """Starts the demo tmux server and fills the folders the tool reads."""
     socket = start_server(env)
-    midnight = datetime.datetime.combine(datetime.date.today(), datetime.time()).timestamp()
-    start = max(midnight + MINUTE, now - 7 * HOUR)
+    # The projects are repositories before the panel first asks for their branches
+    for name, branch in BRANCHES.items():
+        make_repo(env, project_dir(env, name), now, branch)
+    start = now - 7 * HOUR
     history = []
     for name, title, status, waited in OPEN:
-        session_id = add_open(env, socket, name, title, status, waited, start, now)
+        session_id = add_open(env, socket, name, title, status, waited, now)
         history.append((start, session_id, project_dir(env, name), title))
     for name, title, ago, cost in RECENT:
-        session_id = add_closed(env, name, title, now - ago, cost, start)
+        session_id = add_closed(env, name, title, now - ago, cost)
         history.append((now - ago, session_id, project_dir(env, name), title))
     with open(files.history_path(), "w") as f:
         for when, session_id, cwd, title in sorted(history):
@@ -261,7 +232,6 @@ def build_world(env, now):
         "seven_day": {"pct": 31, "resets_at": now + 3 * DAY + 5 * HOUR},
     }
     statusline.save_limits(limits, now)
-    make_repo(env, project_dir(env, "api"), now)
 
 
 class Screen(pyte.Screen):
@@ -391,9 +361,9 @@ def capture(env):
 
         if shutil.which("tig"):
             term.send("\x1b2")
-            term.wait_for(lambda d: "Claude sessions" not in "".join(d))
+            term.wait_for(lambda d: "Spend 7d" not in "".join(d))
             term.send("\x1bg")
-            term.wait_for(lambda d: COMMITS[-1] in "".join(d))
+            term.wait_for(lambda d: COMMITS[0][:12] in "".join(d))
             save(term.screen, "history.svg", range(LINES), "Alt+g")
             term.send("q")
         else:

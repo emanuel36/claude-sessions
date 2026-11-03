@@ -97,10 +97,15 @@ def lines(added, removed):
     )
 
 
-def limit_bar(pct):
-    """A usage limit as a bar of filled and empty cells."""
-    filled = max(0, min(BAR_CELLS, round(pct * BAR_CELLS / 100)))
-    return "▰" * filled + "▱" * (BAR_CELLS - filled)
+def limit_bar(pct, cells=BAR_CELLS):
+    """A share of 100 as a bar of filled and empty cells."""
+    filled = max(0, min(cells, round(pct * cells / 100)))
+    return "▰" * filled + "▱" * (cells - filled)
+
+
+def pace_text(seconds):
+    """Says when a usage limit fills up at the current rate; empty when unknown."""
+    return "" if seconds is None else f"hits the limit in ~{duration(seconds)}"
 
 
 def limit_colour(pct):

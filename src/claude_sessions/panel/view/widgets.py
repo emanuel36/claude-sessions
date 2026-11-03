@@ -1,35 +1,15 @@
-"""The panel's widgets: the sections of sessions, and today's bars."""
+"""The panel's widgets: the quota, the sections of sessions, and the spend."""
 
-import datetime
-
-from rich.cells import cell_len
-from rich.style import Style
 from rich.text import Text
 from textual.containers import VerticalScroll
 from textual.widget import Widget
 
-from claude_sessions.core import state
-from claude_sessions.panel.data import timeline
 from claude_sessions.panel.view import text
 from claude_sessions.panel.view.layout import COLOURS, MARGIN, label_line, layout, row_line
 
-# The timeline's cells: a space on this background; no background before a session began
-CELLS = {
-    state.WORKING: Style(bgcolor="blue"),
-    state.PERMISSION: Style(bgcolor="red"),
-    state.INPUT: Style(bgcolor="yellow"),
-    state.DONE: Style(bgcolor="green"),
-    state.IDLE: Style(bgcolor="color(238)"),
-}
-LEGEND = (
-    (state.WORKING, "working"),
-    (state.PERMISSION, "permission"),
-    (state.INPUT, "question"),
-    (state.DONE, "finished, not seen"),
-    (state.IDLE, "idle"),
-)
-NAME_WIDTH = 22
-HOUR_LABEL = 5
+# The gauges and bars of the quota and spend sections, in cells
+QUOTA_CELLS = 12
+SPEND_NAME = 22
 
 
 class RowList(Widget):
@@ -71,88 +51,76 @@ class RowList(Widget):
             self.app.select_row(self.rows[index].session_id)
 
 
-def hour_axis(start, end, width):
-    """The hour labels for a span drawn `width` cells wide, as (column, text) pairs.
+class Quota(Widget):
+    """The usage windows in use as gauges, with when each resets and when the 5h one fills."""
 
-    Labels sit at whole hours, every hour that fits or else every 2, 3, 4, 6 or 12 hours.
-    """
-    if width <= 0 or end <= start:
-        return []
-    per_hour = width * 3600 / (end - start)
-    step = next((n for n in (1, 2, 3, 4, 6, 12) if per_hour * n >= HOUR_LABEL + 1), 24)
-    first = datetime.datetime.fromtimestamp(start).replace(minute=0, second=0, microsecond=0)
-    t = first.timestamp()
-    labels, taken = [], 0
-    while t <= end:
-        hour = datetime.datetime.fromtimestamp(t)
-        col = round((t - start) * width / (end - start))
-        if t >= start and hour.hour % step == 0 and taken <= col <= width - HOUR_LABEL:
-            labels.append((col, f"{hour.hour:02d}:00"))
-            taken = col + HOUR_LABEL + 1
-        t += 3600
-    return labels
-
-
-def name_cell(name, style):
-    """A session's name cut and padded to the name column, counting terminal cells."""
-    name = text.fit(name, NAME_WIDTH)
-    return Text(name + " " * (NAME_WIDTH - cell_len(name)), style)
-
-
-class Timeline(Widget):
-    """Today's bars: the hour axis, a bar per open session coloured by status, a legend."""
-
-    DEFAULT_CSS = "Timeline { height: auto; }"
+    DEFAULT_CSS = "Quota { height: auto; }"
+    WINDOWS = (("five_hour", "5h"), ("seven_day", "7d"))
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.span = None
+        self.limits, self.pace, self.now = {}, {}, 0.0
 
-    def show(self, span):
-        """Shows the bars for `(start, end, rows)`; hidden when None."""
-        self.span = span
-        self.display = span is not None
+    def show(self, limits, pace, now):
+        """Shows the windows that are known; hidden when there are none."""
+        self.limits, self.pace, self.now = limits, pace, now
+        self.display = bool(limits)
         self.refresh(layout=True)
 
     def get_content_height(self, container, viewport, width):
-        return 2 + len(self.span[2]) if self.span else 0
+        return sum(name in self.limits for name, _ in self.WINDOWS)
 
     def render(self):
-        width = self.size.width
-        start, end, rows = self.span
-        bar = width - 2 * MARGIN - NAME_WIDTH
-        axis = Text(" " * MARGIN, COLOURS["soft"])
-        axis.append_text(name_cell("today", COLOURS["soft"]))
-        if bar > 0:
-            canvas = [" "] * bar
-            for col, label in hour_axis(start, end, bar):
-                canvas[col : col + HOUR_LABEL] = label
-            axis.append("".join(canvas), COLOURS["faint"])
-        lines = [axis]
-        cut = timeline.timeline({sid: events for _, sid, events in rows}, start, end, max(bar, 0))
-        for title, sid, _ in rows:
-            line = Text(" " * MARGIN)
-            line.append_text(name_cell(title, COLOURS["light"]))
-            for status in cut[sid]:
-                line.append(" ", CELLS.get(status))
+        lines = []
+        for name, label in self.WINDOWS:
+            window = self.limits.get(name)
+            if not window:
+                continue
+            pct, colour = window["pct"], COLOURS[text.limit_colour(window["pct"])]
+            line = Text(" " * MARGIN + label + "  ", COLOURS["soft"], end="")
+            line.append(text.limit_bar(pct, QUOTA_CELLS), colour)
+            line.append(f"{round(pct)}%".rjust(5), colour)
+            line.append("  " + text.resets(window["resets_at"], self.now), COLOURS["soft"])
+            fills = self.pace.get(name)
+            # Only worth saying when the window fills before it resets
+            if fills is not None and fills < window["resets_at"] - self.now:
+                line.append("  " + text.pace_text(fills), COLOURS["yellow"])
+            line.no_wrap = True
+            line.truncate(self.size.width)
             lines.append(line)
-        # From the margin, not under the bars: all five entries must fit in 80 columns
-        legend = Text(" " * MARGIN)
-        for i, (status, word) in enumerate(LEGEND):
-            if i:
-                legend.append("  ")
-            legend.append("  ", CELLS[status])
-            legend.append(" " + word, COLOURS["soft"])
-        lines.append(legend)
-        return Text("\n", end="").join(draw_cells(line, width) for line in lines)
+        return Text("\n", end="").join(lines)
 
 
-def draw_cells(line, width):
-    """Cuts a line to the width of the widget, so a narrow panel never wraps it."""
-    line = line.copy()
-    line.no_wrap = True
-    line.truncate(width)
-    return line
+class Spend(Widget):
+    """What each project cost over the last days: a bar and an amount per project."""
+
+    DEFAULT_CSS = "Spend { height: auto; }"
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.spend = []
+
+    def show(self, spend):
+        """Shows `[(project, dollars)]`, largest first; hidden when empty."""
+        self.spend = spend
+        self.display = bool(spend)
+        self.refresh(layout=True)
+
+    def get_content_height(self, container, viewport, width):
+        return 1 + len(self.spend)
+
+    def render(self):
+        top = max((amount for _, amount in self.spend), default=0) or 1
+        lines = [Text(" " * MARGIN + "Spend 7d by project", COLOURS["soft"])]
+        for name, amount in self.spend:
+            line = Text(" " * MARGIN)
+            line.append(text.fit(name, SPEND_NAME - 1).ljust(SPEND_NAME), COLOURS["light"])
+            line.append(text.limit_bar(amount * 100 / top, QUOTA_CELLS), COLOURS["blue"])
+            line.append("  " + text.money(amount), COLOURS["soft"])
+            line.no_wrap = True
+            line.truncate(self.size.width)
+            lines.append(line)
+        return Text("\n", end="").join(lines)
 
 
 class Body(VerticalScroll, can_focus=False):

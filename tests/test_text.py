@@ -97,3 +97,12 @@ def test_resets_in_under_a_day_else_weekday_and_time():
     assert text.resets(now + 6720, now) == "resets in 1h52m"
     friday = time.mktime((2026, 11, 6, 9, 0, 0, 0, 0, -1))
     assert text.resets(friday, now) == "resets Fri 09:00"
+
+
+def test_pace_text_says_when_the_limit_fills():
+    assert text.pace_text(7800) == "hits the limit in ~2h10m"
+    assert text.pace_text(None) == ""
+
+
+def test_limit_bar_takes_a_width():
+    assert text.limit_bar(50, 4) == "▰▰▱▱"

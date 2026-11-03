@@ -57,6 +57,76 @@ def tmux(socket, *args):
     return run("-S", socket, *args)
 
 
+# What the tab bar's right side counts, in order: status, mark and tmux style
+SUMMARY = (
+    (state.PERMISSION, "!", "fg=red bold"),
+    (state.INPUT, "?", "fg=yellow bold"),
+    (state.DONE, "✓", "fg=green"),
+)
+
+
+def summary_text(counts, limits):
+    """Returns the tab bar's right side: tabs waiting or finished, and the 5h quota used.
+
+    Args:
+        counts: Open sessions per status.
+        limits: The usage windows, as `statusline.load_limits` gives them.
+
+    Returns:
+        Text with tmux style codes; empty when there is nothing to say.
+    """
+    tabs = " ".join(
+        f"#[{style}]{mark} {counts[status]}"
+        for status, mark, style in SUMMARY
+        if counts.get(status)
+    )
+    five = limits.get("five_hour")
+    quota = f"5h {round(five['pct'])}%" if five else ""
+    if tabs and quota:
+        return f"{tabs} #[default]· {quota}"
+    return tabs or quota
+
+
+def toggle_tig(window_id, path, command="tig"):
+    """Opens tig in a pane on the right half of a window, or closes the one already there.
+
+    Args:
+        window_id: The tmux window the key was pressed in.
+        path: The folder of the pane, the project whose history tig shows.
+        command: What runs in the new pane.
+    """
+    panes = table("list-panes", "-t", window_id, "-F", "#{pane_id}\t#{@cs-tig}")
+    open_tig = [pane for pane, flag in panes.items() if flag]
+    if open_tig:
+        run("kill-pane", "-t", open_tig[0])
+        return
+    repo = subprocess.run(["git", "-C", path, "rev-parse", "--git-dir"], capture_output=True)
+    if repo.returncode != 0:
+        run("display-message", f" Not a git repository: {path}")
+        return
+    pane = run(
+        "split-window",
+        "-h",
+        "-p",
+        "50",
+        "-c",
+        path,
+        "-t",
+        window_id,
+        "-P",
+        "-F",
+        "#{pane_id}",
+        command,
+    )
+    if pane:
+        run("set-option", "-p", "-t", pane, "@cs-tig", "1")
+
+
+def publish_summary(text):
+    """Sets the text the tab bar shows before the clock."""
+    run("set", "-g", "@cs-summary", text)
+
+
 def table(*args):
     """Runs a tmux listing whose format is two tab-separated fields, as a dict."""
     pairs = (line.split("\t", 1) for line in run(*args).splitlines())
@@ -99,7 +169,7 @@ def select(window):
 
 def new_session_popup():
     """Opens the popup where the user picks a folder for a new session."""
-    run("display-popup", "-E", "-w", "70%", "-h", "60%", "-T", " New session ", "cs new --pick")
+    run("display-popup", "-E", "-w", "80%", "-h", "70%", "-T", " New session ", "cs new --pick")
 
 
 def next_pending(windows, current=None):
