@@ -40,26 +40,20 @@ def test_seen_marks_done_session_idle():
     assert store.read("s1")["status"] == state.IDLE
 
 
-def test_panel_runs_the_textual_app(monkeypatch):
-    from claude_sessions.panel import app
+def test_landing_command_runs_the_app(monkeypatch):
+    from claude_sessions.ui import landing_app
 
     ran = []
-    monkeypatch.setattr(app, "main", lambda: ran.append(True))
-    assert cli.main(["panel"]) == 0 and ran == [True]
+    monkeypatch.setattr(landing_app, "main", lambda: ran.append(True))
+    assert cli.main(["landing"]) == 0 and ran == [True]
 
 
-def test_next_selects_the_pending_window_or_says_nothing_waits(monkeypatch):
-    shown, selected = [], []
-    monkeypatch.setattr(cli.hook, "live_sessions", lambda now: [])
-    monkeypatch.setattr(cli.tmux, "windows_of", lambda records: windows)
-    monkeypatch.setattr(cli.tmux, "run", lambda *args: shown.append(args) or "@1")
-    monkeypatch.setattr(cli.tmux, "select", selected.append)
-    windows = [cli.tmux.Window("@2", {"status": state.INPUT, "mux": {"pane": "%2"}})]
-    assert cli.main(["next"]) == 0
-    assert [w.window_id for w in selected] == ["@2"]
-    windows.clear()
-    assert cli.main(["next"]) == 0
-    assert shown[-1] == ("display-message", "Nothing is waiting for you")
+def test_sidebar_command_runs_the_app(monkeypatch):
+    from claude_sessions.ui import sidebar_app
+
+    ran = []
+    monkeypatch.setattr(sidebar_app, "main", lambda: ran.append(True))
+    assert cli.main(["sidebar"]) == 0 and ran == [True]
 
 
 def test_new_projects_prints_tilde_paths(monkeypatch, capsys, tmp_path):
@@ -89,11 +83,11 @@ def test_new_pick_runs_the_packaged_script(monkeypatch):
     assert os.path.isfile(argv[1])
 
 
-def test_tig_command_toggles_tig_for_the_window_and_folder(monkeypatch):
+def test_close_command_closes_the_window(monkeypatch):
     calls = []
-    monkeypatch.setattr(cli.tmux, "toggle_tig", lambda *args: calls.append(args))
-    assert cli.main(["tig", "@3", "/w/api"]) == 0
-    assert calls == [("@3", "/w/api")]
+    monkeypatch.setattr(cli.tmux, "close_window", calls.append)
+    assert cli.main(["close", "@3"]) == 0
+    assert calls == ["@3"]
 
 
 def test_new_projects_lists_open_folders_first_without_repeats(monkeypatch, capsys, tmp_path):
@@ -102,6 +96,14 @@ def test_new_projects_lists_open_folders_first_without_repeats(monkeypatch, caps
     monkeypatch.setattr(cli.files, "recent_projects", lambda: ["/w/a", "/w/c"])
     assert cli.main(["new", "--projects"]) == 0
     assert capsys.readouterr().out.splitlines() == ["/w/b", "/w/a", "/w/c"]
+
+
+def test_new_projects_leaves_out_the_folders_of_background_runs(monkeypatch, capsys):
+    runs = [{"cwd": "/tmp/daily-recap", "headless": True}, {"cwd": "/w/a"}]
+    monkeypatch.setattr(cli.hook, "live_sessions", lambda now: runs)
+    monkeypatch.setattr(cli.files, "recent_projects", lambda: [])
+    assert cli.main(["new", "--projects"]) == 0
+    assert capsys.readouterr().out.splitlines() == ["/w/a"]
 
 
 def test_new_preview_of_a_repo_shows_branch_changes_and_commits(capsys, tmp_path):
@@ -158,3 +160,12 @@ def test_new_preview_shows_the_latest_sessions_of_the_folder(capsys, tmp_path):
     write_history(("a", str(tmp_path), 7200, "adjust routes"))
     assert cli.main(["new", "--preview", str(tmp_path)]) == 0
     assert "adjust routes" in capsys.readouterr().out
+
+
+def test_layout_adds_a_sidebar_to_a_window_or_fits_them_all(monkeypatch):
+    calls = []
+    monkeypatch.setattr(cli.tmux, "add_sidebar", lambda window: calls.append(("add", window)))
+    monkeypatch.setattr(cli.tmux, "fit_sidebars", lambda: calls.append(("fit",)))
+    assert cli.main(["layout", "@4"]) == 0
+    assert cli.main(["layout"]) == 0
+    assert calls == [("add", "@4"), ("fit",), ("fit",)]

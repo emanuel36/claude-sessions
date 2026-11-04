@@ -12,8 +12,13 @@ TIMEOUT = 1
 WINDOW_NAME_LEN = 28
 # What Claude Code calls a session that runs in its daemon (moved to the background)
 BACKGROUND = "bg"
+# How Claude Code names a run without a terminal (`claude -p`, the Agent SDK)
+HEADLESS = {"sdk-cli", "sdk-ts", "sdk-py"}
 # `claude attach` takes a session's id or its first 8 characters
 MIN_ID_PREFIX = 8
+# Columns of the sidebar pane; tmux's border makes it 30. Not imported from the UI: the hook
+# path must not load rich
+SIDEBAR_WIDTH = 29
 
 
 def detect(env, session_id=None):
@@ -26,13 +31,22 @@ def detect(env, session_id=None):
         env: The process environment.
         session_id: The session's id, to find the pane of a background session.
     """
-    # First: a session moved to the background may still carry the tmux pane it left
+    # A session moved to the background may still carry the tmux pane it left
     # Hooks get no session kind, only the job folder the daemon gives a background session
     if env.get("CLAUDE_JOB_DIR") or env.get("CLAUDE_CODE_SESSION_KIND") == BACKGROUND:
         return attached_pane(session_id) if session_id else {}
+    # A `claude -p` started from a session (a start hook, a script) inherits that session's
+    # TMUX, but runs in no pane
+    if is_headless(env):
+        return {}
     if env.get("TMUX") and env.get("TMUX_PANE"):
         return {"socket": env["TMUX"].split(",")[0], "pane": env["TMUX_PANE"]}
     return {}
+
+
+def is_headless(env):
+    """Tells whether the hook comes from a run without a terminal, such as `claude -p`."""
+    return env.get("CLAUDE_CODE_ENTRYPOINT") in HEADLESS
 
 
 def attached_pane(session_id):
@@ -78,18 +92,24 @@ def _children(pid):
 
 @dataclass
 class Window:
-    """A tmux window running Claude, led by its most urgent session (teammates share it)."""
+    """A tmux window running Claude; teammates share it.
+
+    `lead` is its most urgent session, which sets the status shown. `leader` is the session in
+    the window's first Claude pane, whose model, branch and cost the window shows.
+    """
 
     window_id: str
     lead: dict
+    leader: dict | None = None
 
     @property
     def status(self):
         return self.lead["status"]
 
     @property
-    def pane(self):
-        return self.lead["mux"]["pane"]
+    def head(self):
+        """The session whose details the window shows."""
+        return self.leader or self.lead
 
 
 def run(*args):
@@ -111,74 +131,57 @@ def tmux(socket, *args):
     return run("-S", socket, *args)
 
 
-# What the tab bar's right side counts, in order: status, mark and tmux style
-SUMMARY = (
-    (state.PERMISSION, "!", "fg=red bold"),
-    (state.INPUT, "?", "fg=yellow bold"),
-    (state.DONE, "✓", "fg=green"),
-)
+def close_window(window_id):
+    """Closes a window, first stopping the background sessions its panes show.
 
-
-def summary_text(counts, limits):
-    """Returns the tab bar's right side: tabs waiting or finished, and the 5h quota used.
+    A pane that runs `claude attach <id>` only views a session of Claude's daemon, which would
+    outlive the window, so each one is stopped. A failed stop does not keep the window open.
 
     Args:
-        counts: Open sessions per status.
-        limits: The usage windows, as `statusline.load_limits` gives them.
-
-    Returns:
-        Text with tmux style codes; empty when there is nothing to say.
+        window_id: The tmux window to close.
     """
-    tabs = " ".join(
-        f"#[{style}]{mark} {counts[status]}"
-        for status, mark, style in SUMMARY
-        if counts.get(status)
-    )
-    five = limits.get("five_hour")
-    quota = f"5h {round(five['pct'])}%" if five else ""
-    if tabs and quota:
-        return f"{tabs} #[default]· {quota}"
-    return tabs or quota
+    for pid in run("list-panes", "-t", window_id, "-F", "#{pane_pid}").split():
+        for p in (pid, *_children(pid)):
+            argv = _cmdline(p)
+            if "attach" not in argv:
+                continue
+            ids = [a for a in argv[argv.index("attach") + 1 :] if not a.startswith("-")]
+            arg = next((a for a in ids if len(a) >= MIN_ID_PREFIX), None)
+            if arg is None:
+                continue
+            try:
+                subprocess.run(["claude", "stop", arg], capture_output=True, timeout=10)
+            except (OSError, subprocess.SubprocessError):
+                pass
+    run("kill-window", "-t", window_id)
 
 
-def toggle_tig(window_id, path, command="tig"):
-    """Opens tig in a pane on the right half of a window, or closes the one already there.
+def add_sidebar(window_id, command="cs sidebar"):
+    """Puts the sidebar in a pane on the far left of a window, unless it already has one.
+
+    The pane is marked @cs-sidebar and the window's other pane stays the active one.
 
     Args:
-        window_id: The tmux window the key was pressed in.
-        path: The folder of the pane, the project whose history tig shows.
+        window_id: The tmux window to add it to.
         command: What runs in the new pane.
     """
-    panes = table("list-panes", "-t", window_id, "-F", "#{pane_id}\t#{@cs-tig}")
-    open_tig = [pane for pane, flag in panes.items() if flag]
-    if open_tig:
-        run("kill-pane", "-t", open_tig[0])
-        return
-    repo = subprocess.run(["git", "-C", path, "rev-parse", "--git-dir"], capture_output=True)
-    if repo.returncode != 0:
-        run("display-message", f" Not a git repository: {path}")
+    flags = run("list-panes", "-t", window_id, "-F", "#{@cs-sidebar}")
+    if "1" in flags.split():
         return
     pane = run(
-        "split-window",
-        "-h",
-        "-p",
-        "50",
-        "-c",
-        path,
-        "-t",
-        window_id,
-        "-P",
-        "-F",
-        "#{pane_id}",
-        command,
-    )
+        "split-window", "-hbd", "-f", "-l", str(SIDEBAR_WIDTH),
+        "-t", window_id, "-P", "-F", "#{pane_id}", command,
+    )  # fmt: skip
     if pane:
-        run("set-option", "-p", "-t", pane, "@cs-tig", "1")
+        run("set-option", "-p", "-t", pane, "@cs-sidebar", "1")
 
 
-def publish_summary(text):
-    """Sets the text the tab bar shows before the clock."""
-    run("set", "-g", "@cs-summary", text)
+def fit_sidebars():
+    """Resizes every sidebar pane back to its width, after a split or a terminal resize."""
+    panes = table("list-panes", "-a", "-F", "#{pane_id}\t#{@cs-sidebar}")
+    for pane, flag in panes.items():
+        if flag:
+            run("resize-pane", "-t", pane, "-x", str(SIDEBAR_WIDTH))
 
 
 def table(*args):
@@ -199,81 +202,63 @@ def on_server(record, socket):
 
 def windows_of(records):
     """Groups live session records into the windows of this tmux server, most urgent first."""
-    panes = table("list-panes", "-a", "-F", "#{pane_id}\t#{window_id}")
     socket = server_socket()
-    windows = {}
+    panes = {}
+    fmt = "#{pane_id}\t#{window_id}\t#{pane_index}"
+    for line in run("list-panes", "-a", "-F", fmt).splitlines():
+        fields = line.split("\t")
+        if len(fields) == 3 and fields[2].isdigit():
+            panes[fields[0]] = (fields[1], int(fields[2]))
+    windows, leaders = {}, {}
     # Records arrive most urgent first, so the first one in a window leads it
     for r in records:
-        window_id = panes.get((r.get("mux") or {}).get("pane"))
-        if on_server(r, socket) and window_id and window_id not in windows:
+        found = panes.get((r.get("mux") or {}).get("pane"))
+        if not on_server(r, socket) or found is None:
+            continue
+        window_id, index = found
+        if window_id not in windows:
             windows[window_id] = Window(window_id, r)
+        # The leader is the session in the window's first pane
+        if window_id not in leaders or index < leaders[window_id][0]:
+            leaders[window_id] = (index, r)
+    for window_id, (_, r) in leaders.items():
+        windows[window_id].leader = r
     return sorted(windows.values(), key=lambda w: state.sort_key(w.lead))
 
 
-def window_tabs():
-    """Returns the tab number of each window of this tmux server, by window id."""
-    return table("list-windows", "-a", "-F", "#{window_id}\t#{window_index}")
-
-
-def select(window):
-    """Brings a window, and the pane of its leading session, on screen."""
-    run("select-window", "-t", window.window_id)
-    run("select-pane", "-t", window.pane)
+def window_entries():
+    """Returns `(window_id, index, name)` of this server's windows, by index."""
+    rows = []
+    for line in run(
+        "list-windows", "-a", "-F", "#{window_id}\t#{window_index}\t#{window_name}"
+    ).splitlines():
+        window_id, index, name = line.split("\t", 2)
+        rows.append((window_id, int(index), name))
+    return sorted(rows, key=lambda row: row[1])
 
 
 def new_session_popup():
-    """Opens the popup where the user picks a folder for a new session."""
-    run("display-popup", "-E", "-w", "80%", "-h", "70%", "-T", " New session ", "cs new --pick")
+    """Opens the popup where the user picks a folder for a new session.
 
-
-def next_pending(windows, current=None):
-    """Returns the pending window after the current one, wrapping around.
-
-    Pending windows are the ones that need the user, then the ones that finished, in the
-    order `windows_of` returns them, so repeated presses walk through all of them.
-
-    Args:
-        windows: The windows from `windows_of`.
-        current: The id of the window on screen, or None.
+    display-popup returns only when the popup closes, so it is started without waiting.
     """
-    pending = [w for w in windows if w.status in state.NEEDS_YOU]
-    pending += [w for w in windows if w.status == state.DONE]
-    if not pending:
-        return None
-    ids = [w.window_id for w in pending]
-    if current not in ids:
-        return pending[0]
-    return pending[(ids.index(current) + 1) % len(pending)]
+    argv = ["tmux", "display-popup", "-E", "-w", "80%", "-h", "70%", "-T", " New session "]
+    try:
+        subprocess.Popen(
+            [*argv, "cs new --pick"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError:
+        pass
 
 
 def tmux_pane_in_view(where):
     """Tells whether the pane is the active one in a window someone is looking at."""
     fmt = "#{&&:#{&&:#{pane_active},#{window_active}},#{session_attached}}"
     return tmux(where["socket"], "display-message", "-p", "-t", where["pane"], fmt) == "1"
-
-
-def notify(record, ended=False):
-    """Pushes a status change to the tmux pane the session runs in.
-
-    tmux keeps the status as a pane option that its status line reads, and, while the session
-    needs the user or waits on a shell command, since when as @cs-since, from which the tab
-    counts the wait. Never raises: the hook must not break the session.
-
-    Args:
-        record: The session record after the change.
-        ended: True when the session is closing.
-    """
-    where = record.get("mux") or {}
-    if not where:
-        return
-    status = None if ended else record["status"]
-    since = str(int(state.since(record))) if status in state.TIMED else None
-    for option, value in (("@claude_status", status), ("@cs-since", since)):
-        if value:
-            tmux(where["socket"], "set-option", "-p", "-t", where["pane"], option, value)
-        else:
-            tmux(where["socket"], "set-option", "-p", "-u", "-t", where["pane"], option)
-    tmux(where["socket"], "refresh-client", "-S")
 
 
 def window_name(record):

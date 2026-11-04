@@ -19,7 +19,6 @@ packages = ["src/claude_sessions"]
 include = [
     "src/claude_sessions/**/*.py",
     "src/claude_sessions/term/data/*",
-    "src/claude_sessions/panel/view/*.tcss",
 ]
 
 [dependency-groups]

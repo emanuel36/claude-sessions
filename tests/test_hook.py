@@ -38,6 +38,22 @@ def test_hook_outside_tmux_writes_record():
     assert (r["status"], r["pid"], r["mux"]) == (state.WORKING, os.getpid(), {})
 
 
+def test_a_headless_run_is_marked_and_takes_no_tab(monkeypatch):
+    named = []
+    monkeypatch.setattr(hook.tmux, "name_window", named.append)
+    env = {**ENV, "TMUX": "/tmp/t/claude,1,0", "TMUX_PANE": "%3"}
+    event = {"session_id": "s1", "hook_event_name": "UserPromptSubmit", "cwd": "/tmp/daily-recap"}
+    headless = {**env, "CLAUDE_CODE_ENTRYPOINT": "sdk-cli"}
+    hook.handle_event(event, headless, 5.0)
+    r = store.read("s1")
+    assert (r["headless"], r["mux"], r["started_at"]) == (True, {}, 5.0)
+    # Later events keep when it started
+    hook.handle_event({**event, "hook_event_name": "PreToolUse"}, headless, 9.0)
+    assert store.read("s1")["started_at"] == 5.0
+    hook.handle_event({**event, "session_id": "s2"}, {**env, "CLAUDE_CODE_ENTRYPOINT": "cli"}, 5.0)
+    assert store.read("s2")["headless"] is False
+
+
 def test_hook_records_the_permission_mode():
     event = {"session_id": "s1", "hook_event_name": "UserPromptSubmit", "cwd": "/w"}
     hook.handle_event({**event, "permission_mode": "acceptEdits"}, ENV, 5.0)
@@ -102,29 +118,11 @@ def lock_is_held(session_id):
         return False
 
 
-def test_hook_tells_tmux_while_it_holds_the_lock(monkeypatch):
+def test_hook_names_the_window_while_it_holds_the_lock(monkeypatch):
     held = []
-    monkeypatch.setattr(hook.tmux, "notify", lambda r, ended=False: held.append(lock_is_held("s1")))
     monkeypatch.setattr(hook.tmux, "name_window", lambda r: held.append(lock_is_held("s1")))
     hook.handle_event({"session_id": "s1", "hook_event_name": "UserPromptSubmit"}, ENV, 1.0)
     hook.handle_event({"session_id": "s1", "hook_event_name": "SessionEnd"}, ENV, 2.0)
-    assert held == [True, True, True]
-
-
-def test_seen_tells_tmux_while_it_holds_the_lock(monkeypatch):
-    pid = os.getpid()
-    store.write(
-        {
-            **state.new_record("s1"),
-            "pid": pid,
-            "pid_start": store.process_start(pid),
-            "status": state.DONE,
-            "mux": {"socket": "S", "pane": "%3"},
-        }
-    )
-    held = []
-    monkeypatch.setattr(hook.tmux, "notify", lambda r: held.append(lock_is_held("s1")))
-    hook.seen("%3", "S", 0)
     assert held == [True]
 
 
@@ -169,36 +167,6 @@ def test_recent_working_session_is_not_checked_for_interrupts(tmp_path):
     assert hook.live_sessions(100)[0]["status"] == state.WORKING
 
 
-def test_an_interrupt_is_pushed_to_tmux(tmp_path, monkeypatch):
-    sent = []
-    monkeypatch.setattr("claude_sessions.term.tmux.notify", sent.append)
-    transcript = write_transcript(
-        tmp_path / "t.jsonl",
-        {"type": "user", "message": {"content": "[Request interrupted by user]"}},
-    )
-    store.write(live_record(status=state.WORKING, transcript=transcript, updated_at=0))
-    hook.live_sessions(100)
-    assert [r["status"] for r in sent] == [state.IDLE]
-
-
-def test_an_interrupt_is_pushed_while_the_lock_is_held(tmp_path, monkeypatch):
-    held = []
-
-    def notify(record):
-        with open(os.path.join(paths.state_dir(), "s1.json.lock"), "a") as f:
-            try:
-                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                held.append(True)
-            else:
-                held.append(False)
-
-    monkeypatch.setattr("claude_sessions.term.tmux.notify", notify)
-    store.write(live_record(status=state.WORKING))
-    hook.settle_interrupted("s1", 100)
-    assert held == [True]
-
-
 def test_the_tmux_calls_of_a_hook_fit_in_its_timeout():
-    # A prompt: name_window makes 3 tmux calls and notify 3; Stop at most 1 + 3
-    assert 6 * hook.tmux.TIMEOUT < install.HOOK_TIMEOUT
+    # A prompt: name_window makes 3 tmux calls and settle_if_viewed 1
+    assert 4 * hook.tmux.TIMEOUT < install.HOOK_TIMEOUT

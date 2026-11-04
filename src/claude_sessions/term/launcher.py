@@ -1,7 +1,7 @@
 """`cst`: open the tmux server of Claude Code sessions, creating it if needed.
 
 cst            attach to the `claude` tmux session, creating it first if there is none
-cst --ghostty  open it in a new Ghostty window that leaves Alt+1…9 and Alt+←→ to tmux
+cst --ghostty  open it in a new Ghostty window that leaves Alt+1…9 and Alt+↑↓ to tmux
 """
 
 import importlib.resources
@@ -11,20 +11,22 @@ import sys
 
 SOCKET = "claude"
 SESSION = "claude"
-PANEL = "while :; do cs panel; sleep 1; done"
+# No restart loop: when the landing page exits its window closes, and the server with it
+LANDING = "cs landing"
 
 
 def ghostty_command(cst):
     """Returns the Ghostty command line that runs `cst` with the Alt keys unbound.
 
-    Ghostty switches its own tabs with Alt+1…9 and splits with Alt+←→; a separate instance
-    lets these flags apply.
+    Ghostty switches its own tabs with Alt+1…9 and moves between splits with Alt+↑↓; a
+    separate instance lets these flags apply.
     """
     keybinds = []
     for i in range(1, 10):
         keybinds += [f"--keybind=alt+{i}=unbind", f"--keybind=alt+digit_{i}=unbind"]
-    for side in ("left", "right"):
-        keybinds += [f"--keybind=alt+{side}=unbind", f"--keybind=alt+arrow_{side}=unbind"]
+    # Alt+←→ stay with Ghostty: tmux does not use them
+    for way in ("up", "down"):
+        keybinds += [f"--keybind=alt+{way}=unbind", f"--keybind=alt+arrow_{way}=unbind"]
     return ["ghostty", "--gtk-single-instance=false", *keybinds, "-e", cst]
 
 
@@ -54,7 +56,7 @@ def main(argv=None):
 def start_session(tmux):
     """Creates the `claude` tmux session, unless the server already has it."""
     if subprocess.run([*tmux, "has-session", "-t", SESSION], capture_output=True).returncode:
-        # Tab 1 is the panel, started again by the loop if it exits
+        # Window 1 is the landing page
         subprocess.run(
             [
                 *tmux,
@@ -66,7 +68,7 @@ def start_session(tmux):
                 "sessions",
                 "-c",
                 os.path.expanduser("~"),
-                PANEL,
+                LANDING,
             ],
             check=True,
         )
