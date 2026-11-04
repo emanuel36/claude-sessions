@@ -1,7 +1,7 @@
 """`cst`: open the tmux server of Claude Code sessions, creating it if needed.
 
-cst            attach to the `claude` tmux session, creating it first if there is none
-cst --ghostty  open it in a new Ghostty window that leaves Alt+1…9 and Alt+↑↓ to tmux
+cst            attach to the `claude` tmux session in this terminal, creating it if needed
+cst --ghostty  open it in a new Ghostty window that leaves Alt+↑↓ to tmux
 """
 
 import importlib.resources
@@ -11,19 +11,16 @@ import sys
 
 SOCKET = "claude"
 SESSION = "claude"
-# No restart loop: when the landing page exits its window closes, and the server with it
+# The landing page stays as the first window: closing the last session returns to it
 LANDING = "cs landing"
 
 
 def ghostty_command(cst):
     """Returns the Ghostty command line that runs `cst` with the Alt keys unbound.
 
-    Ghostty switches its own tabs with Alt+1…9 and moves between splits with Alt+↑↓; a
-    separate instance lets these flags apply.
+    Ghostty moves between splits with Alt+↑↓; a separate instance lets these flags apply.
     """
     keybinds = []
-    for i in range(1, 10):
-        keybinds += [f"--keybind=alt+{i}=unbind", f"--keybind=alt+digit_{i}=unbind"]
     # Alt+←→ stay with Ghostty: tmux does not use them
     for way in ("up", "down"):
         keybinds += [f"--keybind=alt+{way}=unbind", f"--keybind=alt+arrow_{way}=unbind"]
@@ -42,6 +39,9 @@ def main(argv=None):
     tmux = ["tmux", "-L", SOCKET, "-f", str(conf)]
     try:
         start_session(tmux)
+        # The landing page is the first window; marked so Alt+Up/Down step over it. Set on
+        # every start, so a server from before the mark gets it too
+        subprocess.run([*tmux, "set-option", "-w", "-t", f"{SESSION}:^", "@cs-landing", "1"])
     except FileNotFoundError:
         print("cst: tmux is not installed", file=sys.stderr)
         return 1

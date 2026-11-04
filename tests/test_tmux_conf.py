@@ -35,10 +35,12 @@ def test_windows_are_numbered_from_one(run):
 def test_scheme_a_keys(run):
     keys = " ".join(run("list-keys", "-T", "root").split())
     assert "M-Up previous-window" in keys and "M-Down next-window" in keys
+    # Both step over the landing page
+    assert keys.count("@cs-landing") == 2
     assert "M-n display-popup" in keys and "cs new --pick" in keys
     assert "M-c confirm-before" in keys and "close #{window_name}? (y/n)" in keys
     assert "cs close #{window_id}" in keys
-    for gone in ("M-Left", "M-Right", "M-0", "M-,", "M-.", "M-g", "cs next"):
+    for gone in ("M-Left", "M-Right", "M-0", "M-1 ", "M-9 ", "M-,", "M-.", "M-g", "cs next"):
         assert gone not in keys
 
 
@@ -137,3 +139,12 @@ def test_sidebars_keep_their_width_in_windows_resized_while_hidden(tmp_path, mon
         except (ProcessLookupError, ChildProcessError):
             pass
         os.close(fd)
+
+
+def test_showing_a_window_wakes_its_sidebar_or_landing_page(run):
+    hooks = run("show-hooks", "-g", "session-window-changed")
+    assert "@cs-wake" in hooks
+    wake = run("show", "-gv", "@cs-wake")
+    assert "@cs-sidebar" in wake and "@cs-landing" in wake and "F12" in wake
+    # Nothing is sent when the window has neither, so Claude's pane never gets the key
+    assert '[ -n "$p" ]' in wake
