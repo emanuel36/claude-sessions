@@ -204,6 +204,15 @@ def test_statusline_logs_the_cost_only_when_it_changes(monkeypatch, capsys):
     assert [(e["id"], e["cost"]) for e in events if "cost" in e] == [("s1", 1.5)]
 
 
+def test_cost_events_carry_lines(monkeypatch, capsys):
+    store.write({**state.new_record("s1"), "status_since": 7.0})
+    data = {**STATUS_INPUT, "cost": {"total_cost_usd": 1.0, "total_lines_added": 10}}
+    data["cost"]["total_lines_removed"] = 2
+    cs_statusline(monkeypatch, capsys, json.dumps(data).encode())
+    events = [e for e in journal.read_day(datetime.date.today()) if "cost" in e]
+    assert [(e["id"], e["cost"], e["added"], e["removed"]) for e in events] == [("s1", 1.0, 10, 2)]
+
+
 def test_statusline_without_a_valid_session_still_saves_the_limits(monkeypatch, capsys):
     for session_id in (None, "../s1"):
         data = {**STATUS_INPUT, "session_id": session_id}

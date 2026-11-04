@@ -1,5 +1,7 @@
+import datetime
 import json
 import os
+import time
 
 from claude_sessions.claude import files
 from claude_sessions.core import paths
@@ -106,3 +108,12 @@ def test_an_interrupt_in_a_text_block_counts(tmp_path):
         tmp_path / "t.jsonl", {"type": "user", "message": {"content": [block]}}
     )
     assert files.was_interrupted(transcript)
+
+
+def test_history_keeps_the_days_a_session_was_active():
+    day1, day3 = (
+        time.mktime((2026, 11, 1, 12, 0, 0, 0, 0, -1)),
+        time.mktime((2026, 11, 3, 12, 0, 0, 0, 0, -1)),
+    )
+    sessions = files.read_history([entry("a", "/w/api", day1), entry("a", "/w/api", day3)])
+    assert sessions[0].days == {datetime.date(2026, 11, 1), datetime.date(2026, 11, 3)}

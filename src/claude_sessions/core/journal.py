@@ -1,7 +1,7 @@
 """The history of the day: status changes and costs, one JSON line per event.
 
 Events go to `journal/YYYY-MM-DD.jsonl` under the state home, by the local date of their
-time, so the panel's summary survives sessions closing and the panel restarting.
+time, so the sidebar's summary survives sessions closing and the sidebar restarting.
 """
 
 import contextlib
@@ -99,7 +99,7 @@ def _parse(raw):
 class DayReader:
     """Reads a day's events again and again, parsing only the lines added since the last read.
 
-    The panel reads the day every second; a busy day's file takes long to parse whole.
+    The sidebar reads the day every second; a busy day's file takes long to parse whole.
     """
 
     def __init__(self):
@@ -136,25 +136,69 @@ class DayReader:
         return self.events
 
 
-def spend_by_session(day_events, first_day):
-    """The cost each session added from `first_day` on.
+USAGE_KEYS = ("cost", "added", "removed")
 
-    Costs are running totals, so a session that began earlier counts only what it grew by:
-    its highest cost in the window minus its last cost before it.
+
+def window_totals(day_events, first_day):
+    """The cost and lines each session added from `first_day` on.
+
+    The values are running totals, so a session that began earlier counts only what it grew by:
+    its highest value in the window minus its last value before it.
 
     Args:
         day_events: The events of each day, by `datetime.date`.
         first_day: The first day of the window.
+
+    Returns:
+        `{session id: {"cost", "added", "removed"}}` for the sessions with a cost in the window;
+        a key an event lacks counts as 0.
     """
     before, peak = {}, {}
     for day in sorted(day_events):
         for event in day_events[day]:
-            cost = event.get("cost")
-            if not isinstance(cost, int | float):
+            if not isinstance(event.get("cost"), int | float):
                 continue
             sid = event.get("id")
             if day < first_day:
-                before[sid] = cost
+                before[sid] = {k: _number(event.get(k)) for k in USAGE_KEYS}
             else:
-                peak[sid] = max(peak.get(sid, 0.0), cost)
-    return {sid: peak[sid] - before.get(sid, 0.0) for sid in peak}
+                top = peak.setdefault(sid, dict.fromkeys(USAGE_KEYS, 0))
+                for k in USAGE_KEYS:
+                    top[k] = max(top[k], _number(event.get(k)))
+    return {
+        sid: {k: top[k] - before.get(sid, {}).get(k, 0) for k in USAGE_KEYS}
+        for sid, top in peak.items()
+    }
+
+
+def _number(value):
+    return value if isinstance(value, int | float) else 0
+
+
+def spend_by_session(day_events, first_day):
+    """The cost each session added from `first_day` on, as `window_totals` counts it."""
+    return {sid: t["cost"] for sid, t in window_totals(day_events, first_day).items()}
+
+
+def day_costs(day_events):
+    """The cost all sessions added on each day.
+
+    Costs are running totals: a session's share of a day is its highest cost that day minus
+    its last cost before it.
+
+    Args:
+        day_events: The events of each day, by `datetime.date`.
+
+    Returns:
+        `{day: dollars}` for every day given.
+    """
+    last, totals = {}, {}
+    for day in sorted(day_events):
+        peak = {}
+        for event in day_events[day]:
+            cost = event.get("cost")
+            if isinstance(cost, int | float):
+                peak[event.get("id")] = max(peak.get(event.get("id"), 0.0), cost)
+        totals[day] = sum(max(0.0, top - last.get(sid, 0.0)) for sid, top in peak.items())
+        last.update(peak)
+    return totals

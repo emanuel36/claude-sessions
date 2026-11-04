@@ -161,7 +161,16 @@ def record_usage(data, now):
             store.write(record)
             cost = record["usage"]["cost"]
             if cost is not None and cost != before:
-                journal.append({"t": now, "id": session_id, "cost": cost})
+                usage = record["usage"]
+                journal.append(
+                    {
+                        "t": now,
+                        "id": session_id,
+                        "cost": cost,
+                        "added": usage["added"],
+                        "removed": usage["removed"],
+                    }
+                )
 
 
 def _cells(text):

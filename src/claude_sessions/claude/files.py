@@ -3,10 +3,11 @@
 They live under CLAUDE_CONFIG_DIR, ~/.claude by default (see `paths.config_dir`).
 """
 
+import datetime
 import json
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from claude_sessions.core import paths
 
@@ -27,6 +28,7 @@ class HistorySession:
     cwd: str
     last: float = 0.0
     first_prompt: str = ""
+    days: set[datetime.date] = field(default_factory=set)
 
 
 def history_path():
@@ -47,7 +49,9 @@ def read_history(lines):
         s = sessions.setdefault(
             entry["sessionId"], HistorySession(entry["sessionId"], entry["project"])
         )
-        s.last = max(s.last, (entry.get("timestamp") or 0) / 1000)
+        stamp = (entry.get("timestamp") or 0) / 1000
+        s.last = max(s.last, stamp)
+        s.days.add(datetime.date.fromtimestamp(stamp))
         s.cwd = entry["project"]
         prompt = str(entry.get("display") or "")
         # A command such as /resume says nothing about the session
