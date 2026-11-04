@@ -7,9 +7,9 @@ from claude_sessions.ui.sidebar import Entry
 
 NOW = 1_700_000_000.0
 ENTRIES = [
-    Entry(1, "@1", "client", state.PERMISSION, NOW - 30),
-    Entry(2, "@2", "notes", state.DONE, NOW - 60),
-    Entry(3, "@3", "api", state.SHELL, NOW - 90),
+    Entry("@1", "client", state.PERMISSION, NOW - 30),
+    Entry("@2", "notes", state.DONE, NOW - 60),
+    Entry("@3", "api", state.SHELL, NOW - 90),
 ]
 LIMITS = {
     "five_hour": {"pct": 58, "resets_at": NOW + 3600},
@@ -45,9 +45,11 @@ def test_app_draws_the_column_and_highlights_its_window(monkeypatch):
         async with app.run_test(size=(sidebar.WIDTH, 30)) as pilot:
             await pilot.pause()
             lines = screen_text(app)
-            assert "⧗ 3 api" in lines[8]
-            strip = app.screen._compositor.render_strips()[8]
-            assert any("262626" in str(seg.style.bgcolor) for seg in strip if "api" in seg.text)
+            assert lines[9].startswith(" api")
+            strip = app.screen._compositor.render_strips()[9]
+            assert any(
+                "2c4547" in str(seg.style.bgcolor).lower() for seg in strip if "api" in seg.text
+            )
 
     asyncio.run(go())
 
@@ -59,7 +61,7 @@ def test_click_selects_that_window(monkeypatch):
         app = make_app()
         async with app.run_test(size=(sidebar.WIDTH, 30)) as pilot:
             await pilot.pause()
-            await pilot.click("#column", offset=(5, 6))
+            await pilot.click("#column", offset=(5, 13))
             await pilot.pause()
 
     asyncio.run(go())
@@ -96,7 +98,7 @@ def test_failed_load_keeps_the_last_lines_and_logs_once(monkeypatch):
             fail.append(1)
             app.tick_once(NOW)
             app.tick_once(NOW)
-            assert "api" in screen_text(app)[8]
+            assert "api" in screen_text(app)[9]
 
     asyncio.run(go())
     assert logged == [1]
@@ -118,7 +120,7 @@ def test_failed_render_keeps_the_app_alive_and_logs_once(monkeypatch):
             app.tick_once(NOW)
             app.tick_once(NOW)
             assert app.is_running
-            assert "api" in screen_text(app)[8]
+            assert "api" in screen_text(app)[9]
 
     asyncio.run(go())
     assert logged == [1]
@@ -174,7 +176,7 @@ def test_load_orders_by_window_index_and_skips_windows_without_sessions(monkeypa
         "status_since": NOW - 5,
         "cwd": "/w/web",
         "started_at": NOW - 900,
-        "usage": {"model": "Opus 4", "context": 12.0, "cost": 1.5, "duration": 600.0},
+        "usage": {"model": "Opus 4", "context": 12.0, "cost": 1.5, "api_duration": 900.0},
         "mux": {"pane": "%4"},
     }
     monkeypatch.setattr(sidebar_app.hook, "live_sessions", lambda now: [record])
@@ -186,8 +188,8 @@ def test_load_orders_by_window_index_and_skips_windows_without_sessions(monkeypa
     monkeypatch.setattr(sidebar_app.files, "load_history", lambda: [])
 
     entries, stats, runs = sidebar_app.load(NOW)
-    # Time open counts from the session's start, so it grows while the session waits
-    assert entries == [Entry(2, "@4", "web", state.WORKING, NOW - 5, 1.5, 900.0)]
+    # The time beside the cost is what Claude spent answering, not the time since the start
+    assert entries == [Entry("@4", "web", state.WORKING, NOW - 5, 1.5, 900.0, "Opus 4")]
     assert stats.limits == {"x": 1} and stats.today == 0 and len(stats.week) == 7
 
 
@@ -246,3 +248,21 @@ def test_load_lists_headless_runs_until_they_finish(monkeypatch):
 
 def test_the_tmux_pane_is_as_wide_as_the_column():
     assert tmux.SIDEBAR_WIDTH == sidebar.WIDTH
+
+
+def test_f12_from_tmux_draws_at_once(monkeypatch):
+    stub_tmux(monkeypatch)
+    loads = []
+
+    async def go():
+        app = sidebar_app.SidebarApp(
+            load=lambda now: loads.append(now) or (ENTRIES, STATS, []), window_id="@3"
+        )
+        async with app.run_test(size=(sidebar.WIDTH, 30)) as pilot:
+            await pilot.pause()
+            before = len(loads)
+            await pilot.press("f12")
+            await pilot.pause()
+            assert len(loads) == before + 1
+
+    asyncio.run(go())

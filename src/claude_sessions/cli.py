@@ -5,7 +5,7 @@ cs statusline                                record usage, then print the status
 cs seen --tmux-pane %3 --tmux-socket PATH    mark the session in that pane as seen
 cs landing                                   show the landing page (what cst opens with)
 cs sidebar                                   show the sessions' column in a window's left pane
-cs new --pick                                pick a folder and start a session there (Alt+n)
+cs new --pick                                the panel that starts a session (Alt+n)
 cs layout [WINDOW_ID]                        put the sidebar in a window, fit them all
 cs close WINDOW_ID                           stop the window's background sessions, close it
 cs install                                   register cs in Claude Code's settings.json
@@ -18,9 +18,9 @@ import os
 import sys
 import time
 
-from claude_sessions.claude import files, hook, install, statusline
+from claude_sessions.claude import hook, install, statusline
 from claude_sessions.core import paths
-from claude_sessions.term import picker, tmux
+from claude_sessions.term import tmux
 
 
 def cmd_hook(_args):
@@ -68,26 +68,10 @@ def cmd_sidebar(_args):
     return 0
 
 
-def cmd_new(args):
-    if args.preview:
-        print(picker.preview(args.preview))
-    elif args.sessions:
-        for line in picker.session_lines(args.sessions):
-            print(line)
-    elif args.projects:
-        home = os.path.expanduser("~")
-        # The folders of open sessions first, then the recent ones; a background run's folder
-        # (a start hook's work folder) is no project
-        live = hook.live_sessions(time.time())
-        open_now = [r["cwd"] for r in live if r.get("cwd") and not r.get("headless")]
-        for path in dict.fromkeys([*open_now, *files.recent_projects()]):
-            print(path.replace(home, "~", 1) if path.startswith(home) else path)
-    else:
-        # Imported here: the hook runs on every event and needs none of it
-        import importlib.resources
+def cmd_new(_args):
+    from claude_sessions.ui import new_app
 
-        script = importlib.resources.files("claude_sessions.term") / "data" / "new_session.sh"
-        os.execvp("bash", ["bash", str(script)])
+    new_app.main()
     return 0
 
 
@@ -125,12 +109,8 @@ def main(argv=None):
     sub.add_parser("landing").set_defaults(func=cmd_landing)
     sub.add_parser("sidebar").set_defaults(func=cmd_sidebar)
     p_new = sub.add_parser("new")
-    # Both flags serve the popup: --pick is what it runs, --projects feeds its list
-    group = p_new.add_mutually_exclusive_group(required=True)
-    group.add_argument("--pick", action="store_true")
-    group.add_argument("--projects", action="store_true")
-    group.add_argument("--preview", metavar="PATH")
-    group.add_argument("--sessions", metavar="PATH")
+    # The popup runs `cs new --pick`; the flag keeps the command readable in tmux.conf
+    p_new.add_argument("--pick", action="store_true", required=True)
     p_new.set_defaults(func=cmd_new)
     p_layout = sub.add_parser("layout")
     p_layout.add_argument("window", nargs="?")

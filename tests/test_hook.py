@@ -54,15 +54,6 @@ def test_a_headless_run_is_marked_and_takes_no_tab(monkeypatch):
     assert store.read("s2")["headless"] is False
 
 
-def test_hook_records_the_permission_mode():
-    event = {"session_id": "s1", "hook_event_name": "UserPromptSubmit", "cwd": "/w"}
-    hook.handle_event({**event, "permission_mode": "acceptEdits"}, ENV, 5.0)
-    assert store.read("s1")["mode"] == "acceptEdits"
-    # An event without the field keeps the last mode
-    hook.handle_event(event, ENV, 6.0)
-    assert store.read("s1")["mode"] == "acceptEdits"
-
-
 def test_hook_with_dead_tmux_socket_does_not_raise():
     env = {**ENV, "TMUX": "/nonexistent,1,0", "TMUX_PANE": "%1"}
     hook.handle_event(
@@ -85,6 +76,18 @@ def test_a_clear_or_resume_drops_the_session_it_replaced():
 def test_hook_session_end_removes_the_record():
     hook.handle_event({"session_id": "s1", "hook_event_name": "SessionStart"}, ENV, 1.0)
     hook.handle_event({"session_id": "s1", "hook_event_name": "SessionEnd"}, ENV, 2.0)
+    assert store.read("s1") is None
+
+
+def test_session_end_of_a_clear_or_resume_keeps_the_record():
+    # The new session may start first, and a resumed session has the same id
+    hook.handle_event({"session_id": "s1", "hook_event_name": "SessionStart"}, ENV, 1.0)
+    for reason in ("clear", "resume"):
+        end = {"session_id": "s1", "hook_event_name": "SessionEnd", "reason": reason}
+        hook.handle_event(end, ENV, 2.0)
+        assert store.read("s1") is not None
+    exit_ = {"session_id": "s1", "hook_event_name": "SessionEnd", "reason": "prompt_input_exit"}
+    hook.handle_event(exit_, ENV, 3.0)
     assert store.read("s1") is None
 
 

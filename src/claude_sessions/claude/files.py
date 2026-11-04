@@ -77,12 +77,6 @@ def load_history():
     return _cache["sessions"]
 
 
-def recent_projects():
-    """Returns the folders Claude Code ran in, most recent first, that still exist."""
-    ordered = dict.fromkeys(s.cwd for s in load_history())
-    return [p for p in ordered if os.path.isdir(p)]
-
-
 def transcript_path(session_id, cwd):
     """Where Claude Code keeps a session's transcript: one folder per project path."""
     folder = re.sub(r"[^A-Za-z0-9]", "-", cwd)

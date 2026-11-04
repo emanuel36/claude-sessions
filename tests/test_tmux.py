@@ -163,29 +163,6 @@ def attached(server):
     os.close(fd)
 
 
-def test_new_session_popup_does_not_wait_for_the_popup(monkeypatch):
-    started = []
-
-    class Fake:
-        def __init__(self, argv, **kwargs):
-            started.append((argv, kwargs))
-
-    monkeypatch.setattr(tmux.subprocess, "Popen", Fake)
-    tmux.new_session_popup()
-    [(argv, kwargs)] = started
-    assert argv[:2] == ["tmux", "display-popup"] and argv[-1] == "cs new --pick"
-    assert " New session " in argv
-    assert kwargs["start_new_session"] and kwargs["stdout"] == tmux.subprocess.DEVNULL
-
-
-def test_new_session_popup_without_tmux_does_not_raise(monkeypatch):
-    def fail(*args, **kwargs):
-        raise OSError
-
-    monkeypatch.setattr(tmux.subprocess, "Popen", fail)
-    tmux.new_session_popup()
-
-
 def window_name_of(server, window):
     return server("display", "-p", "-t", f":{window}", "#{window_name}").strip()
 
@@ -260,7 +237,8 @@ def test_close_window_stops_attached_background_sessions(monkeypatch):
     monkeypatch.setattr(tmux, "_children", lambda pid: ["101"] if pid == "100" else [])
     monkeypatch.setattr(tmux.subprocess, "run", lambda cmd, **kw: stops.append((cmd, kw)) or None)
     tmux.close_window("@2")
-    assert calls == [("list-panes", "-t", "@2", "-F", "#{pane_pid}"), ("kill-window", "-t", "@2")]
+    assert calls[0] == ("list-panes", "-t", "@2", "-F", "#{pane_pid}")
+    assert calls[-1] == ("kill-window", "-t", "@2")
     assert stops == [(["claude", "stop", "685e0c8a"], {"capture_output": True, "timeout": 10})]
 
 
@@ -278,6 +256,41 @@ def test_close_window_closes_even_when_claude_stop_fails(monkeypatch):
     monkeypatch.setattr(tmux.subprocess, "run", boom)
     tmux.close_window("@2")
     assert calls[-1] == ("kill-window", "-t", "@2")
+
+
+def fake_windows(monkeypatch, active):
+    """Windows @1 (the landing page, no sidebar), @2 and @3 (sessions), and what tmux was told."""
+    calls = []
+
+    def run(*args):
+        calls.append(args)
+        if args[:2] == ("list-panes", "-a"):
+            return "@1 \n@2 1\n@2 \n@3 1\n@3 "
+        if args[0] == "list-windows":
+            return "@1\t1\tsessions\n@2\t2\tapi\n@3\t3\tweb"
+        if args[0] == "display-message":
+            return active
+        return ""
+
+    monkeypatch.setattr(tmux, "run", run)
+    return calls
+
+
+def test_closing_the_window_on_screen_moves_to_the_next_session_not_the_landing(monkeypatch):
+    calls = fake_windows(monkeypatch, active="1")
+    tmux.close_window("@2")
+    assert calls[-2:] == [("select-window", "-t", "@3"), ("kill-window", "-t", "@2")]
+    assert tmux.next_session_window("@3") == "@2"
+
+
+def test_closing_the_last_session_or_a_hidden_one_selects_nothing(monkeypatch):
+    calls = fake_windows(monkeypatch, active="0")
+    tmux.close_window("@2")
+    assert not any(c[0] == "select-window" for c in calls)
+    monkeypatch.setattr(
+        tmux, "run", lambda *a: "@1\t1\tsessions\n@2\t2\tapi" if a[0] == "list-windows" else "@2 1"
+    )
+    assert tmux.next_session_window("@2") is None
 
 
 @pytest.fixture
