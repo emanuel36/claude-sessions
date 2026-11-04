@@ -3,9 +3,11 @@
 cs hook                                      read a hook event on stdin, update the session
 cs statusline                                record usage, then print the status line
 cs seen --tmux-pane %3 --tmux-socket PATH    mark the session in that pane as seen
-cs panel                                     show the open and recent sessions (tab 1)
-cs new --pick                                pick a folder and start a session there (Alt+c)
-cs next                                      go to the next session that needs you
+cs landing                                   show the landing page (what cst opens with)
+cs sidebar                                   show the sessions' column in a window's left pane
+cs new --pick                                pick a folder and start a session there (Alt+n)
+cs layout [WINDOW_ID]                        put the sidebar in a window, fit them all
+cs close WINDOW_ID                           stop the window's background sessions, close it
 cs install                                   register cs in Claude Code's settings.json
 cs uninstall                                 take it out again
 """
@@ -51,11 +53,18 @@ def cmd_seen(args):
     return 0
 
 
-def cmd_panel(_args):
+def cmd_landing(_args):
     # Imported here: the hook runs on every event and must not pay for loading Textual
-    from claude_sessions.panel import app
+    from claude_sessions.ui import landing_app
 
-    app.main()
+    landing_app.main()
+    return 0
+
+
+def cmd_sidebar(_args):
+    from claude_sessions.ui import sidebar_app
+
+    sidebar_app.main()
     return 0
 
 
@@ -67,8 +76,10 @@ def cmd_new(args):
             print(line)
     elif args.projects:
         home = os.path.expanduser("~")
-        # The folders of open sessions first, then the recent ones
-        open_now = [r["cwd"] for r in hook.live_sessions(time.time()) if r.get("cwd")]
+        # The folders of open sessions first, then the recent ones; a background run's folder
+        # (a start hook's work folder) is no project
+        live = hook.live_sessions(time.time())
+        open_now = [r["cwd"] for r in live if r.get("cwd") and not r.get("headless")]
         for path in dict.fromkeys([*open_now, *files.recent_projects()]):
             print(path.replace(home, "~", 1) if path.startswith(home) else path)
     else:
@@ -80,18 +91,15 @@ def cmd_new(args):
     return 0
 
 
-def cmd_next(_args):
-    windows = tmux.windows_of(hook.live_sessions(time.time()))
-    target = tmux.next_pending(windows, tmux.run("display-message", "-p", "#{window_id}"))
-    if target is None:
-        tmux.run("display-message", "Nothing is waiting for you")
-    else:
-        tmux.select(target)
+def cmd_layout(args):
+    if args.window:
+        tmux.add_sidebar(args.window)
+    tmux.fit_sidebars()
     return 0
 
 
-def cmd_tig(args):
-    tmux.toggle_tig(args.window, args.path)
+def cmd_close(args):
+    tmux.close_window(args.window)
     return 0
 
 
@@ -114,7 +122,8 @@ def main(argv=None):
     p_seen.add_argument("--tmux-pane", required=True)
     p_seen.add_argument("--tmux-socket", required=True)
     p_seen.set_defaults(func=cmd_seen)
-    sub.add_parser("panel").set_defaults(func=cmd_panel)
+    sub.add_parser("landing").set_defaults(func=cmd_landing)
+    sub.add_parser("sidebar").set_defaults(func=cmd_sidebar)
     p_new = sub.add_parser("new")
     # Both flags serve the popup: --pick is what it runs, --projects feeds its list
     group = p_new.add_mutually_exclusive_group(required=True)
@@ -123,11 +132,12 @@ def main(argv=None):
     group.add_argument("--preview", metavar="PATH")
     group.add_argument("--sessions", metavar="PATH")
     p_new.set_defaults(func=cmd_new)
-    sub.add_parser("next").set_defaults(func=cmd_next)
-    p_tig = sub.add_parser("tig")
-    p_tig.add_argument("window")
-    p_tig.add_argument("path")
-    p_tig.set_defaults(func=cmd_tig)
+    p_layout = sub.add_parser("layout")
+    p_layout.add_argument("window", nargs="?")
+    p_layout.set_defaults(func=cmd_layout)
+    p_close = sub.add_parser("close")
+    p_close.add_argument("window")
+    p_close.set_defaults(func=cmd_close)
     sub.add_parser("install").set_defaults(func=cmd_install)
     sub.add_parser("uninstall").set_defaults(func=cmd_uninstall)
     args = parser.parse_args(argv)

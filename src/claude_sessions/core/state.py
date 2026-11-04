@@ -78,6 +78,8 @@ def apply_event(record, event, now):
     def done_waiting(who):
         pending[:] = [p for p in pending if p[0] != who]
 
+    if record is None:
+        r["started_at"] = now
     if event.get("cwd"):
         r["cwd"] = event["cwd"]
     if event.get("transcript_path"):

@@ -36,15 +36,14 @@ def handle_event(event, env, now):
     session_id = event.get("session_id")
     with store.locked(session_id):
         if event.get("hook_event_name") == "SessionEnd":
-            record = store.read(session_id)
             # The lock stays: a hook may be waiting on it, and the dead-process sweep removes it
             store.remove(session_id, keep_lock=True)
-            if record:
-                tmux.notify(record, ended=True)
             return
         record = state.apply_event(store.read(session_id), event, now)
         pid = claude_pid(env)
         record.update(pid=pid, pid_start=store.process_start(pid), mux=tmux.detect(env, session_id))
+        # A run without a terminal (a start hook's `claude -p`) is listed apart from the sessions
+        record["headless"] = tmux.is_headless(env)
         # Only hook input carries the mode; it stays until a later event tells another one
         record["mode"] = event.get("permission_mode") or record.get("mode")
         record = tmux.settle_if_viewed(record, now)
@@ -52,7 +51,6 @@ def handle_event(event, env, now):
         # Told under the lock, so overlapping hooks reach tmux in the order they hit the disk
         if event.get("hook_event_name") in NAMING_EVENTS:
             tmux.name_window(record)
-        tmux.notify(record)
     if event.get("hook_event_name") == "SessionStart" and event.get("source") in REPLACING:
         store.remove_replaced(record)
 
@@ -61,7 +59,7 @@ def live_sessions(now):
     """Returns the records of all live sessions, ordered for display.
 
     Records of dead processes are deleted, and sessions the user interrupted with Esc (in the
-    middle of a turn, or at a prompt) are settled as idle, on disk and in tmux.
+    middle of a turn, or at a prompt) are settled as idle on disk.
 
     Args:
         now: Current time as a Unix timestamp.
@@ -88,13 +86,11 @@ def settle_interrupted(session_id, now):
             return current
         settled = state.mark_interrupted(current, now)
         store.write(settled)
-        # Under the lock, so a hook that changes the session next is told to tmux after this
-        tmux.notify(settled)
     return settled
 
 
 def seen(pane, socket, now):
-    """Marks the finished session in a tmux pane as seen, on disk and in tmux.
+    """Marks the finished session in a tmux pane as seen on disk.
 
     Args:
         pane: The pane's id, such as `%3`.
@@ -112,4 +108,3 @@ def seen(pane, socket, now):
                 continue
             current = state.mark_seen(current, now)
             store.write(current)
-            tmux.notify(current)

@@ -37,8 +37,7 @@ main() {
 
     [ "$(uname -s)" = Linux ] || fail "only Linux is supported"
     check_tmux
-    command -v fzf >/dev/null 2>&1 || fail "fzf is needed (Alt+c uses it); install it first"
-    command -v tig >/dev/null 2>&1 || say "Note: tig is not installed, so Alt+g is off."
+    command -v fzf >/dev/null 2>&1 || fail "fzf is needed (Alt+n uses it); install it first"
     find_uv
 
     say "Installing claude-sessions..."

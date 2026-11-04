@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Alt+c: pick a recent project folder (or type a path), then a new session or an earlier one to
+# Alt+n: pick a recent project folder (or type a path), then a new session or an earlier one to
 # resume, and open Claude in a new window there.
 set -uo pipefail
 # --print-query prints the typed text first and the picked line second; fzf exits 1 when

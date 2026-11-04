@@ -10,7 +10,7 @@ from claude_sessions.term import launcher
 
 
 @pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux is not installed")
-def test_creates_the_session_with_the_panel_in_tab_one_then_attaches(monkeypatch):
+def test_launcher_starts_the_landing_page_then_attaches(monkeypatch):
     socket = f"cs-test-launcher-{uuid.uuid4().hex}"
     attached = []
     monkeypatch.setattr(launcher, "SOCKET", socket)
@@ -32,16 +32,24 @@ def test_creates_the_session_with_the_panel_in_tab_one_then_attaches(monkeypatch
             text=True,
             check=True,
         ).stdout
-        assert out.split("\n")[0] == f'1 sessions "{launcher.PANEL}"'
+        assert out.split("\n")[0] == f'1 sessions "{launcher.LANDING}"'
         assert attached[0][-3:] == ["attach-session", "-t", "claude"]
         assert attached[0][2] == socket
     finally:
         kill_tmux(socket)
 
 
-def test_ghostty_command_unbinds_the_alt_keys():
+def test_landing_runs_once_without_a_restart_loop():
+    assert launcher.LANDING == "cs landing"
+
+
+def test_ghostty_leaves_alt_left_right_and_unbinds_alt_up_down():
     cmd = launcher.ghostty_command("/x/cst")
-    assert "--keybind=alt+1=unbind" in cmd and "--keybind=alt+arrow_right=unbind" in cmd
+    assert "--keybind=alt+up=unbind" in cmd and "--keybind=alt+down=unbind" in cmd
+    assert "--keybind=alt+1=unbind" in cmd and "--keybind=alt+digit_9=unbind" in cmd
+    assert not any(
+        "alt+left" in a or "alt+right" in a or "arrow_left" in a or "arrow_right" in a for a in cmd
+    )
     assert cmd[-2:] == ["-e", "/x/cst"]
 
 

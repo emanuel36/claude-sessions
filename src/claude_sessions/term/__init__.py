@@ -1,1 +1,1 @@
-"""The tmux side: the server of sessions and what its tabs show."""
+"""The tmux side: the server of sessions and what its windows show."""

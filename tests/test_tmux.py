@@ -2,7 +2,6 @@ import os
 import pty
 import shutil
 import signal
-import subprocess
 import time
 
 import pytest
@@ -17,6 +16,18 @@ TMUX = {"TMUX": "/tmp/ttmux-1000/claude,123,0", "TMUX_PANE": "%3"}
 def test_detect():
     assert tmux.detect({}) == {}
     assert tmux.detect(TMUX) == {"socket": "/tmp/ttmux-1000/claude", "pane": "%3"}
+
+
+def test_detect_ignores_the_tab_a_headless_run_inherited(monkeypatch):
+    # A `claude -p` started from a session (a start hook, a script) carries that tab's TMUX
+    assert tmux.detect({**TMUX, "CLAUDE_CODE_ENTRYPOINT": "sdk-cli"}, "s1") == {}
+    assert tmux.detect({**TMUX, "CLAUDE_CODE_ENTRYPOINT": "cli"}, "s1")["pane"] == "%3"
+    assert tmux.is_headless({"CLAUDE_CODE_ENTRYPOINT": "sdk-py"})
+    # A daemon session is looked up by its attach tab whatever its entrypoint says
+    monkeypatch.setattr(tmux, "attached_pane", lambda sid: {"socket": "/s", "pane": "%9"})
+    job = {"CLAUDE_JOB_DIR": "/j", "CLAUDE_CODE_ENTRYPOINT": "sdk-cli"}
+    assert tmux.detect(job, "s1")["pane"] == "%9"
+    assert not tmux.is_headless({})
 
 
 def test_detect_finds_the_tab_attached_to_a_background_session(monkeypatch):
@@ -68,7 +79,7 @@ def test_run_returns_empty_when_tmux_fails(monkeypatch):
 
 def test_windows_of_keeps_this_server_and_the_most_urgent_per_window(monkeypatch):
     monkeypatch.setenv("TMUX", "/s/claude,1,0")
-    panes = "%1\t@1\n%2\t@1\n%3\t@2\n%4\t@3"
+    panes = "%1\t@1\t1\n%2\t@1\t2\n%3\t@2\t1\n%4\t@3\t1"
     monkeypatch.setattr(tmux, "run", lambda *args: panes)
 
     def record(session_id, status, pane, socket="/s/claude"):
@@ -84,34 +95,25 @@ def test_windows_of_keeps_this_server_and_the_most_urgent_per_window(monkeypatch
     assert [(w.window_id, w.lead["id"]) for w in windows] == [("@1", "a"), ("@2", "c")]
 
 
-def _window(window_id, status):
-    return tmux.Window(window_id, {"status": status})
+def test_windows_of_picks_the_leader_by_its_pane_not_by_urgency(monkeypatch):
+    monkeypatch.setenv("TMUX", "/s/claude,1,0")
+    # The sidebar is pane 1; the first Claude pane is 2, a teammate's is 3
+    panes = "%9\t@1\t1\n%2\t@1\t2\n%3\t@1\t3\n%7\t@2\t4\n%6\t@2\t3"
 
+    def record(session_id, status, pane):
+        return {"id": session_id, "status": status, "mux": {"socket": "/s/claude", "pane": pane}}
 
-WINDOWS = [
-    _window("@2", state.PERMISSION),
-    _window("@4", state.INPUT),
-    _window("@5", state.DONE),
-    _window("@6", state.WORKING),
-]
-
-
-def test_next_pending_starts_with_the_first_that_needs_you():
-    assert tmux.next_pending(WINDOWS).window_id == "@2"
-    assert tmux.next_pending(WINDOWS, "@6").window_id == "@2"
-
-
-def test_next_pending_walks_through_all_pending_and_wraps():
-    seen = []
-    current = None
-    for _ in range(4):
-        current = tmux.next_pending(WINDOWS, current).window_id
-        seen.append(current)
-    assert seen == ["@2", "@4", "@5", "@2"]
-
-
-def test_next_pending_without_pending():
-    assert tmux.next_pending([_window("@6", state.WORKING)]) is None
+    records = [
+        record("mate", state.PERMISSION, "%3"),
+        record("lead", state.IDLE, "%2"),
+        record("late", state.WORKING, "%7"),
+        record("early", state.WORKING, "%6"),
+    ]
+    monkeypatch.setattr(tmux, "run", lambda *args: panes)
+    by_window = {w.window_id: w for w in tmux.windows_of(records)}
+    assert (by_window["@1"].lead["id"], by_window["@1"].leader["id"]) == ("mate", "lead")
+    assert by_window["@1"].status == state.PERMISSION
+    assert by_window["@2"].leader["id"] == "early"
 
 
 @pytest.fixture
@@ -161,25 +163,27 @@ def attached(server):
     os.close(fd)
 
 
-def test_notify_sets_then_unsets_the_status_and_since(server):
-    mux = pane_of(server, 1)
-    record = {"status": state.PERMISSION, "status_since": 123.9, "mux": mux}
-    tmux.notify(record)
-    assert pane_option(server, mux, "@claude_status") == state.PERMISSION
-    assert pane_option(server, mux, "@cs-since") == "123"
-    tmux.notify({**record, "status": state.WORKING})
-    assert pane_option(server, mux, "@claude_status") == state.WORKING
-    assert pane_option(server, mux, "@cs-since") == ""
-    # A shell wait counts its time too
-    tmux.notify({**record, "status": state.SHELL})
-    assert pane_option(server, mux, "@cs-since") == "123"
-    tmux.notify(record, ended=True)
-    assert pane_option(server, mux, "@claude_status") == ""
-    assert pane_option(server, mux, "@cs-since") == ""
+def test_new_session_popup_does_not_wait_for_the_popup(monkeypatch):
+    started = []
+
+    class Fake:
+        def __init__(self, argv, **kwargs):
+            started.append((argv, kwargs))
+
+    monkeypatch.setattr(tmux.subprocess, "Popen", Fake)
+    tmux.new_session_popup()
+    [(argv, kwargs)] = started
+    assert argv[:2] == ["tmux", "display-popup"] and argv[-1] == "cs new --pick"
+    assert " New session " in argv
+    assert kwargs["start_new_session"] and kwargs["stdout"] == tmux.subprocess.DEVNULL
 
 
-def test_notify_with_a_dead_server_does_not_raise():
-    tmux.notify({"status": state.DONE, "mux": {"socket": "/nonexistent", "pane": "%1"}})
+def test_new_session_popup_without_tmux_does_not_raise(monkeypatch):
+    def fail(*args, **kwargs):
+        raise OSError
+
+    monkeypatch.setattr(tmux.subprocess, "Popen", fail)
+    tmux.new_session_popup()
 
 
 def window_name_of(server, window):
@@ -242,40 +246,80 @@ def test_throwaway_servers_have_their_own_names_and_leave_no_socket():
     assert not any(os.path.exists(socket) for socket in sockets)
 
 
-def test_summary_text_counts_the_tabs_that_need_you_and_the_5h_quota():
-    counts = {state.PERMISSION: 1, state.INPUT: 2, state.DONE: 1, state.WORKING: 3}
-    limits = {"five_hour": {"pct": 62.4, "resets_at": 1}}
-    assert tmux.summary_text(counts, limits) == (
-        "#[fg=red bold]! 1 #[fg=yellow bold]? 2 #[fg=green]✓ 1 #[default]· 5h 62%"
-    )
-
-
-def test_summary_text_leaves_out_what_is_unknown():
-    assert tmux.summary_text({state.WORKING: 2}, {}) == ""
-    assert tmux.summary_text({}, {"five_hour": {"pct": 8, "resets_at": 1}}) == "5h 8%"
-    assert tmux.summary_text({state.DONE: 1}, {}) == "#[fg=green]✓ 1"
-
-
-def git_repo(path):
-    subprocess.run(["git", "init", "-q", str(path)], check=True)
-    return str(path)
-
-
-def test_toggle_tig_splits_to_the_right_then_closes(server, monkeypatch, tmp_path):
-    monkeypatch.setattr(tmux, "run", lambda *args: server(*args).rstrip("\n"))
-    window = server("display", "-p", "#{window_id}").strip()
-    tmux.toggle_tig(window, git_repo(tmp_path), command="sleep 60")
-    panes = server("list-panes", "-t", window, "-F", "#{pane_left}\t#{pane_width}\t#{@cs-tig}")
-    (left_pane, tig_pane) = (line.split("\t") for line in panes.splitlines())
-    assert left_pane[0] == "0" and left_pane[2] == "" and tig_pane[2] == "1"
-    assert abs(int(left_pane[1]) - int(tig_pane[1])) <= 2
-    tmux.toggle_tig(window, str(tmp_path), command="sleep 60")
-    assert len(server("list-panes", "-t", window).splitlines()) == 1
-
-
-def test_toggle_tig_outside_a_repo_says_so(monkeypatch, tmp_path):
+def test_close_window_stops_attached_background_sessions(monkeypatch):
     calls = []
-    monkeypatch.setattr(tmux, "run", lambda *args: calls.append(args) or "")
-    tmux.toggle_tig("@1", str(tmp_path))
-    assert [c[0] for c in calls] == ["list-panes", "display-message"]
-    assert "Not a git repository" in calls[1][-1]
+    stops = []
+
+    def run(*args):
+        calls.append(args)
+        return "100\n200" if args[0] == "list-panes" else ""
+
+    commands = {"101": ["/bin/claude", "attach", "685e0c8a"], "200": ["claude"]}
+    monkeypatch.setattr(tmux, "run", run)
+    monkeypatch.setattr(tmux, "_cmdline", lambda pid: commands.get(pid, []))
+    monkeypatch.setattr(tmux, "_children", lambda pid: ["101"] if pid == "100" else [])
+    monkeypatch.setattr(tmux.subprocess, "run", lambda cmd, **kw: stops.append((cmd, kw)) or None)
+    tmux.close_window("@2")
+    assert calls == [("list-panes", "-t", "@2", "-F", "#{pane_pid}"), ("kill-window", "-t", "@2")]
+    assert stops == [(["claude", "stop", "685e0c8a"], {"capture_output": True, "timeout": 10})]
+
+
+def test_close_window_closes_even_when_claude_stop_fails(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        tmux, "run", lambda *a: calls.append(a) or ("100" if a[0] == "list-panes" else "")
+    )
+    monkeypatch.setattr(tmux, "_cmdline", lambda pid: ["claude", "attach", "685e0c8a"])
+    monkeypatch.setattr(tmux, "_children", lambda pid: [])
+
+    def boom(*args, **kwargs):
+        raise tmux.subprocess.TimeoutExpired("claude", 10)
+
+    monkeypatch.setattr(tmux.subprocess, "run", boom)
+    tmux.close_window("@2")
+    assert calls[-1] == ("kill-window", "-t", "@2")
+
+
+@pytest.fixture
+def in_server(server, monkeypatch):
+    """Points the module's `run`, which has no -S, at the throwaway server, as $TMUX does."""
+    socket = server("display", "-p", "#{socket_path}").strip()
+    monkeypatch.setenv("TMUX", f"{socket},1,0")
+    return server
+
+
+def window_of(server, window):
+    return server("display", "-p", "-t", f":{window}", "#{window_id}").strip()
+
+
+def list_panes(server, window, fmt):
+    return server("list-panes", "-t", f":{window}", "-F", fmt).splitlines()
+
+
+def sidebar_width(server, window):
+    fmt = "#{?@cs-sidebar,#{pane_width},}"
+    return int(next(w for w in list_panes(server, window, fmt) if w))
+
+
+def test_add_sidebar_puts_a_fixed_width_pane_on_the_left(in_server):
+    tmux.add_sidebar(window_of(in_server, 1), command="sleep 600")
+    fmt = "#{pane_left}\t#{pane_width}\t#{@cs-sidebar}\t#{pane_active}"
+    panes = list_panes(in_server, 1, fmt)
+    assert panes[0] == f"0\t{tmux.SIDEBAR_WIDTH}\t1\t0" and panes[1].endswith("\t\t1")
+
+
+def test_add_sidebar_twice_adds_one(in_server):
+    window = window_of(in_server, 1)
+    tmux.add_sidebar(window, command="sleep 600")
+    tmux.add_sidebar(window, command="sleep 600")
+    assert len(list_panes(in_server, 1, "#{pane_id}")) == 2
+
+
+def test_teammate_split_keeps_the_sidebar_width(in_server):
+    window = window_of(in_server, 1)
+    tmux.add_sidebar(window, command="sleep 600")
+    in_server("split-window", "-h", "-t", window)
+    in_server("resize-pane", "-t", f"{window}.0", "-x", "50")
+    assert sidebar_width(in_server, 1) == 50
+    tmux.fit_sidebars()
+    assert sidebar_width(in_server, 1) == tmux.SIDEBAR_WIDTH
