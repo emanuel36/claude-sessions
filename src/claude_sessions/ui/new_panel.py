@@ -1,0 +1,232 @@
+"""The folder list that starts a session: folders by last use, each opening its last sessions.
+
+The Alt+n panel shows it under a search line; the landing page shows it under its header.
+"""
+
+import os
+import shlex
+from dataclasses import dataclass, field
+
+from rich.text import Text
+
+from claude_sessions.ui import words
+from claude_sessions.ui.words import STYLES
+
+# How many of a folder's last sessions open under it
+SHOWN = 3
+# The list's width in the Alt+n popup; the landing page gives it all the room it has
+WIDTH = 48
+AGE_WIDTH = 4
+SPEND_WIDTH = 8
+FOOTER = "↑↓ move · → sessions · Enter new / resume · Esc"
+
+
+@dataclass
+class Session:
+    """An earlier session of a folder, to resume."""
+
+    id: str
+    title: str
+    last: float
+    cost: float | None = None
+
+
+@dataclass
+class Folder:
+    """A folder Claude ran in: when it was last used, its sessions and its week's spend."""
+
+    path: str
+    name: str
+    last: float
+    count: int = 0
+    spend: float = 0.0
+    sessions: list[Session] = field(default_factory=list)
+
+
+@dataclass
+class Row:
+    """A line of the list: a typed path, a folder, or one of a folder's sessions."""
+
+    kind: str
+    path: str
+    folder: Folder | None = None
+    session: Session | None = None
+
+
+def matches(folder, query):
+    """Tells whether a folder's path holds every word of the query."""
+    text = folder.path.lower()
+    return all(word in text for word in query.lower().split())
+
+
+def rows(folders, query, expanded, is_dir):
+    """The list's rows: a typed path first, then the folders that match, with sessions below.
+
+    Args:
+        folders: The folders, last used first.
+        query: What the user typed.
+        expanded: The paths of the folders showing their sessions.
+        is_dir: Tells whether a typed path (with `~` expanded) is a folder.
+    """
+    out = []
+    typed = query.strip()
+    if typed.startswith(("/", "~")) and is_dir(typed):
+        out.append(Row("path", typed))
+    for folder in folders:
+        if not matches(folder, query):
+            continue
+        out.append(Row("folder", folder.path, folder))
+        if folder.path in expanded:
+            out += [Row("session", folder.path, folder, s) for s in folder.sessions[:SHOWN]]
+    return out
+
+
+def _line(*parts):
+    out = Text()
+    for text, style in parts:
+        out.append(text, style=STYLES[style])
+    return out
+
+
+def _rule(width):
+    return _line((" " + "─" * (width - 1), "rule"))
+
+
+def folder_lines(folder, expanded, now, width=WIDTH):
+    """A folder's two lines: name and last use, then its sessions and the week's spend."""
+    arrow = " ▾ " if folder.path in expanded else " ▸ "
+    age = words.age(folder.last, now)
+    first = _line((arrow, "soft"))
+    first.append(words.fit(folder.name, width - 4 - len(age)), style=STYLES["strong"])
+    first.append(" " * (width - first.cell_len - len(age)))
+    first.append(age, style=STYLES["soft"])
+    sessions = f"{folder.count} session{'s' * (folder.count != 1)}"
+    spend = f" · {words.money(folder.spend)} 7d" if folder.spend else ""
+    return [first, _line(("   " + sessions + spend, "soft"))]
+
+
+def session_line(row, now, width=WIDTH):
+    """One of a folder's last sessions: its title, when it was used and what it cost."""
+    s = row.session
+    last = row.folder.sessions[:SHOWN][-1] is s
+    line = _line(("     ", "ink"), ("└ " if last else "├ ", "faint"))
+    tail = words.age(s.last, now).ljust(AGE_WIDTH) + words.money(s.cost).rjust(SPEND_WIDTH)
+    title = width - line.cell_len - len(tail) - 1
+    line.append(words.fit(s.title, title).ljust(title + 1), style=STYLES["ink"])
+    line.append(tail, style=STYLES["soft"])
+    return line
+
+
+def row_lines(shown, expanded, now, width=WIDTH):
+    """Every row's lines, with a rule between folders, and the row each line belongs to."""
+    lines, owners = [], []
+    for i, row in enumerate(shown):
+        if row.kind == "path":
+            drawn = [_line(("   + ", "green"), (words.fit(f"open {row.path}", width - 5), "ink"))]
+        elif row.kind == "session":
+            drawn = [session_line(row, now, width)]
+        else:
+            if lines:
+                lines.append(_rule(width))
+                owners.append(None)
+            drawn = folder_lines(row.folder, expanded, now, width)
+        lines += drawn
+        owners += [i] * len(drawn)
+    return lines, owners
+
+
+def list_lines(shown, cursor, expanded, now, room, width=WIDTH):
+    """The rows around the selected one, in `room` lines at most, the selection highlighted.
+
+    Args:
+        shown: The rows from `rows`.
+        cursor: The index of the selected row.
+        expanded: The paths of the folders showing their sessions.
+        now: Current time as a Unix timestamp.
+        room: Lines available.
+        width: Columns available.
+    """
+    if not shown:
+        return [_line(("   nothing matches", "faint"))]
+    lines, owners = row_lines(shown, expanded, now, width)
+    picked = [n for n, owner in enumerate(owners) if owner == cursor]
+    # Scrolls just enough to keep every line of the selected row in view
+    top = max(0, min(picked[-1] - room + 1, len(lines) - room))
+    top = min(top, picked[0])
+    out = []
+    for n in range(top, min(len(lines), top + room)):
+        line = lines[n]
+        if n in picked:
+            line.pad_right(width - line.cell_len)
+            line.stylize(words.CURRENT)
+        out.append(line)
+    return out
+
+
+def screen(shown, cursor, query, expanded, now, height):
+    """The Alt+n panel as `height` lines: the search line, the list and the keys."""
+    prompt = _line((" ❯ ", "blue"), (query, "ink"), ("▌", "blue"))
+    lines = [prompt, Text(), *list_lines(shown, cursor, expanded, now, height - 4)]
+    while len(lines) < height - 1:
+        lines.append(Text())
+    lines.append(_line((" " + FOOTER, "faint")))
+    return [Text(" ") if not line.plain else line for line in lines][:height]
+
+
+class Picker:
+    """What the user did in the list: the search, the selected row and the open folders."""
+
+    def __init__(self, is_dir=None):
+        self.is_dir = is_dir or (lambda path: os.path.isdir(os.path.expanduser(path)))
+        self.folders = []
+        self.query = ""
+        self.cursor = 0
+        self.expanded = set()
+
+    def shown(self):
+        """The rows on show, with the cursor kept on one of them."""
+        out = rows(self.folders, self.query, self.expanded, self.is_dir)
+        self.cursor = max(0, min(self.cursor, len(out) - 1))
+        return out
+
+    def selected(self):
+        """The selected row, or None when nothing is listed."""
+        shown = self.shown()
+        return shown[self.cursor] if shown else None
+
+    def key(self, key, character=None):
+        """Applies a key; returns the row to open on Enter, else None.
+
+        Args:
+            key: Textual's name for the key, such as `up` or `enter`.
+            character: The printable character it types, if any, which goes to the search.
+        """
+        row = self.selected()
+        if key == "enter":
+            return row
+        if key == "up":
+            self.cursor -= 1
+        elif key == "down":
+            self.cursor += 1
+        elif key == "right" and row and row.kind == "folder":
+            self.expanded.add(row.path)
+        elif key == "left" and row and row.kind != "path":
+            # From a session, back to its folder, which then closes
+            self.expanded.discard(row.path)
+            shown = self.shown()
+            self.cursor = next(
+                i for i, r in enumerate(shown) if r.kind == "folder" and r.path == row.path
+            )
+        elif key == "backspace":
+            self.query, self.cursor = self.query[:-1], 0
+        elif character:
+            self.query, self.cursor = self.query + character, 0
+        self.shown()
+        return None
+
+
+def command(row):
+    """The tmux `new-window` arguments that open a row: resume its session, or start one."""
+    if row.kind == "session":
+        return ["-c", row.path, f"claude --resume {shlex.quote(row.session.id)}"]
+    return ["-c", os.path.expanduser(row.path), "claude"]

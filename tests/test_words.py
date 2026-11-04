@@ -23,14 +23,6 @@ def test_reset_at_today_or_weekday():
     assert words.reset_at(friday, NOW) == "Fri 09:00"
 
 
-def test_ago_minutes_hours_yesterday_weekday_date():
-    assert words.ago(NOW - 20, NOW) == "1m"
-    assert words.ago(NOW - 2 * 3600, NOW) == "2h"
-    assert words.ago(NOW - 24 * 3600, NOW) == "yesterday"
-    assert words.ago(NOW - 6 * 24 * 3600, NOW) == "Wed"
-    assert words.ago(NOW - 9 * 24 * 3600, NOW) == "25 Oct"
-
-
 def test_thousands_uses_a_comma():
     assert words.thousands(4210) == "4,210"
     assert words.thousands(23) == "23"
@@ -69,12 +61,6 @@ def test_span_is_minutes_then_hours_and_minutes():
     assert words.span(4320) == "1h12"
     assert words.span(10800) == "3h00"
     assert words.span(None) == ""
-
-
-def test_time_left_is_hours_under_a_day_then_days_and_hours():
-    assert words.time_left(NOW + 2 * 3600 + 33 * 60 + 30, NOW) == "2h33"
-    assert words.time_left(NOW + 2 * 86400 + 18 * 3600 + 53 * 60, NOW) == "2d 18h"
-    assert words.time_left(NOW - 5, NOW) == "0m"
 
 
 def test_next_tick_can_wake_on_the_next_frame():

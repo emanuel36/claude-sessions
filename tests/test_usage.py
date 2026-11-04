@@ -23,12 +23,6 @@ def log(sid, days_ago, cost, added=0, removed=0):
     journal.append({"t": t, "id": sid, "cost": cost, "added": added, "removed": removed})
 
 
-def test_activity_counts_sessions_per_day_oldest_first():
-    history = [session(days={TODAY, ago(1)}), session(days={TODAY})]
-    counts = usage.activity(history, NOW)
-    assert len(counts) == 14 and counts[-1] == 2 and counts[-2] == 1 and counts[0] == 0
-
-
 def test_totals_today_week_projects_and_lines():
     log("a", 7, 1.0, 5, 1)
     log("a", 2, 2.0, 10, 2)

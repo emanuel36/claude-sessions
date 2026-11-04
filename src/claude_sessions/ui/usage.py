@@ -125,16 +125,3 @@ def day_summary(events, today, now):
     day.removed = sum(t["removed"] for t in week.values())
     day.sessions = len(seen)
     return day
-
-
-def activity(history, now, days=14):
-    """Returns how many sessions had prompts on each of the last days, oldest first.
-
-    Args:
-        history: The sessions of `files.load_history`.
-        now: Current time as a Unix timestamp.
-        days: How many days to count, today last.
-    """
-    today = datetime.date.fromtimestamp(now)
-    window = [today - datetime.timedelta(days=n) for n in range(days - 1, -1, -1)]
-    return [sum(1 for s in history if d in s.days) for d in window]

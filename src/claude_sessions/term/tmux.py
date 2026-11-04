@@ -153,7 +153,27 @@ def close_window(window_id):
                 subprocess.run(["claude", "stop", arg], capture_output=True, timeout=10)
             except (OSError, subprocess.SubprocessError):
                 pass
+    # Left to itself, tmux goes back to the window used before, often the landing page
+    if run("display-message", "-p", "-t", window_id, "#{window_active}") == "1":
+        neighbour = next_session_window(window_id)
+        if neighbour:
+            run("select-window", "-t", neighbour)
     run("kill-window", "-t", window_id)
+
+
+def next_session_window(window_id):
+    """The session window to show when one closes: the next one by index, else the one before.
+
+    Session windows are those with a sidebar; None when the closing one is the last of them.
+    """
+    panes = run("list-panes", "-a", "-F", "#{window_id} #{@cs-sidebar}").splitlines()
+    with_sidebar = {line.split()[0] for line in panes if len(line.split()) == 2}
+    order = [w for w, _, _ in window_entries() if w in with_sidebar or w == window_id]
+    if window_id not in order:
+        return None
+    i = order.index(window_id)
+    after, before = order[i + 1 :], order[:i]
+    return (after or before[::-1] or [None])[0]
 
 
 def add_sidebar(window_id, command="cs sidebar"):
@@ -235,24 +255,6 @@ def window_entries():
         window_id, index, name = line.split("\t", 2)
         rows.append((window_id, int(index), name))
     return sorted(rows, key=lambda row: row[1])
-
-
-def new_session_popup():
-    """Opens the popup where the user picks a folder for a new session.
-
-    display-popup returns only when the popup closes, so it is started without waiting.
-    """
-    argv = ["tmux", "display-popup", "-E", "-w", "80%", "-h", "70%", "-T", " New session "]
-    try:
-        subprocess.Popen(
-            [*argv, "cs new --pick"],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-    except OSError:
-        pass
 
 
 def tmux_pane_in_view(where):

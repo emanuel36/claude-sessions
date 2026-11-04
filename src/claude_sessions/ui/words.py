@@ -57,22 +57,6 @@ def span(seconds):
     return f"{minutes // 60}h{minutes % 60:02d}"
 
 
-def time_left(until, now):
-    """Says how long until a moment, such as a usage window's reset.
-
-    Args:
-        until: The moment, as a Unix timestamp.
-        now: Current time as a Unix timestamp.
-
-    Returns:
-        `2h33` under a day, else days and hours as `2d 18h`; `0m` once it has passed.
-    """
-    seconds = max(0.0, until - now)
-    if seconds < 86400:
-        return span(seconds)
-    return f"{int(seconds // 86400)}d {int(seconds % 86400 // 3600)}h"
-
-
 def next_tick(now, per_second=1):
     """Seconds until the next redraw: the next whole second, or the next frame when animating.
 
@@ -153,19 +137,16 @@ def reset_at(resets_at, now):
     return f"{WEEKDAYS[t.tm_wday]} {hour}"
 
 
-def ago(timestamp, now):
-    """How long ago something happened: minutes, hours, 'yesterday', the weekday, or the date."""
-    seconds = now - timestamp
+def age(timestamp, now):
+    """How long ago, in four cells at most: `5m`, `3h`, `12d` or `40w`."""
+    seconds = max(0.0, now - timestamp)
     if seconds < 3600:
         return f"{max(1, int(seconds // 60))}m"
-    days = (datetime.date.fromtimestamp(now) - datetime.date.fromtimestamp(timestamp)).days
-    if days < 1:
+    if seconds < 86400:
         return f"{int(seconds // 3600)}h"
-    if days == 1:
-        return "yesterday"
-    if days < 7:
-        return WEEKDAYS[time.localtime(timestamp).tm_wday]
-    return short_date(datetime.date.fromtimestamp(timestamp))
+    if seconds < 100 * 86400:
+        return f"{int(seconds // 86400)}d"
+    return f"{int(seconds // (7 * 86400))}w"
 
 
 def short_date(day):
