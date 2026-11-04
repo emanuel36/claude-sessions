@@ -29,7 +29,7 @@ FULL = {
 def test_parse_full_input():
     assert statusline.parse(FULL) == {
         "cost": 0.01234,
-        "duration": 45.0,
+        "api_duration": 2.3,
         "model": "Opus",
         "added": 156,
         "removed": 23,
@@ -45,7 +45,7 @@ def test_parse_early_session_nulls():
     data = {"session_id": "abc123", "model": {"id": "claude-opus-4-1"}, "cost": None}
     assert statusline.parse(data) == {
         "cost": None,
-        "duration": None,
+        "api_duration": None,
         "model": "claude-opus-4-1",
         "added": 0,
         "removed": 0,
@@ -58,7 +58,7 @@ def test_parse_ignores_values_of_the_wrong_type():
     data = {"model": "Opus", "cost": {"total_cost_usd": "1.2", "total_lines_added": True}}
     assert statusline.parse(data) == {
         "cost": None,
-        "duration": None,
+        "api_duration": None,
         "model": None,
         "added": 0,
         "removed": 0,
@@ -147,7 +147,7 @@ def save_statusline(tmp_path, command):
 STATUS_INPUT = {
     "session_id": "s1",
     "model": {"id": "claude-opus-4-1", "display_name": "Opus"},
-    "cost": {"total_cost_usd": 1.5, "total_duration_ms": 60000, "total_lines_added": 3},
+    "cost": {"total_cost_usd": 1.5, "total_api_duration_ms": 60000, "total_lines_added": 3},
     "rate_limits": {"five_hour": {"used_percentage": 40, "resets_at": 4_000_000_000}},
 }
 
@@ -180,7 +180,7 @@ def test_statusline_records_usage_without_touching_status(monkeypatch, capsys):
         **record,
         "usage": {
             "cost": 1.5,
-            "duration": 60.0,
+            "api_duration": 60.0,
             "model": "Opus",
             "added": 3,
             "removed": 0,
@@ -219,50 +219,3 @@ def test_statusline_without_a_valid_session_still_saves_the_limits(monkeypatch, 
         assert cs_statusline(monkeypatch, capsys, json.dumps(data).encode())[0] == 0
     assert statusline.load_limits(0) == {"five_hour": {"pct": 40, "resets_at": 4_000_000_000}}
     assert not os.path.exists(os.path.join(paths.state_dir(), paths.ERROR_LOG))
-
-
-def test_with_mode_right_aligns_the_mode_on_the_visible_width():
-    out = statusline.with_mode("\x1b[32mOpus\x1b[0m  $1.50", "plan", 30)
-    assert out == "\x1b[32mOpus\x1b[0m  $1.50" + " " * 15 + "plan"
-    assert out.replace("\x1b[32m", "").replace("\x1b[0m", "").__len__() == 30
-
-
-def test_with_mode_leaves_the_line_without_a_mode_or_room():
-    assert statusline.with_mode("Opus", "", 30) == "Opus"
-    assert statusline.with_mode("Opus", "accept edits on", 12) == "Opus"
-
-
-def test_statusline_shows_the_session_mode_on_the_right(monkeypatch, capsys):
-    store.write({**state.new_record("s1"), "mode": "acceptEdits"})
-    monkeypatch.setattr(statusline, "pane_width", lambda: 50)
-    _, out = cs_statusline(monkeypatch, capsys, json.dumps(STATUS_INPUT).encode())
-    line = out.rstrip("\n")
-    assert line.startswith("Opus  $1.50") and line.endswith("⏵⏵ accept edits on")
-    assert len(line) == 48
-
-
-def test_statusline_shows_no_mode_when_the_mode_is_default_or_the_width_unknown(
-    monkeypatch, capsys
-):
-    store.write({**state.new_record("s1"), "mode": "default"})
-    monkeypatch.setattr(statusline, "pane_width", lambda: 50)
-    assert cs_statusline(monkeypatch, capsys, json.dumps(STATUS_INPUT).encode()) == (
-        0,
-        "Opus  $1.50\n",
-    )
-    store.write({**state.new_record("s1"), "mode": "plan"})
-    monkeypatch.setattr(statusline, "pane_width", lambda: None)
-    assert cs_statusline(monkeypatch, capsys, json.dumps(STATUS_INPUT).encode())[1] == (
-        "Opus  $1.50\n"
-    )
-
-
-def test_statusline_puts_the_mode_on_the_last_line_of_a_chained_status_line(
-    monkeypatch, capsys, tmp_path
-):
-    save_statusline(tmp_path, "printf 'first\\nsecond\\n'")
-    store.write({**state.new_record("s1"), "mode": "plan"})
-    monkeypatch.setattr(statusline, "pane_width", lambda: 30)
-    _, out = cs_statusline(monkeypatch, capsys, json.dumps(STATUS_INPUT).encode())
-    first, last = out.rstrip("\n").split("\n")
-    assert first == "first" and last.startswith("second") and last.endswith("⏸ plan mode on")

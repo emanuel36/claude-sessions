@@ -36,6 +36,12 @@ def handle_event(event, env, now):
     session_id = event.get("session_id")
     with store.locked(session_id):
         if event.get("hook_event_name") == "SessionEnd":
+            # /clear and /resume end a session as they start another in the same process, and
+            # the two hooks may run in either order: removing here could take the record the
+            # new session just wrote (a resumed session keeps its id). The new session's start
+            # removes the one it replaced
+            if event.get("reason") in REPLACING:
+                return
             # The lock stays: a hook may be waiting on it, and the dead-process sweep removes it
             store.remove(session_id, keep_lock=True)
             return
@@ -44,8 +50,6 @@ def handle_event(event, env, now):
         record.update(pid=pid, pid_start=store.process_start(pid), mux=tmux.detect(env, session_id))
         # A run without a terminal (a start hook's `claude -p`) is listed apart from the sessions
         record["headless"] = tmux.is_headless(env)
-        # Only hook input carries the mode; it stays until a later event tells another one
-        record["mode"] = event.get("permission_mode") or record.get("mode")
         record = tmux.settle_if_viewed(record, now)
         store.write(record)
         # Told under the lock, so overlapping hooks reach tmux in the order they hit the disk
