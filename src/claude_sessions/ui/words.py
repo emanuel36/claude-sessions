@@ -1,6 +1,7 @@
 """Words, numbers, bars and styles the sidebar and the landing page share."""
 
 import datetime
+import math
 import time
 import unicodedata
 
@@ -25,15 +26,16 @@ STYLES = {
     "soft": Style(color="color(244)"),
     "faint": Style(color="color(240)"),
     "rule": Style(color="color(238)"),
-    "mascot": Style(color="color(173)"),
+    "mascot": Style(color="color(37)"),
     "strong": Style(color="bright_white", bold=True),
 }
 CURRENT = Style(bgcolor="color(235)")
 
 MASCOT = (" ▐▛███▜▌", "▝▜█████▛▘", "  ▘▘ ▝▝  ")
 
-# Working sessions blink between these, a frame per second
-SPIN = "●○"
+# A working session's tint breathes once in PULSE seconds; the screen redraws FPS times a second
+PULSE = 1.4
+FPS = 8
 # Quota bars turn yellow, then red, from these percentages
 AMBER, RED = 70, 85
 
@@ -71,19 +73,24 @@ def time_left(until, now):
     return f"{int(seconds // 86400)}d {int(seconds % 86400 // 3600)}h"
 
 
-def next_tick(now):
-    """Seconds until the next whole second, when the screens redraw and the working mark blinks.
+def next_tick(now, per_second=1):
+    """Seconds until the next redraw: the next whole second, or the next frame when animating.
 
     Textual drops a one-shot timer whose delay has passed by the time it starts, which ends a
-    redraw loop for good; a delay that small waits for the second after instead.
+    redraw loop for good; a delay that small waits for the step after instead.
+
+    Args:
+        now: Current time as a Unix timestamp.
+        per_second: How many redraws a second the screen wants.
     """
-    delay = 1 - now % 1
-    return delay if delay >= MIN_TICK else delay + 1
+    step = 1 / per_second
+    delay = step - now % step
+    return delay if delay >= MIN_TICK else delay + step
 
 
-def spin_frame(now):
-    """The blink frame for a moment, in step with the sidebar's (● on even seconds)."""
-    return SPIN[int(now) % len(SPIN)]
+def pulse(now):
+    """Where a breathing tint is at a moment: 0.0 at its dimmest, 1.0 at its brightest."""
+    return (1 - math.cos(2 * math.pi * now / PULSE)) / 2
 
 
 def waiting_label(seconds):

@@ -1,6 +1,7 @@
-"""The landing page: what `cst` opens with, until a session starts.
+"""The landing page: what `cst` opens with, and what it returns to when no session is left.
 
-Runs as `cs landing` in the first window; it closes itself once another window exists.
+Runs as `cs landing` in the first window, which stays for the life of the server: closing the
+last session brings the user back to it.
 """
 
 import datetime
@@ -168,8 +169,11 @@ class LandingApp(App):
         self.tick_once(now)
 
     def tick_once(self, now):
-        """Reads the page's data, redraws, and closes the window once another one exists."""
+        """Reads the page's data and redraws, unless another window is the one on screen."""
         self.now = now
+        # Hidden behind a session, it has nothing to show: skip the reading and the git calls
+        if tmux.run("display-message", "-p", "-t", self.window_id, "#{window_active}") == "0":
+            return
         # A failed load leaves the last data, redrawn with the current time
         try:
             (self.recent, self.folders, self.limits, self.totals, self.activity, self.first_day) = (
@@ -178,10 +182,6 @@ class LandingApp(App):
         except Exception as e:  # noqa: BLE001 - a file caught mid-change must not stop the page
             self.load_error = self.log_once(e, self.load_error)
         self.redraw()
-        windows = tmux.run("display-message", "-p", "-t", self.window_id, "#{session_windows}")
-        if windows.isdigit() and int(windows) > 1:
-            tmux.run("kill-window", "-t", self.window_id)
-            self.exit()
 
     @staticmethod
     def log_once(exc, last):

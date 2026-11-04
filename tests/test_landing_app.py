@@ -72,16 +72,17 @@ def test_q_ends_the_server(monkeypatch):
     assert ("kill-server",) in calls
 
 
-def test_closes_itself_once_another_window_exists(monkeypatch):
-    calls = stub_tmux(monkeypatch, windows="2")
-    drive([])
-    assert ("kill-window", "-t", "@1") in calls
-
-
-def test_stays_while_it_is_the_only_window(monkeypatch):
+def test_never_closes_itself(monkeypatch):
     calls = stub_tmux(monkeypatch, windows="1")
     drive([])
     assert not any(c[0] == "kill-window" for c in calls)
+
+
+def test_does_not_read_its_data_while_another_window_is_shown(monkeypatch):
+    stub_tmux(monkeypatch, windows="0")
+    loaded = []
+    drive([], load=lambda now: loaded.append(now) or DATA)
+    assert not loaded
 
 
 def test_slash_filters_recent_sessions(monkeypatch):

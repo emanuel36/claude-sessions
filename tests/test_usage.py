@@ -53,3 +53,24 @@ def test_totals_are_reused_until_the_journal_grows():
     assert reader.totals(history, NOW) is first
     log("a", 0, 2.0)
     assert reader.totals(history, NOW).today == 2.0
+
+
+def test_day_summary_adds_up_hours_lines_sessions_and_waiting():
+    today = datetime.date(2026, 11, 4)
+    at = lambda h, m=0: time.mktime((2026, 11, 4, h, m, 0, 0, 0, -1))  # noqa: E731
+    events = {
+        datetime.date(2026, 11, 3): [{"t": at(0) - 60, "id": "a", "cost": 1.0, "added": 10}],
+        today: [
+            {"t": at(9), "id": "a", "status": "input"},
+            {"t": at(9, 10), "id": "a", "status": "working"},
+            {"t": at(9, 20), "id": "a", "cost": 2.0, "added": 40, "removed": 5},
+            {"t": at(10), "id": "b", "status": "permission"},
+            {"t": at(11), "id": "old", "status": "ended"},
+        ],
+    }
+    day = usage.day_summary(events, today, now=at(10, 30))
+    assert day.hours[9] == 3 and day.hours[10] == 1 and day.hours[11] == 1
+    # a waited 10 minutes for an answer; b is still waiting, 30 minutes so far
+    assert day.waited == 600 + 1800
+    # Lines count only what the sessions grew by today; an ended session is not one of today's
+    assert (day.added, day.removed, day.sessions) == (30, 5, 2)

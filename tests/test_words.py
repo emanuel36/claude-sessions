@@ -47,8 +47,12 @@ def test_moved_helpers():
     assert words.money(None) == ""
     assert words.waiting_label(30) == ""
     assert words.waiting_label(125) == "2m"
-    assert words.spin_frame(2) == "●"
-    assert words.spin_frame(3) == "○"
+
+
+def test_pulse_swings_between_dim_and_bright_each_period():
+    assert words.pulse(0.0) == 0.0
+    assert abs(words.pulse(words.PULSE / 2) - 1.0) < 1e-9
+    assert abs(words.pulse(words.PULSE) - words.pulse(0.0)) < 1e-9
 
 
 def test_next_tick_waits_for_the_next_second_but_never_almost_nothing():
@@ -71,3 +75,8 @@ def test_time_left_is_hours_under_a_day_then_days_and_hours():
     assert words.time_left(NOW + 2 * 3600 + 33 * 60 + 30, NOW) == "2h33"
     assert words.time_left(NOW + 2 * 86400 + 18 * 3600 + 53 * 60, NOW) == "2d 18h"
     assert words.time_left(NOW - 5, NOW) == "0m"
+
+
+def test_next_tick_can_wake_on_the_next_frame():
+    assert abs(words.next_tick(10.03, 8) - 0.095) < 1e-9
+    assert words.next_tick(10.0, 8) == 0.125

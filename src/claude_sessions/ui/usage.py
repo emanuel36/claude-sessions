@@ -2,11 +2,25 @@
 
 import datetime
 import os
+import time
 from dataclasses import dataclass, field
 
-from claude_sessions.core import journal
+from claude_sessions.core import journal, state
 
 WEEK_DAYS = 7
+
+
+@dataclass
+class Day:
+    """What today's journal adds up to."""
+
+    # Events in each hour of the day, 24 entries; a rough measure of when Claude worked
+    hours: list[int] = field(default_factory=lambda: [0] * 24)
+    added: int = 0
+    removed: int = 0
+    sessions: int = 0
+    # Seconds sessions spent blocked on the user, an approval or an answer
+    waited: float = 0.0
 
 
 @dataclass
@@ -68,6 +82,49 @@ class Reader:
         )
         self.cached = (inputs, result)
         return result
+
+    def day(self, now):
+        """Returns today's activity, lines, sessions and waiting.
+
+        Reads what `totals` read last, so call it after `totals` in the same tick.
+
+        Args:
+            now: Current time as a Unix timestamp.
+        """
+        today = datetime.date.fromtimestamp(now)
+        if today not in self.journals:
+            return Day()
+        events = {d: r.events for d, r in self.journals.items()}
+        return day_summary(events, today, now)
+
+
+def day_summary(events, today, now):
+    """Adds up one day of the journal.
+
+    Args:
+        events: The events of each day, by `datetime.date`, including the days before.
+        today: The day to add up.
+        now: Current time as a Unix timestamp, where a wait still going ends.
+    """
+    day = Day()
+    seen, last = set(), {}
+    for event in events.get(today, []):
+        day.hours[time.localtime(event["t"]).tm_hour] += 1
+        sid, status = event.get("id"), event.get("status")
+        if status != journal.ENDED:
+            seen.add(sid)
+        if status is None:
+            continue
+        before = last.get(sid)
+        if before and before[0] in state.NEEDS_YOU:
+            day.waited += event["t"] - before[1]
+        last[sid] = (status, event["t"])
+    day.waited += sum(max(0.0, now - t) for status, t in last.values() if status in state.NEEDS_YOU)
+    week = journal.window_totals(events, first_day=today)
+    day.added = sum(t["added"] for t in week.values())
+    day.removed = sum(t["removed"] for t in week.values())
+    day.sessions = len(seen)
+    return day
 
 
 def activity(history, now, days=14):

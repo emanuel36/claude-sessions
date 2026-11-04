@@ -18,6 +18,9 @@ from claude_sessions.term import tmux
 from claude_sessions.ui import sidebar, usage, words
 
 _reader = usage.Reader()
+# How often a hidden sidebar checks whether its window is back on screen, in seconds; tmux
+# also wakes it with F12 when the window shows (see tmux.conf)
+HIDDEN_POLL = 1.0
 
 
 def load(now):
@@ -35,26 +38,22 @@ def load(now):
     records = hook.live_sessions(now)
     heads = {w.window_id: w for w in tmux.windows_of(records)}
     entries = []
-    for window_id, index, name in tmux.window_entries():
+    for window_id, _, name in tmux.window_entries():
         window = heads.get(window_id)
         if window is None:
             continue
         # The most urgent session sets the status; the first Claude pane's shows the details
         record, lead = window.head, window.lead
         u = record.get("usage") or {}
-        # Counted from the session's start, so it grows while the session waits; the status
-        # line's own duration only moves when Claude redraws it
-        started = record.get("started_at")
-        duration = now - started if started else u.get("duration")
         entries.append(
             sidebar.Entry(
-                index,
                 window_id,
                 name,
                 lead["status"],
                 state.since(lead),
                 u.get("cost"),
-                duration,
+                u.get("api_duration"),
+                u.get("model"),
             )
         )
     runs = sorted(
@@ -68,7 +67,7 @@ def load(now):
         key=lambda run: run.started,
     )
     totals = _reader.totals(history, now)
-    stats = sidebar.Stats(statusline.load_limits(now), totals.today, totals.days)
+    stats = sidebar.Stats(statusline.load_limits(now), totals.today, totals.days, _reader.day(now))
     return entries, stats, runs
 
 
@@ -88,6 +87,8 @@ class SidebarApp(App):
         self.load = load
         self.window_id = window_id
         self.entries, self.stats, self.runs = [], sidebar.Stats({}, 0.0, []), []
+        self.loaded_at = None
+        self.visible = True
         self.lines = []
         # The last failed load that went to the error log; the same one is not logged again
         self.load_error = None
@@ -111,24 +112,52 @@ class SidebarApp(App):
         if not self.is_running:
             return
         now = time.time()
-        # Wake on the next second, when the working mark blinks
-        self.set_timer(words.next_tick(now), self.tick)
         self.tick_once(now)
+        if not self.visible:
+            # Hidden: only watch for the window coming back, to draw it at once when it does
+            delay = HIDDEN_POLL
+        else:
+            # The next frame while a session works, so its tint breathes; else the next second
+            busy = any(e.status == state.WORKING for e in self.entries)
+            delay = words.next_tick(now, words.FPS if busy else 1)
+        self.set_timer(delay, self.tick)
 
     def tick_once(self, now):
-        """Reads the sessions, redraws, and closes the window once the sidebar is alone in it."""
-        # A failed load leaves the last data, redrawn with the current time (the mark blinks)
+        """Reads the sessions once a second and redraws while the window is on screen.
+
+        Closes the window once the sidebar is alone in it.
+        """
+        fields = tmux.run(
+            "display-message", "-p", "-t", self.window_id, "#{window_panes} #{window_active}"
+        ).split()
+        if fields[:1] == ["1"]:
+            tmux.close_window(self.window_id)
+            self.exit()
+            return
+        # A failed tmux call counts as on screen: better a wasted draw than a stale one
+        self.visible = fields[1:] != ["0"]
+        if not self.visible:
+            # Read again as soon as the window shows
+            self.loaded_at = None
+            return
+        # Between two readings only the working tint moves: redraw with the last data
+        if int(now) == self.loaded_at:
+            self.redraw(now)
+            return
+        self.loaded_at = int(now)
+        # A failed load leaves the last data, redrawn with the current time
         try:
             self.entries, self.stats, self.runs = self.load(now)
         except Exception as e:  # noqa: BLE001 - a file caught mid-change must not stop the sidebar
             self.load_error = self.log_once(e, self.load_error)
+        self.redraw(now)
+
+    def redraw(self, now):
+        """Draws the column; a failed draw keeps the last screen."""
         try:
             self.draw(now)
         except Exception as e:  # noqa: BLE001 - a bad entry must not stop the sidebar
             self.draw_error = self.log_once(e, self.draw_error)
-        if tmux.run("display-message", "-p", "-t", self.window_id, "#{window_panes}") == "1":
-            tmux.run("kill-window", "-t", self.window_id)
-            self.exit()
 
     @staticmethod
     def log_once(exc, last):
@@ -147,6 +176,13 @@ class SidebarApp(App):
             self.entries, self.window_id, self.stats, now, self.size.height, self.runs
         )
         self.query_one("#column", Static).update(Text("\n").join(self.lines))
+
+    def on_key(self, event):
+        # tmux sends F12 when this window comes on screen: draw now, not at the next tick
+        if event.key == "f12":
+            event.stop()
+            self.loaded_at = None
+            self.tick_once(time.time())
 
     def on_click(self, event: Click):
         event.stop()
