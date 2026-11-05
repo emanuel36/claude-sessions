@@ -135,6 +135,14 @@ def find_title(chunk):
     return found.get(b"customTitle") or found.get(b"aiTitle") or ""
 
 
+def title_of(transcript):
+    """Returns a session's title from its transcript, '' when it has none or cannot be read."""
+    try:
+        return find_title(tail(transcript, TITLE_TAIL_BYTES))
+    except (OSError, TypeError):
+        return ""
+
+
 class Titles:
     """Session titles, read from the transcripts again only when one changes."""
 
@@ -150,11 +158,6 @@ class Titles:
         cached = self.seen.get(session_id)
         if cached and cached[0] == mtime:
             return cached[1]
-        title = ""
-        if mtime is not None:
-            try:
-                title = find_title(tail(path, TITLE_TAIL_BYTES))
-            except OSError:
-                pass
+        title = title_of(path) if mtime is not None else ""
         self.seen[session_id] = (mtime, title)
         return title
