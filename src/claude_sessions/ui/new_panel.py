@@ -12,8 +12,8 @@ from rich.text import Text
 from claude_sessions.ui import words
 from claude_sessions.ui.words import STYLES
 
-# How many of a folder's last sessions open under it
-SHOWN = 3
+# How many of a folder's sessions open under it at once; the rest scroll into view
+SHOWN = 5
 # The list's width in the Alt+n popup; the landing page gives it all the room it has
 WIDTH = 48
 AGE_WIDTH = 4
@@ -51,6 +51,8 @@ class Row:
     path: str
     folder: Folder | None = None
     session: Session | None = None
+    # Whether a session is the last of its folder on show, drawn with the closing branch
+    end: bool = False
 
 
 def matches(folder, query):
@@ -59,7 +61,7 @@ def matches(folder, query):
     return all(word in text for word in query.lower().split())
 
 
-def rows(folders, query, expanded, is_dir):
+def rows(folders, query, expanded, is_dir, scroll=None):
     """The list's rows: a typed path first, then the folders that match, with sessions below.
 
     Args:
@@ -67,7 +69,9 @@ def rows(folders, query, expanded, is_dir):
         query: What the user typed.
         expanded: The paths of the folders showing their sessions.
         is_dir: Tells whether a typed path (with `~` expanded) is a folder.
+        scroll: By folder path, how many of its sessions are scrolled past; none by default.
     """
+    scroll = scroll or {}
     out = []
     typed = query.strip()
     if typed.startswith(("/", "~")) and is_dir(typed):
@@ -77,7 +81,9 @@ def rows(folders, query, expanded, is_dir):
             continue
         out.append(Row("folder", folder.path, folder))
         if folder.path in expanded:
-            out += [Row("session", folder.path, folder, s) for s in folder.sessions[:SHOWN]]
+            start = scroll.get(folder.path, 0)
+            window = folder.sessions[start : start + SHOWN]
+            out += [Row("session", folder.path, folder, s, end=s is window[-1]) for s in window]
     return out
 
 
@@ -108,7 +114,8 @@ def folder_lines(folder, expanded, now, width=WIDTH):
 def session_line(row, now, width=WIDTH):
     """One of a folder's last sessions: its title, when it was used and what it cost."""
     s = row.session
-    last = row.folder.sessions[:SHOWN][-1] is s
+    # The closing branch only under the folder's very last session: more may scroll into view
+    last = s is row.folder.sessions[-1]
     line = _line(("     ", "ink"), ("└ " if last else "├ ", "faint"))
     tail = words.age(s.last, now).ljust(AGE_WIDTH) + words.money(s.cost).rjust(SPEND_WIDTH)
     title = width - line.cell_len - len(tail) - 1
@@ -182,10 +189,12 @@ class Picker:
         self.query = ""
         self.cursor = 0
         self.expanded = set()
+        # By folder path, how many of its sessions are scrolled past
+        self.scroll = {}
 
     def shown(self):
         """The rows on show, with the cursor kept on one of them."""
-        out = rows(self.folders, self.query, self.expanded, self.is_dir)
+        out = rows(self.folders, self.query, self.expanded, self.is_dir, self.scroll)
         self.cursor = max(0, min(self.cursor, len(out) - 1))
         return out
 
@@ -204,15 +213,14 @@ class Picker:
         row = self.selected()
         if key == "enter":
             return row
-        if key == "up":
-            self.cursor -= 1
-        elif key == "down":
-            self.cursor += 1
+        if key in ("up", "down") and not self.scrolls(row, key):
+            self.cursor += 1 if key == "down" else -1
         elif key == "right" and row and row.kind == "folder":
             self.expanded.add(row.path)
         elif key == "left" and row and row.kind != "path":
             # From a session, back to its folder, which then closes
             self.expanded.discard(row.path)
+            self.scroll.pop(row.path, None)
             shown = self.shown()
             self.cursor = next(
                 i for i, r in enumerate(shown) if r.kind == "folder" and r.path == row.path
@@ -223,6 +231,23 @@ class Picker:
             self.query, self.cursor = self.query + character, 0
         self.shown()
         return None
+
+    def scrolls(self, row, key):
+        """Scrolls a folder's sessions when the cursor would leave them with more that way.
+
+        Returns:
+            Whether it scrolled, in which case the cursor stays on its line.
+        """
+        if not row or row.kind != "session":
+            return False
+        start = self.scroll.get(row.path, 0)
+        if key == "down" and row.end and start + SHOWN < len(row.folder.sessions):
+            self.scroll[row.path] = start + 1
+            return True
+        if key == "up" and start and row.session is row.folder.sessions[start]:
+            self.scroll[row.path] = start - 1
+            return True
+        return False
 
 
 def command(row):
