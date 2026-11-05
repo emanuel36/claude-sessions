@@ -49,7 +49,7 @@ def test_totals_are_reused_until_the_journal_grows():
     assert reader.totals(history, NOW).today == 2.0
 
 
-def test_day_summary_adds_up_hours_lines_sessions_and_waiting():
+def test_day_summary_adds_up_lines_sessions_and_waiting():
     today = datetime.date(2026, 11, 4)
     at = lambda h, m=0: time.mktime((2026, 11, 4, h, m, 0, 0, 0, -1))  # noqa: E731
     events = {
@@ -63,7 +63,6 @@ def test_day_summary_adds_up_hours_lines_sessions_and_waiting():
         ],
     }
     day = usage.day_summary(events, today, now=at(10, 30))
-    assert day.hours[9] == 3 and day.hours[10] == 1 and day.hours[11] == 1
     # a waited 10 minutes for an answer; b is still waiting, 30 minutes so far
     assert day.waited == 600 + 1800
     # Lines count only what the sessions grew by today; an ended session is not one of today's

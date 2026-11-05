@@ -34,9 +34,9 @@ def test_windows_are_numbered_from_one(run):
 
 def test_scheme_a_keys(run):
     keys = " ".join(run("list-keys", "-T", "root").split())
-    assert "M-Up previous-window" in keys and "M-Down next-window" in keys
-    # Both step over the landing page
-    assert keys.count("@cs-landing") == 2
+    # Both follow the sidebar's order, which steps over the landing page
+    assert 'M-Up run-shell -b "cs step up #{window_id}"' in keys
+    assert 'M-Down run-shell -b "cs step down #{window_id}"' in keys
     assert "M-n display-popup" in keys and "cs new --pick" in keys
     assert "M-c confirm-before" in keys and "close #{window_name}? (y/n)" in keys
     assert "cs close #{window_id}" in keys

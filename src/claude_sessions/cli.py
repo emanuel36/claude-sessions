@@ -7,6 +7,7 @@ cs landing                                   show the landing page (what cst ope
 cs sidebar                                   show the sessions' column in a window's left pane
 cs new --pick                                the panel that starts a session (Alt+n)
 cs layout [WINDOW_ID]                        put the sidebar in a window, fit them all
+cs step up|down WINDOW_ID                    go to the session above or below, as listed
 cs close WINDOW_ID                           stop the window's background sessions, close it
 cs install                                   register cs in Claude Code's settings.json
 cs uninstall                                 take it out again
@@ -82,6 +83,16 @@ def cmd_layout(args):
     return 0
 
 
+def cmd_step(args):
+    from claude_sessions.ui import sidebar
+
+    entries = sidebar.load_entries(hook.live_sessions(time.time()))
+    target = sidebar.step(entries, args.window, 1 if args.direction == "down" else -1)
+    if target:
+        tmux.run("select-window", "-t", target)
+    return 0
+
+
 def cmd_close(args):
     tmux.close_window(args.window)
     return 0
@@ -115,6 +126,10 @@ def main(argv=None):
     p_layout = sub.add_parser("layout")
     p_layout.add_argument("window", nargs="?")
     p_layout.set_defaults(func=cmd_layout)
+    p_step = sub.add_parser("step")
+    p_step.add_argument("direction", choices=("up", "down"))
+    p_step.add_argument("window")
+    p_step.set_defaults(func=cmd_step)
     p_close = sub.add_parser("close")
     p_close.add_argument("window")
     p_close.set_defaults(func=cmd_close)

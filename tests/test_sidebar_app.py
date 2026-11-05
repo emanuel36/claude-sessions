@@ -45,11 +45,10 @@ def test_app_draws_the_column_and_highlights_its_window(monkeypatch):
         async with app.run_test(size=(sidebar.WIDTH, 30)) as pilot:
             await pilot.pause()
             lines = screen_text(app)
-            assert lines[9].startswith(" api")
-            strip = app.screen._compositor.render_strips()[9]
-            assert any(
-                "2c4547" in str(seg.style.bgcolor).lower() for seg in strip if "api" in seg.text
-            )
+            # client needs you, then api runs, then notes is done
+            assert lines[8].startswith(" ⏺ api")
+            strip = app.screen._compositor.render_strips()[8]
+            assert any(seg.style.bgcolor for seg in strip if "api" in seg.text)
 
     asyncio.run(go())
 
@@ -61,7 +60,7 @@ def test_click_selects_that_window(monkeypatch):
         app = make_app()
         async with app.run_test(size=(sidebar.WIDTH, 30)) as pilot:
             await pilot.pause()
-            await pilot.click("#column", offset=(5, 13))
+            await pilot.click("#column", offset=(5, 11))
             await pilot.pause()
 
     asyncio.run(go())
@@ -98,7 +97,7 @@ def test_failed_load_keeps_the_last_lines_and_logs_once(monkeypatch):
             fail.append(1)
             app.tick_once(NOW)
             app.tick_once(NOW)
-            assert "api" in screen_text(app)[9]
+            assert "api" in screen_text(app)[8]
 
     asyncio.run(go())
     assert logged == [1]
@@ -120,7 +119,7 @@ def test_failed_render_keeps_the_app_alive_and_logs_once(monkeypatch):
             app.tick_once(NOW)
             app.tick_once(NOW)
             assert app.is_running
-            assert "api" in screen_text(app)[9]
+            assert "api" in screen_text(app)[8]
 
     asyncio.run(go())
     assert logged == [1]

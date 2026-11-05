@@ -2,7 +2,6 @@
 
 import datetime
 import os
-import time
 from dataclasses import dataclass, field
 
 from claude_sessions.core import journal, state
@@ -14,8 +13,6 @@ WEEK_DAYS = 7
 class Day:
     """What today's journal adds up to."""
 
-    # Events in each hour of the day, 24 entries; a rough measure of when Claude worked
-    hours: list[int] = field(default_factory=lambda: [0] * 24)
     added: int = 0
     removed: int = 0
     sessions: int = 0
@@ -109,7 +106,6 @@ def day_summary(events, today, now):
     day = Day()
     seen, last = set(), {}
     for event in events.get(today, []):
-        day.hours[time.localtime(event["t"]).tm_hour] += 1
         sid, status = event.get("id"), event.get("status")
         if status != journal.ENDED:
             seen.add(sid)

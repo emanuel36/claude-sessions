@@ -43,10 +43,10 @@ def test_screen_has_the_list_on_the_left_and_the_stats_on_the_right():
     assert lines[6].startswith(" ▾ api") and lines[7].startswith("   3 sessions · $12.50 7d")
     assert long_title in lines[8]
     stats_at = width - sidebar.WIDTH
-    assert lines[1][stats_at:].strip() == "TODAY                 $9.50"
+    assert lines[1][stats_at:].strip() == "⏺ Today               $9.50"
     assert lines[-1].strip().startswith("↑↓ move")
 
 
 def test_a_narrow_screen_shows_the_list_alone():
     lines = plain(landing.screen(picker(), False, 2, STATS, NOW, 60, 30))
-    assert not any("TODAY" in line for line in lines) and lines[6].startswith(" ▸ api")
+    assert not any("Today" in line for line in lines) and lines[6].startswith(" ▸ api")
