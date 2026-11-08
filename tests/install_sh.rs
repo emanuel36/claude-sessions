@@ -13,7 +13,7 @@ use std::process::{Command, Output};
 
 use cst::claude::install::{is_ours, EVENTS};
 use serde_json::Value;
-use support::{publish, release_binary};
+use support::{asset_name, publish, release_binary, sha256_hex};
 use tempfile::TempDir;
 
 /// What the fake `uv tool list` prints when the Python version is installed.
@@ -214,6 +214,83 @@ fn install_sh_refuses_a_bad_checksum() {
     );
     assert!(!rig.installed().exists());
     assert!(!rig.settings().exists());
+}
+
+#[test]
+fn install_sh_refuses_a_checksum_that_names_another_file() {
+    let rig = Rig::new();
+    let asset = release_binary("x");
+    publish(&rig.release(), "v9.9.9", &asset, None);
+    // A line `sha256sum -c` would accept: the true hash of a file that is not the asset
+    let other = env!("CARGO_BIN_EXE_cst");
+    let line = format!("{}  {other}\n", sha256_hex(&fs::read(other).expect("read")));
+    let sums = rig
+        .release()
+        .join(format!("download/v9.9.9/{}.sha256", asset_name()));
+    fs::write(sums, line).expect("write the checksum");
+
+    let out = rig.run(&[]);
+
+    assert_exit(&out, 1);
+    assert!(
+        text(&out.stderr).contains("SHA-256"),
+        "{}",
+        text(&out.stderr)
+    );
+    assert!(!rig.installed().exists());
+}
+
+#[test]
+fn install_sh_refuses_a_tag_that_is_not_one() {
+    let rig = Rig::new();
+    publish(&rig.release(), "v9.9.9", &release_binary("x"), None);
+    fs::write(rig.release().join("latest/tag"), "v9.9.9/../x\n").expect("write the tag");
+
+    let out = rig.run(&[]);
+
+    assert_exit(&out, 1);
+    assert!(
+        text(&out.stderr).contains("no release found"),
+        "{}",
+        text(&out.stderr)
+    );
+    assert!(!rig.installed().exists());
+}
+
+#[test]
+fn install_sh_leaves_no_partial_copy_behind_when_it_cannot_install() {
+    let rig = Rig::new();
+    publish(&rig.release(), "v9.9.9", &release_binary("x"), None);
+    // A directory where the new copy is renamed to, so the rename fails
+    let bin = rig.installed().parent().expect("bin").to_path_buf();
+    fs::create_dir_all(rig.installed().join(".cst.new/x")).expect("mkdir");
+
+    let out = rig.run(&[]);
+
+    assert_exit(&out, 1);
+    assert!(!bin.join(".cst.new").exists());
+}
+
+#[test]
+fn install_sh_removes_the_python_version_before_installing() {
+    let rig = Rig::new();
+    // uv's uninstall deletes what it recorded as the Python version's: ~/.local/bin/cst
+    let installed = rig.installed();
+    rig.write_fake(
+        "uv",
+        &format!(
+            "#!/bin/sh\n[ \"$*\" = 'tool list' ] && printf '%s' '{PYTHON_LISTED}'\n\
+             [ \"$*\" = 'tool uninstall claude-sessions' ] && rm -f '{}'\nexit 0\n",
+            installed.display()
+        ),
+    );
+    let asset = release_binary("x");
+    publish(&rig.release(), "v9.9.9", &asset, None);
+
+    let out = rig.run(&[]);
+
+    assert_exit(&out, 0);
+    assert!(fs::read(&installed).expect("read cst") == asset);
 }
 
 #[test]

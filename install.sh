@@ -47,12 +47,19 @@ download() {
     command -v curl >/dev/null 2>&1 || fail "curl is needed; install it first"
     asset="cst-$(arch)-unknown-linux-musl"
     tag=$(latest_tag) || tag=""
-    [ -n "$tag" ] || fail "no release found at $base"
+    # The tag goes into a URL: not empty, no `/`, no whitespace
+    case "$tag" in "" | */* | *[[:space:]]*) fail "no release found at $base" ;; esac
     say "Downloading cst $tag..."
     url="$base/download/$tag/$asset"
     curl -fsSL "$url" -o "$1/$asset" || fail "could not download $url"
     curl -fsSL "$url.sha256" -o "$1/$asset.sha256" || fail "could not download $url.sha256"
-    (cd "$1" && sha256sum -c "$asset.sha256" >/dev/null 2>&1) \
+    # Compared directly: `sha256sum -c` checks whichever file the line names
+    want=$(cut -d' ' -f1 <"$1/$asset.sha256")
+    have=$(sha256sum "$1/$asset" | cut -d' ' -f1)
+    case "$want" in
+        *[!0-9a-f]* | "") want="" ;;
+    esac
+    [ ${#want} -eq 64 ] && [ "$want" = "$have" ] \
         || fail "$asset does not match its SHA-256; nothing was installed"
     mv "$1/$asset" "$1/cst"
 }
@@ -95,9 +102,11 @@ main() {
     remove_python_version
     mkdir -p "$bin"
     # Written beside the old one, then renamed over it: a running cst keeps its own copy
-    cp "$tmp/cst" "$bin/.cst.new"
-    chmod 755 "$bin/.cst.new"
-    mv -f "$bin/.cst.new" "$bin/cst"
+    if ! { cp "$tmp/cst" "$bin/.cst.new" && chmod 755 "$bin/.cst.new" \
+        && mv -f "$bin/.cst.new" "$bin/cst"; }; then
+        rm -f "$bin/.cst.new"
+        fail "could not install $bin/cst"
+    fi
 
     "$bin/cst" install
 
