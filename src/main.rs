@@ -7,7 +7,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use cst::claude::{hook, install, statusline};
 use cst::paths;
-use cst::term::tmux::Cli;
+use cst::term::tmux::{self, Cli};
+use cst::term::{launcher, layout};
+use cst::ui::pane::own_socket;
 use cst::ui::{landing_app, panel_app, sidebar_app};
 
 const USAGE: &str = "\
@@ -27,9 +29,7 @@ Options:
 fn run_hook() -> ExitCode {
     let mut input = Vec::new();
     let read = std::io::stdin().lock().read_to_end(&mut input);
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0.0, |d| d.as_secs_f64());
+    let now = now();
     // `vars()` panics on non-UTF-8 values, so convert lossily instead.
     let env: HashMap<String, String> = std::env::vars_os()
         .map(|(k, v)| {
@@ -56,10 +56,31 @@ fn run_statusline() -> ExitCode {
     if let Err(e) = std::io::stdin().lock().read_to_end(&mut input) {
         paths::log_error(&format_args!("statusline: cannot read stdin: {e}"));
     }
-    let now = SystemTime::now()
+    statusline::run(&input, now(), &mut std::io::stdout().lock());
+    ExitCode::SUCCESS
+}
+
+/// Seconds since the epoch.
+fn now() -> f64 {
+    SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_or(0.0, |d| d.as_secs_f64());
-    statusline::run(&input, now, &mut std::io::stdout().lock());
+        .map_or(0.0, |d| d.as_secs_f64())
+}
+
+/// `cst focus --pane P --socket S`, which tmux runs when a window comes on screen. Prints
+/// nothing and exits 0 whatever happens: tmux shows a failed command's output over the pane.
+fn run_focus(args: &[&str]) -> ExitCode {
+    match args {
+        ["--pane", pane, "--socket", socket] => layout::focus(pane, socket, now()),
+        _ => paths::log_error(&format_args!("focus: bad arguments {args:?}")),
+    }
+    ExitCode::SUCCESS
+}
+
+/// `cst step up|down WINDOW`, for Alt+Up/Down.
+fn run_step(window: &str, offset: i32) -> ExitCode {
+    let records = hook::live_sessions(now());
+    layout::step(window, offset, &records, &own_socket(), &Cli::default());
     ExitCode::SUCCESS
 }
 
@@ -120,6 +141,24 @@ fn main() -> ExitCode {
         ["sidebar"] => run_screen("sidebar", sidebar_app::main_sidebar),
         ["landing"] => run_screen("landing", landing_app::main_landing),
         ["new", "--pick"] => run_screen("new", panel_app::main_panel),
+        // Hidden: tmux.conf runs them on window changes, and for Alt+Up/Down and Alt+c
+        ["focus", rest @ ..] => run_focus(rest),
+        ["layout"] => {
+            layout::layout(None, &Cli::default());
+            ExitCode::SUCCESS
+        }
+        ["layout", window] => {
+            layout::layout(Some(window), &Cli::default());
+            ExitCode::SUCCESS
+        }
+        ["step", "up", window] => run_step(window, -1),
+        ["step", "down", window] => run_step(window, 1),
+        ["close", window] => {
+            tmux::close_window(window, &Cli::default());
+            ExitCode::SUCCESS
+        }
+        [] => exit_code(launcher::main(false)),
+        ["--ghostty"] => exit_code(launcher::main(true)),
         ["--version"] => {
             println!("cst {}", cst::VERSION);
             ExitCode::SUCCESS
@@ -131,10 +170,6 @@ fn main() -> ExitCode {
         [other, ..] => {
             eprintln!("cst: unknown command '{other}'\n\n{USAGE}");
             ExitCode::from(2)
-        }
-        [] => {
-            eprintln!("cst: opening the session window is not implemented yet");
-            ExitCode::from(1)
         }
     }
 }
