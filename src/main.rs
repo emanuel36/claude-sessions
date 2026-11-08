@@ -5,7 +5,7 @@ use std::io::Read;
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use cst::claude::{hook, statusline};
+use cst::claude::{hook, install, statusline};
 use cst::paths;
 use cst::term::tmux::Cli;
 
@@ -62,6 +62,22 @@ fn run_statusline() -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// Registers this binary with Claude Code; `install.sh` and `cst update` run it.
+fn run_install() -> ExitCode {
+    // The hooks must keep working whatever the current directory or the name it was run by
+    match std::env::current_exe().and_then(std::fs::canonicalize) {
+        Ok(exe) => exit_code(install::install(&exe)),
+        Err(e) => {
+            eprintln!("error: cannot find the cst executable: {e}");
+            ExitCode::from(1)
+        }
+    }
+}
+
+fn exit_code(code: i32) -> ExitCode {
+    ExitCode::from(u8::try_from(code).unwrap_or(1))
+}
+
 fn main() -> ExitCode {
     // `args()` panics on non-UTF-8 input, so convert lossily instead.
     let args: Vec<String> = std::env::args_os()
@@ -82,6 +98,9 @@ fn main() -> ExitCode {
         .collect::<Vec<_>>()
         .as_slice()
     {
+        // Hidden: users get it through `install.sh` and `cst update`
+        ["install"] => run_install(),
+        ["uninstall"] => exit_code(install::uninstall()),
         ["--version"] => {
             println!("cst {}", cst::VERSION);
             ExitCode::SUCCESS

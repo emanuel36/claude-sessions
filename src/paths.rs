@@ -23,18 +23,18 @@ const LOG_BYTES: u64 = 1024 * 1024;
 /// Where the fallback runtime directory lives; fixed so every process agrees on it.
 const FALLBACK_BASE: &str = "/tmp";
 
-type Lookup<'a> = &'a dyn Fn(&str) -> Option<OsString>;
+pub(crate) type Lookup<'a> = &'a dyn Fn(&str) -> Option<OsString>;
 
-fn process_env(key: &str) -> Option<OsString> {
+pub(crate) fn process_env(key: &str) -> Option<OsString> {
     std::env::var_os(key)
 }
 
 /// Returns the variable's value, treating an empty one as unset.
-fn var(env: Lookup<'_>, key: &str) -> Option<PathBuf> {
+pub(crate) fn var(env: Lookup<'_>, key: &str) -> Option<PathBuf> {
     env(key).filter(|v| !v.is_empty()).map(PathBuf::from)
 }
 
-fn home(env: Lookup<'_>) -> PathBuf {
+pub(crate) fn home(env: Lookup<'_>) -> PathBuf {
     var(env, "HOME")
         .or_else(std::env::home_dir)
         .unwrap_or_else(|| PathBuf::from("."))

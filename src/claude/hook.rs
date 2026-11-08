@@ -281,6 +281,7 @@ mod tests {
         claude_pid, handle_event_in, live_sessions_in, parse_event, seen_in, settle_interrupted_in,
         Bind, Binder, Seams,
     };
+    use crate::claude::install::HOOK_TIMEOUT;
     use crate::journal::JournalEvent;
     use crate::state::{new_record, Event, Mux, Pending, Record, Status, Waiting};
     use crate::store::{process_start, read_in, write_in};
@@ -622,7 +623,7 @@ mod tests {
     #[test]
     fn the_tmux_calls_of_a_hook_fit_in_its_timeout() {
         // A background session's pane lookup (1), the viewed check (1) and the naming (3)
-        assert!(5 * TIMEOUT < Duration::from_secs(10));
+        assert!(5 * TIMEOUT < Duration::from_secs(HOOK_TIMEOUT));
     }
 
     #[test]
