@@ -623,9 +623,10 @@ mod tests {
         let rig = Rig::new();
         let transcript = write_transcript(
             &rig.dir.path().join("t.jsonl"),
-            &[
-                r#"{"type":"user","message":{"content":"[Request interrupted by user for tool use]"}}"#,
-            ],
+            &[concat!(
+                r#"{"type":"user","message":{"content":"#,
+                r#""[Request interrupted by user for tool use]"}}"#
+            )],
         );
         rig.write(&Record {
             status: Status::Permission,
