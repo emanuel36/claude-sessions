@@ -39,7 +39,7 @@ def load(now):
     Args:
         now: Current time as a Unix timestamp.
     """
-    history = files.load_history()
+    history = files.load_history(stored=True)
     totals = _reader.totals(history, now)
     live = hook.live_sessions(now)
     limits = statusline.load_limits(now)

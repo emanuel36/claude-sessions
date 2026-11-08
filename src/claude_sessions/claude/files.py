@@ -19,8 +19,13 @@ INTERRUPT_TAIL_BYTES = 8192
 TITLE_KEYS = (b"customTitle", b"aiTitle")
 # The rest of a JSON string after its opening quote, up to the closing one
 STRING_REST = re.compile(rb'((?:[^"\\]|\\.)*)"')
-# Where the titles found in the transcripts are kept between runs
+# Where the titles found in the transcripts, and the history read so far, are kept between runs
 TITLES_FILE = "titles.json"
+HISTORY_FILE = "history.json"
+# A title shows one line of a prompt at most; the rest need not be kept
+PROMPT_CHARS = 200
+# The bytes before where a history reading stopped, kept to tell the file is still the one read
+MARK_BYTES = 64
 
 
 @dataclass
@@ -41,6 +46,12 @@ def history_path():
 def read_history(lines):
     """Groups Claude Code's prompt history by session, most recent first."""
     sessions = {}
+    _add_history(sessions, lines)
+    return _newest_first(sessions)
+
+
+def _add_history(sessions, lines):
+    """Adds the entries of history lines to the sessions, by id."""
     for line in lines:
         try:
             entry = json.loads(line)
@@ -57,25 +68,101 @@ def read_history(lines):
         prompt = str(entry.get("display") or "")
         # A command such as /resume says nothing about the session
         if not s.first_prompt and not prompt.startswith("/"):
-            s.first_prompt = prompt
+            s.first_prompt = prompt[:PROMPT_CHARS]
+
+
+def _newest_first(sessions):
     return sorted(sessions.values(), key=lambda s: s.last, reverse=True)
 
 
-_cache = {"key": None, "sessions": []}
+def stored_history_path():
+    """Where the history read so far is kept between runs."""
+    return os.path.join(paths.state_home(), HISTORY_FILE)
 
 
-def load_history():
-    """Returns the parsed prompt history, read again only when the file changes."""
+_cache = {"key": None, "sessions": [], "reading": None}
+
+
+def load_history(stored=False):
+    """Returns the parsed prompt history, newest first, read again only when the file changes.
+
+    The history only grows, so only the lines added since the last reading are parsed. A file
+    replaced, shorter than what was read, or no longer ending the reading with the same bytes
+    is read again from the start.
+
+    Args:
+        stored: Whether to keep the reading on disk too, for a new process to start from; the
+            screens that open often (the Alt+n panel, the landing page) ask for it.
+    """
     path = history_path()
     try:
-        st = os.stat(path)
-        key = (path, st.st_mtime_ns, st.st_size)
-        if key != _cache["key"]:
-            with open(path, errors="replace") as f:
-                _cache.update(key=key, sessions=read_history(f))
+        with open(path, "rb") as f:
+            st = os.fstat(f.fileno())
+            key = (path, st.st_dev, st.st_ino, st.st_mtime_ns, st.st_size)
+            if key == _cache["key"]:
+                return _cache["sessions"]
+            file = [path, st.st_dev, st.st_ino]
+            reading = _cache["reading"] or _load_reading()
+            if reading is None or not _continues(f, st, file, reading):
+                reading = {"file": file, "offset": 0, "mark": "", "sessions": {}}
+            f.seek(reading["offset"])
+            raw = f.read()
     except OSError:
-        _cache.update(key=None, sessions=[])
+        _cache.update(key=None, sessions=[], reading=None)
+        return _cache["sessions"]
+    # A line still being written waits for the next reading
+    complete = raw[: raw.rfind(b"\n") + 1]
+    if complete:
+        # Split on newlines only: a prompt may hold other line breaks, such as U+2028
+        lines = complete[:-1].decode("utf-8", "replace").split("\n")
+        _add_history(reading["sessions"], lines)
+        reading["offset"] += len(complete)
+        reading["mark"] = complete[-MARK_BYTES:].decode("latin-1")
+        if stored:
+            _save_reading(reading)
+    _cache.update(key=key, reading=reading, sessions=_newest_first(reading["sessions"]))
     return _cache["sessions"]
+
+
+def _continues(f, st, file, reading):
+    """Tells whether an open history is the file a reading stopped in, grown since."""
+    mark = reading["mark"].encode("latin-1")
+    if reading["file"] != file or st.st_size < reading["offset"]:
+        return False
+    f.seek(reading["offset"] - len(mark))
+    return f.read(len(mark)) == mark
+
+
+def _load_reading():
+    """The history reading kept on disk, or None when there is none or it does not parse."""
+    try:
+        with open(stored_history_path(), encoding="utf-8") as f:
+            saved = json.load(f)
+        sessions = {
+            sid: HistorySession(sid, cwd, float(last), str(prompt))
+            for sid, (cwd, last, prompt) in saved["sessions"].items()
+        }
+        return {
+            "file": list(saved["file"]),
+            "offset": int(saved["offset"]),
+            "mark": str(saved["mark"]),
+            "sessions": sessions,
+        }
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+        return None
+
+
+def _save_reading(reading):
+    """Keeps a history reading on disk; never raises."""
+    sessions = {s.id: [s.cwd, s.last, s.first_prompt] for s in reading["sessions"].values()}
+    try:
+        os.makedirs(paths.state_home(), exist_ok=True)
+        paths.write_json(
+            stored_history_path(),
+            {**reading, "sessions": sessions},
+        )
+    except OSError:
+        pass
 
 
 def transcript_path(session_id, cwd):

@@ -20,7 +20,7 @@ def load(now):
     Args:
         now: Current time as a Unix timestamp.
     """
-    history = files.load_history()
+    history = files.load_history(stored=True)
     costs = _reader.totals(history, now).per_session
     opened = {r["id"] for r in hook.live_sessions(now)}
     return folders.load(history, costs, opened)

@@ -102,7 +102,7 @@ def test_load_lists_folders_without_the_open_sessions(monkeypatch, tmp_path):
         landing_app.files.HistorySession("open", str(a), 5, "now"),
         landing_app.files.HistorySession("old", str(a), 4, "before"),
     ]
-    monkeypatch.setattr(landing_app.files, "load_history", lambda: history)
+    monkeypatch.setattr(landing_app.files, "load_history", lambda stored=False: history)
     monkeypatch.setattr(landing_app.hook, "live_sessions", lambda now: [{"id": "open"}])
     monkeypatch.setattr(landing_app.statusline, "load_limits", lambda now: {})
     monkeypatch.setattr(folders._titles, "get", lambda sid, path: "")

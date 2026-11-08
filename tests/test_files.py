@@ -128,3 +128,58 @@ def test_stored_titles_keep_only_the_sessions_asked_for(tmp_path):
     titles.save()
     with open(files.titles_path()) as f:
         assert json.load(f) == {"b": [None, ""]}
+
+
+def test_history_is_read_on_from_where_the_last_process_stopped(monkeypatch):
+    write_history(entry("a", "/w/api", 10, "first"))
+    assert [s.id for s in files.load_history(stored=True)] == ["a"]
+    # A new process: nothing in memory, the reading on disk
+    monkeypatch.setattr(files, "_cache", {"key": None, "sessions": [], "reading": None})
+    with open(files.history_path(), "a") as f:
+        f.write(entry("b", "/w/web", 20) + "\n" + '{"sessionId": "c", "proj')
+    parsed = []
+    real = files._add_history
+    monkeypatch.setattr(
+        files, "_add_history", lambda s, lines: parsed.extend(lines) or real(s, lines)
+    )
+    sessions = files.load_history()
+    assert [(s.id, s.first_prompt) for s in sessions] == [("b", "hi"), ("a", "first")]
+    # Only the new whole line was parsed; the one still being written waits
+    assert parsed == [entry("b", "/w/web", 20)]
+
+
+def test_history_replaced_by_a_shorter_file_is_read_again():
+    write_history(entry("a", "/w/api", 10), entry("b", "/w/api", 20))
+    assert len(files.load_history()) == 2
+    write_history(entry("c", "/w/api", 30))
+    assert [s.id for s in files.load_history()] == ["c"]
+
+
+def test_a_long_first_prompt_is_cut():
+    sessions = files.read_history([entry("a", "/w/api", 10, "x" * 1000)])
+    assert len(sessions[0].first_prompt) == files.PROMPT_CHARS
+
+
+def test_history_rewritten_in_place_is_read_again():
+    write_history(entry("a", "/w/api", 10))
+    assert [s.id for s in files.load_history()] == ["a"]
+    # Same file, longer, but what was read is gone
+    with open(files.history_path(), "r+") as f:
+        f.write(entry("b", "/w/api", 20) + "\n" + entry("c", "/w/api", 30) + "\n")
+    assert [s.id for s in files.load_history()] == ["c", "b"]
+
+
+def test_a_prompt_with_a_line_separator_stays_one_entry():
+    # Written raw, as Claude Code writes it: JSON leaves U+2028 unescaped
+    raw = {"sessionId": "a", "project": "/w/api", "timestamp": 1, "display": "one\u2028two"}
+    write_history(json.dumps(raw, ensure_ascii=False))
+    assert [s.first_prompt for s in files.load_history()] == ["one\u2028two"]
+
+
+def test_history_is_kept_on_disk_only_when_asked():
+    write_history(entry("a", "/w/api", 10))
+    files.load_history()
+    assert not os.path.exists(files.stored_history_path())
+    write_history(entry("a", "/w/api", 10), entry("b", "/w/api", 20))
+    files.load_history(stored=True)
+    assert os.path.exists(files.stored_history_path())
