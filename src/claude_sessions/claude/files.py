@@ -16,7 +16,11 @@ TITLE_TAIL_BYTES = 512 * 1024
 INTERRUPT_MARKER = "[Request interrupted by user"
 INTERRUPT_TAIL_BYTES = 8192
 # A title the user set with /rename wins over the one Claude Code made up
-TITLE = re.compile(rb'"(customTitle|aiTitle)":"((?:[^"\\]|\\.)*)"')
+TITLE_KEYS = (b"customTitle", b"aiTitle")
+# The rest of a JSON string after its opening quote, up to the closing one
+STRING_REST = re.compile(rb'((?:[^"\\]|\\.)*)"')
+# Where the titles found in the transcripts are kept between runs
+TITLES_FILE = "titles.json"
 
 
 @dataclass
@@ -123,13 +127,30 @@ def _is_interrupt(message):
 
 def find_title(chunk):
     """Returns the latest title in a transcript's tail, preferring one the user set."""
-    found = {}
-    for m in TITLE.finditer(chunk):
+    for key in TITLE_KEYS:
+        title = _last_string(chunk, key)
+        if title:
+            return title
+    return ""
+
+
+def _last_string(chunk, key):
+    """The last string value of `key` in a chunk of JSON lines that parses, or None.
+
+    Searched from the end: a long transcript holds the key many times, and only the last counts.
+    """
+    marker = b'"' + key + b'":"'
+    end = len(chunk)
+    while (at := chunk.rfind(marker, 0, end)) >= 0:
+        end = at
+        m = STRING_REST.match(chunk, at + len(marker))
+        if m is None:
+            continue
         try:
-            found[m.group(1)] = json.loads(b'"' + m.group(2) + b'"')
+            return json.loads(b'"' + m.group(1) + b'"')
         except ValueError:
             continue
-    return found.get(b"customTitle") or found.get(b"aiTitle") or ""
+    return None
 
 
 def title_of(transcript):
@@ -140,14 +161,47 @@ def title_of(transcript):
         return ""
 
 
-class Titles:
-    """Session titles, read from the transcripts again only when one changes."""
+def titles_path():
+    """Where the titles found in the transcripts are kept between runs."""
+    return os.path.join(paths.state_home(), TITLES_FILE)
 
-    def __init__(self):
+
+class Titles:
+    """Session titles, read from the transcripts again only when one changes.
+
+    With `stored`, they are also kept on disk, so a new process (the Alt+n panel) reads only
+    the transcripts that changed since the last one.
+    """
+
+    def __init__(self, stored=False):
+        self.stored = stored
+        self.seen = None
+        # The sessions asked for since the last save: the only ones it keeps
+        self.used = set()
+        self.changed = False
+
+    def _load(self):
         self.seen = {}
+        if not self.stored:
+            return
+        try:
+            with open(titles_path(), encoding="utf-8") as f:
+                saved = json.load(f)
+        except (OSError, ValueError):
+            return
+        if isinstance(saved, dict):
+            self.seen = {
+                sid: (v[0], v[1])
+                for sid, v in saved.items()
+                if isinstance(v, list) and len(v) == 2 and isinstance(v[1], str)
+            }
 
     def get(self, session_id, path):
         """Returns a session's title from its transcript, or '' if it has none yet."""
+        if self.seen is None:
+            self._load()
+        if self.stored:
+            self.used.add(session_id)
         try:
             mtime = os.stat(path).st_mtime_ns
         except (OSError, TypeError):
@@ -157,4 +211,17 @@ class Titles:
             return cached[1]
         title = title_of(path) if mtime is not None else ""
         self.seen[session_id] = (mtime, title)
+        self.changed = True
         return title
+
+    def save(self):
+        """Writes the titles asked for since the last save to disk, if any changed; never raises."""
+        if not (self.stored and self.changed):
+            return
+        kept = {sid: list(v) for sid, v in self.seen.items() if sid in self.used}
+        try:
+            os.makedirs(paths.state_home(), exist_ok=True)
+            paths.write_json(titles_path(), kept)
+        except OSError:
+            return
+        self.used, self.changed = set(), False

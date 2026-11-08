@@ -98,3 +98,33 @@ def test_an_interrupt_in_a_text_block_counts(tmp_path):
         tmp_path / "t.jsonl", {"type": "user", "message": {"content": [block]}}
     )
     assert files.was_interrupted(transcript)
+
+
+def test_the_last_title_that_parses_wins():
+    tail = b'{"aiTitle":"Good"}\n{"aiTitle":"bad \\q"}\n{"customTitle":""}\n'
+    assert files.find_title(tail) == "Good"
+
+
+def test_stored_titles_spare_a_new_process_the_transcripts(tmp_path, monkeypatch):
+    path = tmp_path / "t.jsonl"
+    path.write_bytes(b'{"aiTitle":"First"}\n')
+    titles = files.Titles(stored=True)
+    assert titles.get("a", str(path)) == "First"
+    titles.save()
+    read = []
+    monkeypatch.setattr(files, "title_of", lambda p: read.append(p) or "")
+    again = files.Titles(stored=True)
+    assert again.get("a", str(path)) == "First" and read == []
+    # A transcript that changed is read again
+    os.utime(path, ns=(1, 2))
+    assert again.get("a", str(path)) == "" and read == [str(path)]
+
+
+def test_stored_titles_keep_only_the_sessions_asked_for(tmp_path):
+    titles = files.Titles(stored=True)
+    titles.get("a", None)
+    titles.save()
+    titles.get("b", None)
+    titles.save()
+    with open(files.titles_path()) as f:
+        assert json.load(f) == {"b": [None, ""]}
