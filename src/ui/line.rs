@@ -12,6 +12,37 @@ pub fn cells(c: char) -> usize {
     c.width().unwrap_or(0)
 }
 
+/// How many terminal cells a text takes.
+pub fn width_of(text: &str) -> usize {
+    text.chars().map(cells).sum()
+}
+
+/// `text` padded with spaces on the right to `cells` cells; a wider text is left as is.
+pub fn ljust(text: &str, cells: usize) -> String {
+    format!("{text}{}", " ".repeat(cells.saturating_sub(width_of(text))))
+}
+
+/// `text` padded with spaces on the left to `cells` cells; a wider text is left as is.
+pub fn rjust(text: &str, cells: usize) -> String {
+    format!("{}{text}", " ".repeat(cells.saturating_sub(width_of(text))))
+}
+
+/// Appends `text` in `style` to a line, unless it is empty.
+pub fn push(line: &mut Line<'static>, text: impl Into<String>, style: Style) {
+    let text = text.into();
+    if !text.is_empty() {
+        line.spans.push(Span::styled(text, style));
+    }
+}
+
+/// The text of a line, without its styles.
+pub fn plain(line: &Line) -> String {
+    line.spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect()
+}
+
 /// How many terminal cells a line takes.
 pub fn cell_len(line: &Line) -> usize {
     line.spans
@@ -77,16 +108,31 @@ pub fn styled(parts: &[(&str, Style)]) -> Line<'static> {
         .collect()
 }
 
+/// The text a rendered buffer row shows, skipping the cells wide characters cover.
+#[cfg(test)]
+pub fn row_text(buf: &ratatui::buffer::Buffer, y: u16) -> String {
+    let mut text = String::new();
+    let mut skip = 0;
+    for x in 0..buf.area.width {
+        if skip > 0 {
+            skip -= 1;
+            continue;
+        }
+        let symbol = buf[(x, y)].symbol();
+        skip = width_of(symbol).saturating_sub(1);
+        text.push_str(symbol);
+    }
+    text
+}
+
 #[cfg(test)]
 mod tests {
     use ratatui::style::{Color, Modifier, Style};
     use ratatui::text::{Line, Span};
 
-    use crate::ui::line::{cell_len, cells, pad_right, styled, truncate};
-
-    fn plain(line: &Line) -> String {
-        line.spans.iter().map(|s| s.content.as_ref()).collect()
-    }
+    use crate::ui::line::{
+        cell_len, cells, ljust, pad_right, plain, push, rjust, styled, truncate, width_of,
+    };
 
     #[test]
     fn cells_counts_wide_as_two_and_combining_as_none() {
@@ -157,6 +203,38 @@ mod tests {
             truncate(&mut line, cut);
             proptest::prop_assert_eq!(cell_len(&line), before.min(cut));
         }
+    }
+
+    #[test]
+    fn width_of_counts_cells() {
+        assert_eq!(width_of("ab日"), 4);
+        assert_eq!(width_of("e\u{301}"), 1);
+        assert_eq!(width_of(""), 0);
+    }
+
+    #[test]
+    fn ljust_and_rjust_pad_by_cells() {
+        assert_eq!(ljust("日", 4), "日  ");
+        assert_eq!(rjust("日", 4), "  日");
+        assert_eq!(ljust("abcde", 3), "abcde");
+        assert_eq!(rjust("abcde", 3), "abcde");
+    }
+
+    #[test]
+    fn push_appends_styled_text_and_skips_empty_text() {
+        let red = Style::new().fg(Color::Red);
+        let mut line = Line::default();
+        push(&mut line, "", red);
+        push(&mut line, "ab", red);
+        push(&mut line, String::from("c"), Style::new());
+        assert_eq!(line.spans, vec![Span::styled("ab", red), Span::raw("c")]);
+    }
+
+    #[test]
+    fn plain_joins_the_spans_text() {
+        let line = styled(&[("ab", Style::new()), ("日", Style::new().fg(Color::Red))]);
+        assert_eq!(plain(&line), "ab日");
+        assert_eq!(plain(&Line::default()), "");
     }
 
     #[test]

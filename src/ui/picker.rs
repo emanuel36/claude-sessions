@@ -5,13 +5,12 @@
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
-use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use serde::Deserialize;
 
 use crate::paths;
 use crate::shell;
-use crate::ui::line::{cell_len, cells, pad_right, styled, truncate};
+use crate::ui::line::{cell_len, ljust, pad_right, plain, push, rjust, styled, truncate, width_of};
 use crate::ui::words::{self, BLUE, CLAUDE, CURRENT, FAINT, GREEN, INK, RULE, SOFT, STRONG};
 
 /// How many of a folder's sessions open under it at once; the rest scroll into view.
@@ -296,37 +295,6 @@ pub fn rows(
         }
     }
     out
-}
-
-/// The cells a text takes.
-fn width_of(text: &str) -> usize {
-    text.chars().map(cells).sum()
-}
-
-/// `text` padded with spaces on the right to `cells` cells.
-fn ljust(text: &str, cells: usize) -> String {
-    format!("{text}{}", " ".repeat(cells.saturating_sub(width_of(text))))
-}
-
-/// `text` padded with spaces on the left to `cells` cells.
-fn rjust(text: &str, cells: usize) -> String {
-    format!("{}{text}", " ".repeat(cells.saturating_sub(width_of(text))))
-}
-
-/// Appends `text` in `style` to a line, unless it is empty.
-fn push(line: &mut Line<'static>, text: impl Into<String>, style: Style) {
-    let text = text.into();
-    if !text.is_empty() {
-        line.spans.push(Span::styled(text, style));
-    }
-}
-
-/// The text of a line, without its styles.
-fn plain(line: &Line) -> String {
-    line.spans
-        .iter()
-        .map(|span| span.content.as_ref())
-        .collect()
 }
 
 /// The rule between two folders.

@@ -13,7 +13,7 @@ use serde::Deserialize;
 use crate::claude::statusline::Quota;
 use crate::state::{self, Record, Status, NEEDS_YOU, TIMED};
 use crate::term::tmux::{self, Pane};
-use crate::ui::line::{cell_len, cells, pad_right, truncate};
+use crate::ui::line::{cell_len, ljust, pad_right, push, rjust, truncate, width_of};
 use crate::ui::usage::{Day, Totals};
 use crate::ui::words::{
     self, CLAUDE, CURRENT, ERROR, INACTIVE, INK, MAGENTA, MASCOT, MASCOT_ROWS, PERMISSION, STRONG,
@@ -176,29 +176,9 @@ pub fn step(entries: &[Entry], current: &str, offset: i32) -> Option<String> {
     order.get(index).map(|e| e.window_id.clone())
 }
 
-/// The cells a text takes.
-fn width(text: &str) -> usize {
-    text.chars().map(cells).sum()
-}
-
-/// `text` padded with spaces on the right to `cells` cells.
-fn ljust(text: &str, cells: usize) -> String {
-    format!("{text}{}", " ".repeat(cells.saturating_sub(width(text))))
-}
-
-/// `text` padded with spaces on the left to `cells` cells.
-fn rjust(text: &str, cells: usize) -> String {
-    format!("{}{text}", " ".repeat(cells.saturating_sub(width(text))))
-}
-
 /// A line starting with the left padding column, over a `base` style.
 fn start(base: Style) -> Line<'static> {
     Line::from(Span::raw(" ")).style(base)
-}
-
-/// Appends `text` in `style` to a line.
-fn push(line: &mut Line<'static>, text: impl Into<String>, style: Style) {
-    line.spans.push(Span::styled(text.into(), style));
 }
 
 /// Pads a line to `content` and the two padding columns, so a background reaches both edges.
@@ -209,7 +189,7 @@ fn finish(mut line: Line<'static>, content: usize) -> Line<'static> {
 
 /// Ends a line with `value` against the right edge.
 fn right(line: &mut Line<'static>, value: &str, style: Style, content: usize) {
-    let used = cell_len(line).saturating_sub(1) + width(value);
+    let used = cell_len(line).saturating_sub(1) + width_of(value);
     push(line, " ".repeat(content.saturating_sub(used)), INK);
     push(line, value, style);
 }
@@ -233,7 +213,7 @@ impl Bullet<'_> {
         let taken = if self.value.is_empty() {
             0
         } else {
-            width(self.value) + 1
+            width_of(self.value) + 1
         };
         let room = self.content.saturating_sub(2 + taken);
         push(&mut line, words::fit(self.title, room), self.title_style);
@@ -331,7 +311,7 @@ fn entry_lines(entry: &Entry, current: bool, now: f64) -> [Line<'static>; 2] {
     // The model comes last, and only whole: a cut name says nothing
     if let Some(model) = entry.model.as_deref().filter(|m| !m.is_empty()) {
         let joint = if text.is_empty() { 0 } else { 3 };
-        if width(&text) + joint + width(model) <= DETAIL_ROOM {
+        if width_of(&text) + joint + width_of(model) <= DETAIL_ROOM {
             text = if text.is_empty() {
                 model.to_owned()
             } else {
@@ -373,7 +353,7 @@ fn runs_lines(runs: &[Run], now: f64, room: i64) -> Vec<Line<'static>> {
         let taken = if label.is_empty() {
             0
         } else {
-            width(&label) + 1
+            width_of(&label) + 1
         };
         push(
             &mut line,
@@ -419,7 +399,7 @@ fn hbar(value: f64, top: f64, cells: usize) -> String {
 /// Appends a chart bar for `value` scaled to `top`, padded so `value_text` ends the line at
 /// `content` cells.
 fn push_bar(line: &mut Line<'static>, value: f64, top: f64, value_text: &str, content: usize) {
-    let used = cell_len(line).saturating_sub(1) + 1 + width(value_text);
+    let used = cell_len(line).saturating_sub(1) + 1 + width_of(value_text);
     let cells = content.saturating_sub(used);
     push(line, ljust(&hbar(value, top, cells), cells + 1), CLAUDE);
 }
@@ -453,7 +433,7 @@ fn today_lines(day: &Day, spent: f64, content: usize) -> Vec<Line<'static>> {
     let mut lines_changed = changed(day.added, day.removed, content);
     let said = sessions_waited(day);
     let head = block("Today", &words::money(Some(spent)), content);
-    if cell_len(&lines_changed) - 1 + 3 + width(&said) <= content {
+    if cell_len(&lines_changed) - 1 + 3 + width_of(&said) <= content {
         push(&mut lines_changed, format!(" · {said}"), INACTIVE);
         return vec![head, lines_changed];
     }
@@ -511,7 +491,7 @@ fn chart_lines(week: &[(NaiveDate, f64)], content: usize) -> Vec<Line<'static>> 
             }
         })
         .collect();
-    let value_cells = values.iter().map(|v| width(v)).max().unwrap_or(0);
+    let value_cells = values.iter().map(|v| width_of(v)).max().unwrap_or(0);
     // Python's sum starts from the integer 0, so an empty week is $0.00, never -0.00
     let total = week.iter().fold(0.0, |sum, (_, v)| sum + v);
     let mut lines = vec![block("Spend 7d", &words::money(Some(total)), content)];
@@ -549,7 +529,7 @@ fn ranked_lines(title: &str, ranked: &[(String, f64)], content: usize) -> Vec<Li
         return Vec::new();
     };
     let values: Vec<String> = shown.iter().map(|(_, v)| words::money(Some(*v))).collect();
-    let value_cells = values.iter().map(|v| width(v)).max().unwrap_or(0);
+    let value_cells = values.iter().map(|v| width_of(v)).max().unwrap_or(0);
     let mut lines = vec![block(title, "", content)];
     for (i, ((name, dollars), value)) in shown.iter().zip(&values).enumerate() {
         let mut line = elbow(i == 0, Style::new());
@@ -752,7 +732,7 @@ pub fn column(
     runs: &[Run],
 ) -> Vec<Line<'static>> {
     let blank = || finish(start(Style::new()), CONTENT);
-    let pad = " ".repeat((CONTENT - width(MASCOT_ROWS[0])) / 2);
+    let pad = " ".repeat((CONTENT - width_of(MASCOT_ROWS[0])) / 2);
     let mut lines = vec![blank()];
     for row in MASCOT_ROWS {
         let mut line = start(Style::new());
@@ -789,7 +769,7 @@ mod tests {
     use crate::claude::statusline::Quota;
     use crate::state::{Mux, Record, Status, Usage};
     use crate::term::tmux::Pane;
-    use crate::ui::line::cell_len;
+    use crate::ui::line::{cell_len, plain, row_text};
     use crate::ui::sidebar::{
         column, entry_at, entry_lines, hbar, hours_lines, load_entries, ordered, panel_lines, plan,
         runs_lines, spinner, stats_lines, step, today_lines, Entry, Row, Run, Stats, CONTENT,
@@ -874,10 +854,6 @@ mod tests {
             eu("@4", "docs", Status::Done, NOW - 9.0, 0.12, 900.0),
             eu("@5", "notes", Status::Idle, NOW - 9.0, 0.05, 10800.0),
         ]
-    }
-
-    fn plain(line: &Line) -> String {
-        line.spans.iter().map(|s| s.content.as_ref()).collect()
     }
 
     /// The content columns of each line, without the padding or trailing spaces.
@@ -1518,26 +1494,6 @@ mod tests {
                 duration,
                 model,
             })
-    }
-
-    /// The text a rendered buffer row shows, skipping the cells wide characters cover.
-    fn row_text(buf: &ratatui::buffer::Buffer, y: u16) -> String {
-        let mut text = String::new();
-        let mut skip = 0;
-        for x in 0..buf.area.width {
-            if skip > 0 {
-                skip -= 1;
-                continue;
-            }
-            let symbol = buf[(x, y)].symbol();
-            skip = symbol
-                .chars()
-                .map(crate::ui::line::cells)
-                .sum::<usize>()
-                .saturating_sub(1);
-            text.push_str(symbol);
-        }
-        text
     }
 
     proptest::proptest! {
