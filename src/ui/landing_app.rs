@@ -19,7 +19,9 @@ use crate::core::state::Record;
 use crate::term::tmux::{Cli, Runner};
 use crate::ui::folders::Scan;
 use crate::ui::landing;
-use crate::ui::pane::{self, open, picker_key, App, LogOnce, Step, Visible};
+use crate::ui::pane::{
+    self, open, own_window, picker_key, App, LogOnce, Step, Visible, WINDOW_PAUSE,
+};
 use crate::ui::picker::{self, Folder, Picker};
 use crate::ui::runtime::{signal, unix_now, Msg, Runtime, Schedule, Screen, Signal};
 use crate::ui::sidebar::Stats;
@@ -32,11 +34,17 @@ use crate::ui::watch::{Stale, Watches};
 ///
 /// Fails when the terminal or the event loop cannot be set up.
 pub fn main_landing() -> anyhow::Result<()> {
+    let tmux = Cli::default();
+    let pane = std::env::var("TMUX_PANE").ok();
+    // Out of sight in a window that is not current, as when `cst` restarts it after an
+    // update; on screen when tmux cannot tell
+    let current = own_window(&tmux, pane.as_deref(), WINDOW_PAUSE).map_or(true, |w| w.current);
     let mut runtime = Runtime::start().context("cannot start the event loop")?;
     let mut screen = Screen::enter().context("cannot set the terminal up")?;
-    let mut app = Landing::new(Box::new(Cli::default()), Picker::default());
-    // The page starts on screen: its window was just opened
-    app.show();
+    let mut app = Landing::new(Box::new(tmux), Picker::default());
+    if current {
+        app.show();
+    }
     app.update(unix_now(), &mut runtime, &mut screen);
     pane::run(&mut app, &mut runtime, &mut screen);
     Ok(())

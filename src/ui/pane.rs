@@ -135,7 +135,17 @@ pub fn gated<A: Visible>(
     }
 }
 
-/// The id of the tmux window `pane` is in, asking tmux up to five times, `pause` apart.
+/// The tmux window a pane is in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OwnWindow {
+    /// The window's id, as `@3`.
+    pub id: String,
+    /// Whether it is its session's current window; a pane started in another one starts out
+    /// of sight.
+    pub current: bool,
+}
+
+/// The tmux window `pane` is in, asking tmux up to five times, `pause` apart.
 ///
 /// tmux can be slow to answer a pane it has just started, as on a busy server.
 ///
@@ -146,17 +156,21 @@ pub fn own_window(
     tmux: &dyn Runner,
     pane: Option<&str>,
     pause: Duration,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<OwnWindow> {
     let Some(pane) = pane.filter(|p| !p.is_empty()) else {
         bail!("not in a tmux pane: TMUX_PANE is not set");
     };
+    let format = "#{window_id}\t#{window_active}";
     for attempt in 0..WINDOW_TRIES {
         if attempt > 0 {
             thread::sleep(pause);
         }
-        let window_id = tmux.run(&["display-message", "-p", "-t", pane, "#{window_id}"]);
-        if !window_id.is_empty() {
-            return Ok(window_id);
+        let out = tmux.run(&["display-message", "-p", "-t", pane, format]);
+        if let Some((id, active)) = out.split_once('\t').filter(|(id, _)| !id.is_empty()) {
+            return Ok(OwnWindow {
+                id: id.to_owned(),
+                current: active == "1",
+            });
         }
     }
     bail!("cannot find the window of pane {pane}")
@@ -264,7 +278,8 @@ mod tests {
 
     impl Runner for Answers {
         fn run(&self, args: &[&str]) -> String {
-            assert_eq!(args, ["display-message", "-p", "-t", "%7", "#{window_id}"]);
+            let format = "#{window_id}\t#{window_active}";
+            assert_eq!(args, ["display-message", "-p", "-t", "%7", format]);
             *self.1.borrow_mut() += 1;
             self.0.borrow_mut().pop().unwrap_or_default().to_owned()
         }
@@ -285,9 +300,19 @@ mod tests {
 
     #[test]
     fn own_window_asks_again_until_tmux_answers() {
-        let tmux = Answers::new(&["", "", "@3"]);
+        let tmux = Answers::new(&["", "", "@3\t1"]);
         let got = own_window(&tmux, Some("%7"), Duration::ZERO).unwrap();
-        assert_eq!((got.as_str(), tmux.calls()), ("@3", 3));
+        assert_eq!(
+            (got.id.as_str(), got.current, tmux.calls()),
+            ("@3", true, 3)
+        );
+    }
+
+    #[test]
+    fn own_window_tells_a_window_out_of_sight() {
+        let tmux = Answers::new(&["@3\t0"]);
+        let got = own_window(&tmux, Some("%7"), Duration::ZERO).unwrap();
+        assert_eq!((got.id.as_str(), got.current), ("@3", false));
     }
 
     #[test]

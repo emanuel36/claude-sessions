@@ -31,12 +31,15 @@ use crate::ui::watch::{interruptible, Stale, Watches};
 pub fn main_sidebar() -> anyhow::Result<()> {
     let tmux = Cli::default();
     let pane = std::env::var("TMUX_PANE").ok();
-    let window_id = own_window(&tmux, pane.as_deref(), WINDOW_PAUSE)?;
+    let window = own_window(&tmux, pane.as_deref(), WINDOW_PAUSE)?;
     let mut runtime = Runtime::start().context("cannot start the event loop")?;
     let mut screen = Screen::enter().context("cannot set the terminal up")?;
-    let mut app = Sidebar::new(window_id, own_socket(), Box::new(tmux));
-    // A sidebar starts on screen: its window was just opened
-    app.show();
+    let mut app = Sidebar::new(window.id, own_socket(), Box::new(tmux));
+    // On screen if its window is: a window just opened is, unless the user already moved on;
+    // F12 shows it once its window is
+    if window.current {
+        app.show();
+    }
     app.update(unix_now(), &mut runtime, &mut screen);
     pane::run(&mut app, &mut runtime, &mut screen);
     Ok(())
