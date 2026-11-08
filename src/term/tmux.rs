@@ -135,13 +135,13 @@ fn run_capped_with(mut cmd: Command, timeout: Duration, spawn: Spawner<'_>) -> S
 }
 
 /// Kills a child and waits for it, so it leaves no zombie behind.
-fn give_up(child: &mut std::process::Child) {
+pub(crate) fn give_up(child: &mut std::process::Child) {
     let _ = child.kill();
     let _ = child.wait();
 }
 
 /// Waits for the child to exit until `deadline`; false if it is still running.
-fn wait_until(child: &mut std::process::Child, deadline: Instant) -> bool {
+pub(crate) fn wait_until(child: &mut std::process::Child, deadline: Instant) -> bool {
     wait_until_with(child, deadline, &mut || thread::sleep(POLL))
 }
 

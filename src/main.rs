@@ -5,7 +5,7 @@ use std::io::Read;
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use cst::claude::hook;
+use cst::claude::{hook, statusline};
 use cst::paths;
 use cst::term::tmux::Cli;
 
@@ -48,15 +48,33 @@ fn run_hook() -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// Records the usage on stdin and prints the status line; logs a failure and exits 0, so no
+/// update leaves Claude Code without a line.
+fn run_statusline() -> ExitCode {
+    let mut input = Vec::new();
+    if let Err(e) = std::io::stdin().lock().read_to_end(&mut input) {
+        paths::log_error(&format_args!("statusline: cannot read stdin: {e}"));
+    }
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0.0, |d| d.as_secs_f64());
+    statusline::run(&input, now, &mut std::io::stdout().lock());
+    ExitCode::SUCCESS
+}
+
 fn main() -> ExitCode {
     // `args()` panics on non-UTF-8 input, so convert lossily instead.
     let args: Vec<String> = std::env::args_os()
         .skip(1)
         .map(|a| a.to_string_lossy().into_owned())
         .collect();
-    // The hook runs on every Claude Code event: nothing but the subcommand name is parsed.
+    // The hook and the status line run on every Claude Code update: nothing but the subcommand
+    // name is parsed.
     if args.first().map(String::as_str) == Some("hook") {
         return run_hook();
+    }
+    if args.first().map(String::as_str) == Some("statusline") {
+        return run_statusline();
     }
     match args
         .iter()

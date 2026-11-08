@@ -2,4 +2,5 @@
 
 pub mod history;
 pub mod hook;
+pub mod statusline;
 pub mod transcript;
