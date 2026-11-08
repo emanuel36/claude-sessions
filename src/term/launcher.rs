@@ -6,6 +6,7 @@
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::io;
+use std::os::unix::fs::MetadataExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -211,10 +212,26 @@ pub fn search_path(dir: &Path, path: Option<&OsStr>) -> OsString {
     joined
 }
 
-/// Names this version and its configuration: the crate version and a short hash of [`CONF`].
+/// Names this build and its configuration: the crate version, a short hash of [`CONF`] and the
+/// identity of the `cst` file.
 pub fn conf_stamp() -> String {
     let hash = update::sha256_hex(CONF.as_bytes());
-    format!("{} {}", env!("CARGO_PKG_VERSION"), &hash[..12])
+    format!(
+        "{} {} {}",
+        env!("CARGO_PKG_VERSION"),
+        &hash[..12],
+        binary_id()
+    )
+}
+
+/// The running `cst` file's identity, inode and change time: installing a build or an update
+/// replaces the file, so a server it configured gets restarted panes even when the version and
+/// the configuration stay the same. Empty when the file cannot be read.
+fn binary_id() -> String {
+    std::env::current_exe()
+        .and_then(std::fs::metadata)
+        .map(|m| format!("{:x}.{}", m.ino(), m.mtime()))
+        .unwrap_or_default()
 }
 
 /// The configuration as written: [`CONF`], then the line that stamps the server with
