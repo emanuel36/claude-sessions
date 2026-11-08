@@ -10,12 +10,11 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::mpsc;
-use std::thread;
 use std::time::{Duration, Instant};
 
 use rustix::process::{kill_process_group, Pid, Signal};
@@ -24,9 +23,9 @@ use serde_json::Value;
 
 use crate::journal::{self, JournalEvent};
 use crate::paths::{self, LIMITS_FILE};
+use crate::process;
 use crate::state::Usage;
 use crate::store::{self, Sink};
-use crate::term::tmux;
 
 /// The account's usage windows, as the status line input names them.
 pub const WINDOWS: [&str; 2] = ["five_hour", "seven_day"];
@@ -287,14 +286,11 @@ fn run_chain(command: &str, raw: &[u8], timeout: Duration) -> io::Result<Option<
             return Err(e);
         }
     };
-    let output = rx.recv_timeout(timeout);
-    match output {
-        Ok(buf) if tmux::wait_until(&mut child, deadline) => Ok(Some(buf)),
-        _ => {
-            stop(&mut child);
-            Ok(None)
-        }
+    let output = process::collect(&mut child, &rx, timeout, deadline);
+    if output.is_none() {
+        stop(&mut child);
     }
+    Ok(output)
 }
 
 /// Writes `input` to the child's stdin and reads its stdout, each on a thread of its own, so
@@ -302,20 +298,14 @@ fn run_chain(command: &str, raw: &[u8], timeout: Duration) -> io::Result<Option<
 /// The threads end by themselves when the child is killed.
 fn feed_and_collect(
     mut stdin: ChildStdin,
-    mut stdout: ChildStdout,
+    stdout: ChildStdout,
     input: Vec<u8>,
 ) -> io::Result<mpsc::Receiver<Vec<u8>>> {
-    let (tx, rx) = mpsc::channel();
-    thread::Builder::new().spawn(move || {
+    process::spawn_thread(Box::new(move || {
         // The command may exit without reading its input; a broken pipe is not a failure
         let _ = stdin.write_all(&input);
-    })?;
-    thread::Builder::new().spawn(move || {
-        let mut buf = Vec::new();
-        let _ = stdout.read_to_end(&mut buf);
-        let _ = tx.send(buf);
-    })?;
-    Ok(rx)
+    }))?;
+    process::read_on_thread(stdout, &process::spawn_thread)
 }
 
 /// Kills the child's whole process group and reaps the child.
@@ -324,7 +314,7 @@ fn stop(child: &mut Child) {
         // The group may be gone already
         let _ = kill_process_group(group, Signal::KILL);
     }
-    tmux::give_up(child);
+    process::give_up(child);
 }
 
 /// Records what the status line input tells, then prints the status line; never fails.
