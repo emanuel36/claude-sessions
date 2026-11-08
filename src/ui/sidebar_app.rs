@@ -11,17 +11,13 @@ use anyhow::Context;
 use crossterm::event::{MouseButton, MouseEventKind};
 use ratatui::widgets::Paragraph;
 
-use crate::claude::history::HistoryReader;
 use crate::claude::hook::{self, QUIET_SECONDS};
-use crate::claude::statusline::load_limits;
-use crate::core::state::unix_now;
-use crate::core::state::{self, Record, Status, TIMED};
+use crate::core::state::{self, unix_now, Record, Status, TIMED};
 use crate::term::tmux::{self, Cli, Pane, Runner};
-use crate::ui::pane::{self, own_socket, own_window, App, LogOnce, Step, Visible, WINDOW_PAUSE};
+use crate::ui::pane::{self, own_socket, own_window, App, Shell, Step, Visible, WINDOW_PAUSE};
 use crate::ui::runtime::{signal, Msg, Runtime, Schedule, Screen, Signal};
 use crate::ui::sidebar::{column, entry_at, load_entries, Entry, Run, Stats};
-use crate::ui::usage::Reader;
-use crate::ui::watch::{interruptible, Stale, Watches};
+use crate::ui::watch::interruptible;
 
 /// Runs the sidebar in the tmux pane this process runs in, until its terminal goes away.
 ///
@@ -115,10 +111,7 @@ struct Sidebar {
     socket: String,
     /// The server the sidebar runs in.
     tmux: Box<dyn Runner>,
-    /// The directories watched now.
-    watches: Watches,
-    /// What to read again before the next draw.
-    stale: Stale,
+    shell: Shell,
     /// The server's panes, listed again only on a layout change or when shown.
     panes: Vec<Pane>,
     records: Vec<Record>,
@@ -126,16 +119,8 @@ struct Sidebar {
     records_at: f64,
     entries: Vec<Entry>,
     runs: Vec<Run>,
-    stats: Stats,
-    /// The minute the statistics were added up in; they change with the time too.
-    stats_minute: Option<i64>,
-    history: HistoryReader,
-    usage: Reader,
-    schedule: Schedule,
     /// The terminal's height at the last draw, to find the entry a click lands on.
     height: u16,
-    load_error: LogOnce,
-    draw_error: LogOnce,
 }
 
 impl Sidebar {
@@ -144,21 +129,13 @@ impl Sidebar {
             window_id,
             socket,
             tmux,
-            watches: Watches::default(),
-            stale: Stale::NONE,
+            shell: Shell::new("sidebar", false),
             panes: Vec::new(),
             records: Vec::new(),
             records_at: 0.0,
             entries: Vec::new(),
             runs: Vec::new(),
-            stats: Stats::default(),
-            stats_minute: None,
-            history: HistoryReader::new(false),
-            usage: Reader::new(),
-            schedule: Schedule::default(),
             height: 0,
-            load_error: LogOnce::new("sidebar"),
-            draw_error: LogOnce::new("sidebar"),
         }
     }
 
@@ -167,7 +144,7 @@ impl Sidebar {
         match msg {
             Msg::Key(key) => match signal(&key) {
                 Some(Signal::Layout) => {
-                    self.stale.panes = true;
+                    self.shell.stale.panes = true;
                     Step::Draw
                 }
                 // Ctrl+C, Ctrl+Q and every other key do nothing
@@ -180,14 +157,14 @@ impl Sidebar {
                 Step::Wait
             }
             Msg::Resize => {
-                self.schedule.dirty = true;
+                self.shell.schedule.dirty = true;
                 Step::Wait
             }
             Msg::Changed(path) => {
-                let touched = self.watches.changed(&path, &self.records, now);
+                let touched = self.shell.watches.changed(&path, &self.records, now);
                 if touched.any() {
-                    self.stale.add(touched);
-                    self.schedule.dirty = true;
+                    self.shell.stale.add(touched);
+                    self.shell.schedule.dirty = true;
                 }
                 Step::Wait
             }
@@ -196,7 +173,7 @@ impl Sidebar {
 
     /// Goes to the window of the entry on row `y`.
     fn click(&self, y: u16) {
-        if let Some(entry) = entry_at(&self.entries, y, self.height, &self.stats) {
+        if let Some(entry) = entry_at(&self.entries, y, self.height, &self.shell.stats) {
             self.tmux.run(&["select-window", "-t", &entry.window_id]);
         }
     }
@@ -205,13 +182,15 @@ impl Sidebar {
     fn watch_transcripts(&mut self, runtime: &mut Runtime) {
         for dir in transcript_dirs(&self.records) {
             // The quiet deadline settles the session if a change was missed
-            self.watches.watch(runtime, &dir, &mut self.load_error);
+            self.shell
+                .watches
+                .watch(runtime, &dir, &mut self.shell.load_error);
         }
     }
 
     /// Reads again what is stale.
     fn reload(&mut self, now: f64) {
-        let stale = std::mem::take(&mut self.stale);
+        let stale = std::mem::take(&mut self.shell.stale);
         if stale.panes {
             self.panes = tmux::panes(self.tmux.as_ref());
         }
@@ -223,22 +202,7 @@ impl Sidebar {
             self.entries = load_entries(&self.records, &self.panes, &self.socket);
             self.runs = runs_of(&self.records);
         }
-        if stale.history {
-            self.history.load();
-        }
-        // Today's waiting grows with the time, and the week moves on at midnight
-        let minute = (now / 60.0).floor() as i64;
-        if stale.history || stale.journal || self.stats_minute != Some(minute) {
-            let generation = self.history.generation();
-            let totals = self.usage.totals(self.history.sessions(), generation, now);
-            self.stats.today = totals.today;
-            self.stats.week = totals.days.clone();
-            self.stats.day = Some(self.usage.day(now));
-            self.stats_minute = Some(minute);
-        }
-        if stale.limits {
-            self.stats.limits = load_limits(now);
-        }
+        self.shell.read_stats(&stale, now, false);
     }
 
     /// Draws the column; a failed draw keeps the last screen.
@@ -250,7 +214,7 @@ impl Sidebar {
             let lines = column(
                 &self.entries,
                 &self.window_id,
-                &self.stats,
+                &self.shell.stats,
                 now,
                 area.height,
                 &self.runs,
@@ -258,36 +222,23 @@ impl Sidebar {
             frame.render_widget(Paragraph::new(lines), area);
         });
         self.height = height;
-        if let Err(e) = drawn {
-            self.draw_error.log(&format_args!("cannot draw: {e}"));
-        }
-        self.schedule.last_draw = now;
-        self.schedule.dirty = false;
+        self.shell.drawn(drawn, now);
     }
 }
 
 impl Visible for Sidebar {
-    fn visible(&self) -> bool {
-        self.schedule.visible
+    fn shell(&self) -> &Shell {
+        &self.shell
     }
 
-    /// On screen: everything is read again, panes included, before the next draw.
-    fn show(&mut self) {
-        self.schedule.visible = true;
-        self.stale = Stale::ALL;
-    }
-
-    /// Off screen: no watches, no timer, nothing read until shown again.
-    fn hide(&mut self, runtime: &mut Runtime) {
-        self.schedule.visible = false;
-        self.schedule.dirty = false;
-        self.watches.clear(runtime);
+    fn shell_mut(&mut self) -> &mut Shell {
+        &mut self.shell
     }
 }
 
 impl App for Sidebar {
     fn schedule(&self) -> &Schedule {
-        &self.schedule
+        &self.shell.schedule
     }
 
     fn handle(&mut self, msg: Msg, now: f64, runtime: &mut Runtime) -> Step {
@@ -295,25 +246,18 @@ impl App for Sidebar {
     }
 
     fn update(&mut self, now: f64, runtime: &mut Runtime, screen: &mut Screen) {
-        if !self.schedule.visible {
-            return;
-        }
         // A session's grace ended since the records were read: they settle it
-        if (self.schedule.quiet.iter()).any(|&at| at > self.records_at && at <= now) {
-            self.stale.records = true;
+        if (self.shell.schedule.quiet.iter()).any(|&at| at > self.records_at && at <= now) {
+            self.shell.stale.records = true;
         }
-        if self.stats.limits.values().any(|q| q.resets_at <= now) {
-            self.stale.limits = true;
-        }
-        if self.stale.any() {
-            let missed = self.watches.roots(runtime, &mut self.load_error);
-            self.stale.add(missed);
+        if !self.shell.prepare(now, runtime) {
+            return;
         }
         self.reload(now);
         self.watch_transcripts(runtime);
-        self.schedule.animating = animating(&self.entries);
-        self.schedule.labels = labels(&self.entries, &self.runs, &self.stats);
-        self.schedule.quiet = quiet_deadlines(&self.records);
+        self.shell.schedule.animating = animating(&self.entries);
+        self.shell.schedule.labels = labels(&self.entries, &self.runs, &self.shell.stats);
+        self.shell.schedule.quiet = quiet_deadlines(&self.records);
         self.draw(now, screen);
     }
 }
@@ -369,8 +313,8 @@ mod tests {
             side.hide(&mut runtime);
             let step = side.handle(msg.clone(), NOW, &mut runtime);
             assert_eq!(step, Step::Draw, "{msg:?}");
-            assert!(side.schedule.visible, "{msg:?}");
-            assert_eq!(side.stale, Stale::ALL, "{msg:?}");
+            assert!(side.shell.schedule.visible, "{msg:?}");
+            assert_eq!(side.shell.stale, Stale::ALL, "{msg:?}");
         }
     }
 
@@ -381,7 +325,7 @@ mod tests {
         side.hide(&mut runtime);
         let changed = Msg::Changed(PathBuf::from("/run/cst/s1.json"));
         assert_eq!(side.handle(changed, NOW, &mut runtime), Step::Wait);
-        assert!(!side.schedule.visible && !side.schedule.dirty);
+        assert!(!side.shell.schedule.visible && !side.shell.schedule.dirty);
     }
 
     #[test]

@@ -11,23 +11,18 @@ use anyhow::Context;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::widgets::Paragraph;
 
-use crate::claude::history::HistoryReader;
 use crate::claude::hook;
-use crate::claude::statusline::load_limits;
 use crate::claude::transcript::Titles;
-use crate::core::state::unix_now;
-use crate::core::state::Record;
+use crate::core::state::{unix_now, Record};
 use crate::term::tmux::{Cli, Runner};
 use crate::ui::folders::Scan;
 use crate::ui::landing;
 use crate::ui::pane::{
-    self, open, own_window, picker_key, App, LogOnce, Step, Visible, WINDOW_PAUSE,
+    self, open, own_window, picker_key, App, Shell, Step, Visible, WINDOW_PAUSE,
 };
 use crate::ui::picker::{self, Folder, Picker};
 use crate::ui::runtime::{signal, Msg, Runtime, Schedule, Screen, Signal};
 use crate::ui::sidebar::Stats;
-use crate::ui::usage::Reader;
-use crate::ui::watch::{Stale, Watches};
 
 /// Runs the landing page in the tmux pane this process runs in, until its terminal goes away.
 ///
@@ -75,10 +70,7 @@ fn labels(folders: &[Folder], stats: &Stats) -> Vec<f64> {
 struct Landing {
     /// The server the page runs in.
     tmux: Box<dyn Runner>,
-    /// The directories watched now.
-    watches: Watches,
-    /// What to read again before the next draw.
-    stale: Stale,
+    shell: Shell,
     /// The folder list and what the user did in it.
     picker: Picker,
     /// Whether the user is typing a search.
@@ -87,15 +79,7 @@ struct Landing {
     opened: usize,
     /// The sessions running now, not offered to resume.
     live: HashSet<String>,
-    history: HistoryReader,
-    usage: Reader,
     scan: Scan,
-    stats: Stats,
-    /// The minute the statistics were added up in; they change with the time too.
-    stats_minute: Option<i64>,
-    schedule: Schedule,
-    load_error: LogOnce,
-    draw_error: LogOnce,
 }
 
 impl Landing {
@@ -104,20 +88,12 @@ impl Landing {
     fn new(tmux: Box<dyn Runner>, picker: Picker) -> Self {
         Landing {
             tmux,
-            watches: Watches::default(),
-            stale: Stale::NONE,
+            shell: Shell::new("landing", true),
             picker,
             searching: false,
             opened: 0,
             live: HashSet::new(),
-            history: HistoryReader::new(true),
-            usage: Reader::new(),
             scan: Scan::new(Titles::new(true)),
-            stats: Stats::default(),
-            stats_minute: None,
-            schedule: Schedule::default(),
-            load_error: LogOnce::new("landing"),
-            draw_error: LogOnce::new("landing"),
         }
     }
 
@@ -127,7 +103,7 @@ impl Landing {
             Msg::Key(key) => match signal(&key) {
                 // A window closed or opened: the open sessions may have changed
                 Some(Signal::Layout) => {
-                    self.stale.records = true;
+                    self.shell.stale.records = true;
                     Step::Draw
                 }
                 Some(_) => Step::Wait,
@@ -136,15 +112,15 @@ impl Landing {
             },
             Msg::Mouse(_) => Step::Wait,
             Msg::Resize => {
-                self.schedule.dirty = true;
+                self.shell.schedule.dirty = true;
                 Step::Wait
             }
             Msg::Changed(path) => {
                 // No transcript is watched: the page shows no session's status
-                let touched = self.watches.changed(&path, &[], now);
+                let touched = self.shell.watches.changed(&path, &[], now);
                 if touched.any() {
-                    self.stale.add(touched);
-                    self.schedule.dirty = true;
+                    self.shell.stale.add(touched);
+                    self.shell.schedule.dirty = true;
                 }
                 Step::Wait
             }
@@ -197,39 +173,21 @@ impl Landing {
 
     /// Reads again what is stale.
     fn reload(&mut self, now: f64) {
-        let stale = std::mem::take(&mut self.stale);
+        let stale = std::mem::take(&mut self.shell.stale);
         if stale.records {
             let records = hook::live_sessions(now);
             (self.opened, self.live) = open_sessions(&records);
         }
-        if stale.history {
-            self.history.load();
-        }
-        // Today's figures grow with the time, and the week moves on at midnight
-        let minute = (now / 60.0).floor() as i64;
-        let totals_due = stale.history || stale.journal || self.stats_minute != Some(minute);
-        if totals_due {
-            let generation = self.history.generation();
-            let totals = self.usage.totals(self.history.sessions(), generation, now);
-            self.stats.today = totals.today;
-            self.stats.week = totals.days.clone();
-            self.stats.totals = Some(totals.clone());
-            self.stats.day = Some(self.usage.day(now));
-            self.stats.hours = self.usage.hours(now).to_vec();
-            self.stats_minute = Some(minute);
-        }
+        let totals_due = self.shell.read_stats(&stale, now, true);
         if stale.records || totals_due {
-            let costs = self.stats.totals.as_ref().map(|t| &t.per_session);
-            let generation = self.history.generation();
+            let costs = self.shell.stats.totals.as_ref().map(|t| &t.per_session);
+            let generation = self.shell.history.generation();
             self.picker.folders = self.scan.load(
-                self.history.sessions(),
+                self.shell.history.sessions(),
                 generation,
                 costs.unwrap_or(&Default::default()),
                 &self.live,
             );
-        }
-        if stale.limits {
-            self.stats.limits = load_limits(now);
         }
     }
 
@@ -241,43 +199,30 @@ impl Landing {
                 &mut self.picker,
                 self.searching,
                 self.opened,
-                &self.stats,
+                &self.shell.stats,
                 now,
                 area.width,
                 area.height,
             );
             frame.render_widget(Paragraph::new(lines), area);
         });
-        if let Err(e) = drawn {
-            self.draw_error.log(&format_args!("cannot draw: {e}"));
-        }
-        self.schedule.last_draw = now;
-        self.schedule.dirty = false;
+        self.shell.drawn(drawn, now);
     }
 }
 
 impl Visible for Landing {
-    fn visible(&self) -> bool {
-        self.schedule.visible
+    fn shell(&self) -> &Shell {
+        &self.shell
     }
 
-    /// On screen: everything is read again before the next draw.
-    fn show(&mut self) {
-        self.schedule.visible = true;
-        self.stale = Stale::ALL;
-    }
-
-    /// Off screen: no watches, no timer, nothing read until shown again.
-    fn hide(&mut self, runtime: &mut Runtime) {
-        self.schedule.visible = false;
-        self.schedule.dirty = false;
-        self.watches.clear(runtime);
+    fn shell_mut(&mut self) -> &mut Shell {
+        &mut self.shell
     }
 }
 
 impl App for Landing {
     fn schedule(&self) -> &Schedule {
-        &self.schedule
+        &self.shell.schedule
     }
 
     fn handle(&mut self, msg: Msg, now: f64, runtime: &mut Runtime) -> Step {
@@ -285,18 +230,11 @@ impl App for Landing {
     }
 
     fn update(&mut self, now: f64, runtime: &mut Runtime, screen: &mut Screen) {
-        if !self.schedule.visible {
+        if !self.shell.prepare(now, runtime) {
             return;
         }
-        if self.stats.limits.values().any(|q| q.resets_at <= now) {
-            self.stale.limits = true;
-        }
-        if self.stale.any() {
-            let missed = self.watches.roots(runtime, &mut self.load_error);
-            self.stale.add(missed);
-        }
         self.reload(now);
-        self.schedule.labels = labels(&self.picker.folders, &self.stats);
+        self.shell.schedule.labels = labels(&self.picker.folders, &self.shell.stats);
         self.draw(now, screen);
     }
 }
@@ -351,7 +289,7 @@ mod tests {
         let mut picker = Picker::new(Box::new(|_| false));
         picker.folders = folders();
         let mut page = Landing::new(Box::new(calls.clone()), picker);
-        page.schedule.visible = true;
+        page.shell.schedule.visible = true;
         (page, calls, Runtime::headless().unwrap())
     }
 
@@ -447,7 +385,7 @@ mod tests {
         page.hide(&mut runtime);
         let key = KeyEvent::new(KeyCode::Down, KeyModifiers::NONE);
         assert_eq!(page.handle(Msg::Key(key), NOW, &mut runtime), Step::Draw);
-        assert!(page.schedule.visible);
+        assert!(page.shell.schedule.visible);
         assert_eq!(page.picker.cursor, 1);
     }
 
@@ -456,13 +394,13 @@ mod tests {
         let (mut page, calls, mut runtime) = page();
         let dir = tempfile::TempDir::new().unwrap();
         let mut log = LogOnce::new("landing");
-        assert!(page.watches.watch(&mut runtime, dir.path(), &mut log));
-        page.schedule.labels = vec![0.0];
-        page.schedule.dirty = true;
+        assert!(page.shell.watches.watch(&mut runtime, dir.path(), &mut log));
+        page.shell.schedule.labels = vec![0.0];
+        page.shell.schedule.dirty = true;
         let f11 = KeyEvent::new(KeyCode::F(11), KeyModifiers::NONE);
         assert_eq!(page.handle(Msg::Key(f11), NOW, &mut runtime), Step::Wait);
-        assert_eq!(page.schedule.next_wake(NOW), None);
-        assert!(page.watches.is_empty());
+        assert_eq!(page.shell.schedule.next_wake(NOW), None);
+        assert!(page.shell.watches.is_empty());
         assert_eq!(calls.calls(), Vec::<Vec<String>>::new());
     }
 
@@ -472,7 +410,7 @@ mod tests {
         page.hide(&mut runtime);
         let changed = Msg::Changed(PathBuf::from("/run/cst/s1.json"));
         assert_eq!(page.handle(changed, NOW, &mut runtime), Step::Wait);
-        assert!(!page.schedule.visible && !page.schedule.dirty);
+        assert!(!page.shell.schedule.visible && !page.shell.schedule.dirty);
     }
 
     #[test]

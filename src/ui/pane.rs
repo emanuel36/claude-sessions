@@ -1,19 +1,25 @@
 //! What the sidebar, the landing page and the Alt+n panel share: the loop they run on, how they
-//! learn whether they are on screen and how they log failures. What they watch is in
-//! [`crate::ui::watch`].
+//! learn whether they are on screen and how they log failures; the sidebar and the landing
+//! page also share a [`Shell`]. What they watch is in [`crate::ui::watch`].
 
 use std::fmt::Display;
+use std::io;
 use std::thread;
 use std::time::Duration;
 
 use anyhow::bail;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+use crate::claude::history::HistoryReader;
+use crate::claude::statusline::load_limits;
 use crate::core::paths;
 use crate::core::state::unix_now;
 use crate::term::tmux::{self, Runner};
 use crate::ui::picker;
 use crate::ui::runtime::{signal, Msg, Runtime, Schedule, Screen, Signal, Wake};
+use crate::ui::sidebar::Stats;
+use crate::ui::usage::Reader;
+use crate::ui::watch::{Stale, Watches};
 
 /// How many times tmux is asked for the pane's window before giving up.
 const WINDOW_TRIES: u32 = 5;
@@ -97,14 +103,125 @@ pub fn sight(msg: &Msg, visible: bool) -> Sight {
     }
 }
 
+/// What the sidebar and the landing page share: when to wake up, what they watch and must read
+/// again, and the statistics they add up from the history and the journal.
+pub struct Shell {
+    /// When the pane must wake up, and whether it is on screen.
+    pub schedule: Schedule,
+    /// The directories watched now.
+    pub watches: Watches,
+    /// What to read again before the next draw.
+    pub stale: Stale,
+    pub history: HistoryReader,
+    pub usage: Reader,
+    pub stats: Stats,
+    /// The minute the statistics were added up in; they change with the time too.
+    stats_minute: Option<i64>,
+    pub load_error: LogOnce,
+    draw_error: LogOnce,
+}
+
+impl Shell {
+    /// A shell for the pane named `who` in its error log; `stored` keeps the history's index on
+    /// disk for the next process.
+    pub fn new(who: &'static str, stored: bool) -> Self {
+        Shell {
+            schedule: Schedule::default(),
+            watches: Watches::default(),
+            stale: Stale::NONE,
+            history: HistoryReader::new(stored),
+            usage: Reader::new(),
+            stats: Stats::default(),
+            stats_minute: None,
+            load_error: LogOnce::new(who),
+            draw_error: LogOnce::new(who),
+        }
+    }
+
+    /// Before an update: marks the quotas stale once one resets, and what changed while a
+    /// watch was missing. Returns whether there is anything to do: nothing while off screen.
+    pub fn prepare(&mut self, now: f64, runtime: &mut Runtime) -> bool {
+        if !self.schedule.visible {
+            return false;
+        }
+        if self.stats.limits.values().any(|q| q.resets_at <= now) {
+            self.stale.limits = true;
+        }
+        if self.stale.any() {
+            let missed = self.watches.roots(runtime, &mut self.load_error);
+            self.stale.add(missed);
+        }
+        true
+    }
+
+    /// Reads again the history, the statistics and the quotas, where `stale` says so.
+    ///
+    /// The statistics are added up again when the history or the journal changed, and every
+    /// minute: today's figures grow with the time, and the week moves on at midnight. `full`
+    /// adds the week's totals and today's hours, which only the landing page shows. Returns
+    /// whether they were added up again.
+    pub fn read_stats(&mut self, stale: &Stale, now: f64, full: bool) -> bool {
+        if stale.history {
+            self.history.load();
+        }
+        let minute = (now / 60.0).floor() as i64;
+        let due = stale.history || stale.journal || self.stats_minute != Some(minute);
+        if due {
+            let generation = self.history.generation();
+            let totals = self.usage.totals(self.history.sessions(), generation, now);
+            self.stats.today = totals.today;
+            self.stats.week = totals.days.clone();
+            if full {
+                self.stats.totals = Some(totals.clone());
+            }
+            self.stats.day = Some(self.usage.day(now));
+            if full {
+                self.stats.hours = self.usage.hours(now).to_vec();
+            }
+            self.stats_minute = Some(minute);
+        }
+        if stale.limits {
+            self.stats.limits = load_limits(now);
+        }
+        due
+    }
+
+    /// After a draw at `now`: logs a failed one, which keeps the last screen.
+    pub fn drawn(&mut self, result: io::Result<()>, now: f64) {
+        if let Err(e) = result {
+            self.draw_error.log(&format_args!("cannot draw: {e}"));
+        }
+        self.schedule.last_draw = now;
+        self.schedule.dirty = false;
+    }
+}
+
 /// A pane tmux shows and hides: the sidebar and the landing page.
 pub trait Visible {
+    /// The pane's [`Shell`].
+    fn shell(&self) -> &Shell;
+    /// The pane's [`Shell`], to change.
+    fn shell_mut(&mut self) -> &mut Shell;
+
     /// Whether the pane believes itself on screen.
-    fn visible(&self) -> bool;
+    fn visible(&self) -> bool {
+        self.shell().schedule.visible
+    }
+
     /// Comes on screen: everything is read again before the next draw.
-    fn show(&mut self);
+    fn show(&mut self) {
+        let shell = self.shell_mut();
+        shell.schedule.visible = true;
+        shell.stale = Stale::ALL;
+    }
+
     /// Leaves the screen: no watches, no timer, nothing read until shown again.
-    fn hide(&mut self, runtime: &mut Runtime);
+    fn hide(&mut self, runtime: &mut Runtime) {
+        let shell = self.shell_mut();
+        shell.schedule.visible = false;
+        shell.schedule.dirty = false;
+        shell.watches.clear(runtime);
+    }
 }
 
 /// Takes a message for a pane tmux shows and hides; `take` handles it once the pane is known
