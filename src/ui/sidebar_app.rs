@@ -16,13 +16,11 @@ use crate::claude::hook::{self, QUIET_SECONDS};
 use crate::claude::statusline::load_limits;
 use crate::state::{self, Record, Status, TIMED};
 use crate::term::tmux::{self, Cli, Pane, Runner};
-use crate::ui::pane::{
-    self, interruptible, own_socket, own_window, App, LogOnce, Stale, Step, Visible, Watches,
-    WINDOW_PAUSE,
-};
+use crate::ui::pane::{self, own_socket, own_window, App, LogOnce, Step, Visible, WINDOW_PAUSE};
 use crate::ui::runtime::{signal, unix_now, Msg, Runtime, Schedule, Screen, Signal};
 use crate::ui::sidebar::{column, entry_at, load_entries, Entry, Run, Stats};
 use crate::ui::usage::Reader;
+use crate::ui::watch::{interruptible, Stale, Watches};
 
 /// Runs the sidebar in the tmux pane this process runs in, until its terminal goes away.
 ///
@@ -330,12 +328,13 @@ mod tests {
     use crate::claude::statusline::Quota;
     use crate::state::{Record, Status};
     use crate::term::tmux::Runner;
-    use crate::ui::pane::{App, Stale, Step, Visible};
+    use crate::ui::pane::{App, Step, Visible};
     use crate::ui::runtime::{Msg, Runtime};
     use crate::ui::sidebar::{Entry, Run, Stats};
     use crate::ui::sidebar_app::{
         animating, labels, quiet_deadlines, runs_of, transcript_dirs, Sidebar,
     };
+    use crate::ui::watch::Stale;
 
     const NOW: f64 = 1_700_000_000.0;
 

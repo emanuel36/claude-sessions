@@ -19,11 +19,12 @@ use crate::state::Record;
 use crate::term::tmux::{Cli, Runner};
 use crate::ui::folders::Scan;
 use crate::ui::landing;
-use crate::ui::pane::{self, open, picker_key, App, LogOnce, Stale, Step, Visible, Watches};
+use crate::ui::pane::{self, open, picker_key, App, LogOnce, Step, Visible};
 use crate::ui::picker::{self, Folder, Picker};
 use crate::ui::runtime::{signal, unix_now, Msg, Runtime, Schedule, Screen, Signal};
 use crate::ui::sidebar::Stats;
 use crate::ui::usage::Reader;
+use crate::ui::watch::{Stale, Watches};
 
 /// Runs the landing page in the tmux pane this process runs in, until its terminal goes away.
 ///
