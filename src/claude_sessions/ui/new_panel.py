@@ -18,7 +18,9 @@ SHOWN = 5
 WIDTH = 48
 AGE_WIDTH = 4
 SPEND_WIDTH = 8
-FOOTER = "↑↓ move · → sessions · Enter new / resume · Esc"
+FOOTER = (("↑↓", "move"), ("→", "sessions"), ("Enter", "new / resume"), ("Esc", ""))
+# Marks the last line on show when the list goes on below it
+MORE = "▼"
 
 
 @dataclass
@@ -101,7 +103,7 @@ def _rule(width):
 def folder_lines(folder, expanded, now, width=WIDTH):
     """A folder's two lines: name and last use, then its sessions and the week's spend."""
     arrow = " ▾ " if folder.path in expanded else " ▸ "
-    age = words.age(folder.last, now)
+    age = f"{words.age(folder.last, now)} ago"
     first = _line((arrow, "soft"))
     first.append(words.fit(folder.name, width - 4 - len(age)), style=STYLES["strong"])
     first.append(" " * (width - first.cell_len - len(age)))
@@ -116,7 +118,8 @@ def session_line(row, now, width=WIDTH):
     s = row.session
     # The closing branch only under the folder's very last session: more may scroll into view
     last = s is row.folder.sessions[-1]
-    line = _line(("     ", "ink"), ("└ " if last else "├ ", "faint"))
+    branch = "└ " if last else f"{MORE} " if row.end else "├ "
+    line = _line(("     ", "ink"), (branch, "faint"))
     tail = words.age(s.last, now).ljust(AGE_WIDTH) + words.money(s.cost).rjust(SPEND_WIDTH)
     title = width - line.cell_len - len(tail) - 1
     line.append(words.fit(s.title, title).ljust(title + 1), style=STYLES["ink"])
@@ -161,13 +164,34 @@ def list_lines(shown, cursor, expanded, now, room, width=WIDTH):
     top = max(0, min(picked[-1] - room + 1, len(lines) - room))
     top = min(top, picked[0])
     out = []
-    for n in range(top, min(len(lines), top + room)):
+    end = min(len(lines), top + room)
+    for n in range(top, end):
         line = lines[n]
+        # A session line's branch already marks its folder's own more below
+        if n == end - 1 < len(lines) - 1 and line.plain[5:6] != MORE:
+            # Its first column is always blank: room for the mark that more lies below
+            line = _line((MORE, "faint")) + line[1:]
         if n in picked:
             line.pad_right(width - line.cell_len)
             line.stylize(words.CURRENT)
         out.append(line)
     return out
+
+
+def keys_line(keys, width):
+    """The keys the screen takes, each in Claude's orange before what it does, if anything.
+
+    A line too long for `width` is cut with an ellipsis.
+    """
+    line = Text(" ")
+    for i, (key, does) in enumerate(keys):
+        line.append(" · " * bool(i), style=STYLES["faint"])
+        line.append(key, style=STYLES["claude"])
+        line.append(f" {does}" * bool(does), style=STYLES["ink"])
+    if line.cell_len > width:
+        line.truncate(width - 1)
+        line.append("…", style=STYLES["faint"])
+    return line
 
 
 def screen(shown, cursor, query, expanded, now, height):
@@ -176,7 +200,7 @@ def screen(shown, cursor, query, expanded, now, height):
     lines = [prompt, Text(), *list_lines(shown, cursor, expanded, now, height - 4)]
     while len(lines) < height - 1:
         lines.append(Text())
-    lines.append(_line((" " + FOOTER, "faint")))
+    lines.append(keys_line(FOOTER, WIDTH))
     return [Text(" ") if not line.plain else line for line in lines][:height]
 
 

@@ -67,12 +67,12 @@ def test_screen_draws_two_lines_per_folder_and_the_open_sessions():
     assert len(lines) == 16 and all(len(plain(x)) <= new_panel.WIDTH for x in lines)
     text = [plain(x) for x in lines]
     assert text[0] == " ❯ ap▌"
-    assert text[2].startswith(" ▾ api") and text[2].endswith("1m")
+    assert text[2].startswith(" ▾ api") and text[2].endswith("1m ago")
     assert text[3] == "   41 sessions · $12.50 7d"
     assert text[4].startswith("     ├ task 0") and text[4].endswith("$1.50")
     assert text[6].startswith("     ├ task 2") and "2h" in text[6]
-    # More sessions scroll into view below: no closing branch yet
-    assert text[8].startswith("     ├ task 4")
+    # More sessions scroll into view below: a mark, no closing branch yet
+    assert text[8].startswith("     ▼ task 4")
     assert text[9].strip() == "─" * (new_panel.WIDTH - 1)
     # No spend this week: no spend part
     assert text[10].startswith(" ▸ web") and text[11] == "   1 session"
@@ -87,8 +87,11 @@ def test_the_list_scrolls_to_keep_the_selected_row_in_view():
     many = [Folder(f"/w/f{i}", f"f{i}", NOW - i, 1) for i in range(30)]
     shown = new_panel.rows(many, "", set(), lambda p: False)
     lines = [plain(x) for x in new_panel.list_lines(shown, 25, set(), NOW, 8)]
-    assert len(lines) == 8 and any(" f25" in x for x in lines) and lines[-1] == "   1 session"
+    assert len(lines) == 8 and any(" f25" in x for x in lines) and lines[-1] == "▼  1 session"
     assert not any(" f0" in x for x in lines)
+    # At the bottom of the list nothing more lies below
+    end = [plain(x) for x in new_panel.list_lines(shown, 29, set(), NOW, 8)]
+    assert end[-1] == "   1 session"
 
 
 def test_nothing_matching_says_so():
