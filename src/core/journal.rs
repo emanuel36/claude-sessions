@@ -278,9 +278,20 @@ pub fn window_totals(days: &Days, first: NaiveDate) -> HashMap<String, SessionTo
 /// cost before the window, each new high goes to the model of the event that reaches it. Events
 /// without a model count under [`UNKNOWN_MODEL`].
 pub fn model_costs(days: &Days, first: NaiveDate) -> HashMap<String, f64> {
+    let mut totals: HashMap<String, f64> = HashMap::new();
+    for by_model in session_model_costs(days, first).into_values() {
+        for (model, dollars) in by_model {
+            *totals.entry(model).or_default() += dollars;
+        }
+    }
+    totals
+}
+
+/// [`model_costs`] for each session apart: `{session id: {model: dollars}}`.
+pub fn session_model_costs(days: &Days, first: NaiveDate) -> HashMap<String, HashMap<String, f64>> {
     let mut before: HashMap<&str, f64> = HashMap::new();
     let mut high: HashMap<&str, f64> = HashMap::new();
-    let mut totals: HashMap<String, f64> = HashMap::new();
+    let mut totals: HashMap<String, HashMap<String, f64>> = HashMap::new();
     for (&day, &events) in days {
         for e in events {
             let Some(cost) = e.cost else { continue };
@@ -296,6 +307,8 @@ pub fn model_costs(days: &Days, first: NaiveDate) -> HashMap<String, f64> {
             if cost > top {
                 let model = e.model.as_deref().filter(|m| !m.is_empty());
                 *totals
+                    .entry(e.id.clone())
+                    .or_default()
                     .entry(model.unwrap_or(UNKNOWN_MODEL).to_owned())
                     .or_default() += cost - top;
                 high.insert(&e.id, cost);
@@ -349,8 +362,8 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::core::journal::{
-        append_in, day_costs, day_of, day_path, model_costs, window_totals, DayReader, Days,
-        JournalEvent, SessionTotals, ENDED,
+        append_in, day_costs, day_of, day_path, model_costs, session_model_costs, window_totals,
+        DayReader, Days, JournalEvent, SessionTotals, ENDED,
     };
 
     fn date(y: i32, m: u32, d: u32) -> NaiveDate {
@@ -812,5 +825,27 @@ mod tests {
             HashMap::from([("Opus".to_string(), 2.0)])
         );
         assert_eq!(window_totals(&d, day)["a"].cost, 2.0);
+    }
+
+    #[test]
+    fn session_model_costs_keep_sessions_apart() {
+        let day = date(2026, 11, 3);
+        let modeled = |t, id: &str, c, m: &str| JournalEvent {
+            model: Some(m.into()),
+            ..cost(t, id, c)
+        };
+        let data = [(
+            day,
+            vec![
+                modeled(1.0, "a", 2.0, "Opus"),
+                modeled(2.0, "b", 1.0, "Sonnet"),
+            ],
+        )];
+        let by_session = session_model_costs(&days(&data), day);
+        assert_eq!(by_session["a"], HashMap::from([("Opus".to_string(), 2.0)]));
+        assert_eq!(
+            by_session["b"],
+            HashMap::from([("Sonnet".to_string(), 1.0)])
+        );
     }
 }

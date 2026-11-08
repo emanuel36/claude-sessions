@@ -12,6 +12,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::widgets::Paragraph;
 
 use crate::claude::hook;
+use crate::claude::spend::ModelSpend;
 use crate::claude::transcript::Titles;
 use crate::core::state::{unix_now, Record};
 use crate::term::tmux::{Cli, Runner};
@@ -23,6 +24,7 @@ use crate::ui::pane::{
 use crate::ui::picker::{self, Folder, Picker};
 use crate::ui::runtime::{signal, Msg, Runtime, Schedule, Screen, Signal};
 use crate::ui::sidebar::Stats;
+use crate::ui::usage::Reader;
 
 /// Runs the landing page in the tmux pane this process runs in, until its terminal goes away.
 ///
@@ -38,6 +40,8 @@ pub fn main_landing() -> anyhow::Result<()> {
     let mut runtime = Runtime::start().context("cannot start the event loop")?;
     let mut screen = Screen::enter().context("cannot set the terminal up")?;
     let mut app = Landing::new(Box::new(tmux), Picker::default());
+    // Only this page shows the spend by model, which reads the transcripts
+    app.shell.usage = Reader::new().split_models(ModelSpend::new());
     if current {
         app.show();
     }

@@ -3,5 +3,6 @@
 pub mod history;
 pub mod hook;
 pub mod install;
+pub mod spend;
 pub mod statusline;
 pub mod transcript;
