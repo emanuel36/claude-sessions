@@ -7,7 +7,7 @@
 #   the median over the rounds of (cst - floor), so a busy machine shifts both alike;
 #   both run from a copy of the binary on tmpfs, so the time is the program's and not how the
 #   disk's page cache treats a freshly built file (see bench/README.md); a `note:` line gives
-#   the hook run from the build directory too;
+#   the hook run from the build directory too, `WARN:` when it is over the target;
 # - peak RSS of both, with GNU time;
 # - the real `cst sidebar` in a private tmux server, 10 records with 4 working, sampled from
 #   /proc while shown, then while hidden (F11). A hook event every 5 s keeps the records and a
@@ -181,14 +181,14 @@ hot_path() {
     ok=0
     le "$over" "$HOT_MS" && ok=1
     verdict $ok "$name: median $(calc "$cst") ms, floor $(calc "$floor") ms," \
-        "+$(calc "$over") ms (target <= +$HOT_MS ms)"
+        "+$(calc "$over") ms median of per-round differences (target <= +$HOT_MS ms)"
     over=$(per_round "$name" '$5 + $6' | median)
     cst=$(all_rounds "$name" cst '$5 + $6')
     floor=$(all_rounds "$name" floor '$5 + $6')
     ok=0
     le "$over" "$HOT_MS" && ok=1
     verdict $ok "$name: CPU $(calc "$cst") ms, floor $(calc "$floor") ms," \
-        "+$(calc "$over") ms (target <= +$HOT_MS ms)"
+        "+$(calc "$over") ms median of per-round differences (target <= +$HOT_MS ms)"
     rss=$(peak_rss "$name" "$2")
     ok=0
     [ "$rss" -lt "$RSS_KIB" ] && ok=1
@@ -196,12 +196,23 @@ hot_path() {
 }
 hot_path hook "$WORK/hook.json"
 hot_path statusline "$WORK/statusline.json"
+# in_place_note OVER CPU FAULTS TMPFS_FAULTS: the hook timed from the build directory; WARN
+# when it misses the target, which an installed copy on disk may miss too
+in_place_note() {
+    level=note
+    le "$1" "$HOT_MS" || level=WARN
+    echo "$level: hook run from the build directory instead:" \
+        "+$(calc "$1") ms median of per-round differences, CPU +$(calc "$2") ms over the floor;" \
+        "$3 major page faults a run, against $4 from tmpfs"
+    if [ "$level" = WARN ]; then
+        echo "WARN: that is above the +$HOT_MS ms target; an installed copy (~/.local/bin) may" \
+            "pay it too"
+    fi
+}
 if [ "$HOT_CST" != "$CST" ]; then
-    echo "note: hook run from the build directory instead:" \
-        "median +$(calc "$(per_round hook '$4' in-place | median)") ms," \
-        "CPU +$(calc "$(per_round hook '$5 + $6' in-place | median)") ms over the floor;" \
-        "$(faults "$CST" hook "$WORK/hook.json") major page faults a run," \
-        "against $(faults "$HOT_CST" hook "$WORK/hook.json") from tmpfs"
+    in_place_note "$(per_round hook '$4' in-place | median)" \
+        "$(per_round hook '$5 + $6' in-place | median)" \
+        "$(faults "$CST" hook "$WORK/hook.json")" "$(faults "$HOT_CST" hook "$WORK/hook.json")"
 fi
 
 # --- Sidebar --------------------------------------------------------------------------------

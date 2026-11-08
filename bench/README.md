@@ -11,4 +11,6 @@ samples for a quick try. The hook and status line are timed from a copy of the b
 (`$XDG_RUNTIME_DIR` or `/dev/shm`): on a disk where something keeps evicting a freshly built
 file from the page cache (an endpoint security agent, for one), each run of the build output
 waits on a few dozen page faults that have nothing to do with the code. A `note:` line shows
-the hook run from the build directory, with its page faults, for comparison.
+the hook run from the build directory, with its page faults, for comparison; it reads `WARN:`
+when that run is over the +3 ms target, which a copy installed on such a disk may be too. Each
+"+" figure is the median, over the rounds, of the round's difference from the floor.
