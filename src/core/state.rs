@@ -1,6 +1,9 @@
 //! Session state machine driven by Claude Code hook events.
 //!
-//! Pure: no I/O. A [`Record`] is plain data that round-trips through JSON unchanged.
+//! Pure: no I/O. A [`Record`] is plain data stored as JSON. It is runtime data, written and read
+//! by one version of `cst`: a status this version does not know loads as [`Status::Unknown`]
+//! and fields it does not know are dropped, so a record does not round-trip through another
+//! version unchanged.
 
 use std::cmp::Ordering;
 use std::path::PathBuf;
