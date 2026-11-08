@@ -16,7 +16,11 @@ Options:
 ";
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    // `args()` panics on non-UTF-8 input, so convert lossily instead.
+    let args: Vec<String> = std::env::args_os()
+        .skip(1)
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
     match args
         .iter()
         .map(String::as_str)

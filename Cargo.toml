@@ -1,8 +1,8 @@
 [package]
 name = "cst"
 version = "2.0.0"
-edition = "2024"
-rust-version = "1.85"
+edition = "2021"
+rust-version = "1.92"
 description = "A sidebar for Claude Code sessions in tmux"
 license = "Apache-2.0"
 publish = false
@@ -19,7 +19,7 @@ path = "src/main.rs"
 anyhow = "1"
 chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
 crossterm = "0.28"
-inotify = "0.11"
+inotify = { version = "0.11", default-features = false }
 ratatui = "0.29"
 rustix = { version = "1", features = ["fs", "process"] }
 serde = { version = "1", features = ["derive"] }

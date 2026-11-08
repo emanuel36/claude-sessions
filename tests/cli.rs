@@ -2,7 +2,7 @@
 
 mod support;
 
-use support::{PrivateTmux, cst, env};
+use support::{cst, env, PrivateTmux};
 
 #[test]
 fn version_prints_2_0_0() {
@@ -32,6 +32,18 @@ fn unknown_command_exits_2() {
     let out = cst(&env(), &["frobnicate"], b"");
     assert_eq!(out.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&out.stderr).contains("Usage"));
+}
+
+#[test]
+fn non_utf8_argument_exits_2_without_panicking() {
+    use std::os::unix::ffi::OsStrExt;
+
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_cst"))
+        .arg(std::ffi::OsStr::from_bytes(b"bad-\xff-arg"))
+        .output()
+        .expect("spawn cst");
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("unknown command"));
 }
 
 #[test]
