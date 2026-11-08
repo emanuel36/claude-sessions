@@ -315,3 +315,25 @@ fn start_leaves_a_server_of_this_version_alone() {
     let command = pane_format(&tmux, &sidebar, "#{pane_start_command}");
     assert_eq!(command, "\"sleep 600\"");
 }
+
+#[test]
+fn start_restarts_the_panes_of_another_build_of_the_same_version() {
+    let Some(tmux) = PrivateTmux::new() else {
+        return;
+    };
+    let env = env();
+    let server = server(&tmux, &env);
+    server.start().expect("first start");
+    let (_, sidebar) = session_window(&tmux);
+    let before = pane_format(&tmux, &sidebar, "#{pane_pid}");
+    // The same version and configuration, built again: only the file differs
+    let ours = conf_stamp();
+    let (same, _) = ours.rsplit_once(' ').expect("three fields");
+    tmux.run(&["set", "-s", "@cs-conf", &format!("{same} 0.0")]);
+
+    server.start().expect("second start");
+
+    assert_ne!(pane_format(&tmux, &sidebar, "#{pane_pid}"), before);
+    let stamp = tmux.run(&["show-options", "-sv", "@cs-conf"]);
+    assert_eq!(stamp.trim(), ours);
+}
