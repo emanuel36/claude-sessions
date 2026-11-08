@@ -8,7 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use cst::claude::{hook, install, statusline};
 use cst::paths;
 use cst::term::tmux::Cli;
-use cst::ui::sidebar_app;
+use cst::ui::{landing_app, panel_app, sidebar_app};
 
 const USAGE: &str = "\
 Usage: cst [OPTIONS] [COMMAND]
@@ -75,13 +75,14 @@ fn run_install() -> ExitCode {
     }
 }
 
-/// Runs the sidebar of the tmux window this process runs in.
-fn run_sidebar() -> ExitCode {
-    match sidebar_app::main_sidebar() {
+/// Runs one of the screens tmux opens, `cst <command>`; a failure goes to the error log and
+/// stderr, and exits 1.
+fn run_screen(command: &str, screen: fn() -> anyhow::Result<()>) -> ExitCode {
+    match screen() {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            paths::log_error(&format_args!("sidebar: {e:#}"));
-            eprintln!("cst sidebar: {e:#}");
+            paths::log_error(&format_args!("{command}: {e:#}"));
+            eprintln!("cst {command}: {e:#}");
             ExitCode::from(1)
         }
     }
@@ -114,8 +115,11 @@ fn main() -> ExitCode {
         // Hidden: users get it through `install.sh` and `cst update`
         ["install"] => run_install(),
         ["uninstall"] => exit_code(install::uninstall()),
-        // Hidden: tmux runs it in each session window's side pane
-        ["sidebar"] => run_sidebar(),
+        // Hidden: tmux runs them, in each session window's side pane, in the first window and
+        // in the Alt+n popup
+        ["sidebar"] => run_screen("sidebar", sidebar_app::main_sidebar),
+        ["landing"] => run_screen("landing", landing_app::main_landing),
+        ["new", "--pick"] => run_screen("new", panel_app::main_panel),
         ["--version"] => {
             println!("cst {}", cst::VERSION);
             ExitCode::SUCCESS

@@ -3,7 +3,10 @@
 
 pub mod folders;
 pub mod landing;
+pub mod landing_app;
 pub mod line;
+pub mod pane;
+pub mod panel_app;
 pub mod picker;
 pub mod runtime;
 pub mod sidebar;

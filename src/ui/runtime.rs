@@ -5,6 +5,7 @@
 //! a read: the terminal input thread and the inotify thread. A hidden pane has no deadline and
 //! no watches, so it sleeps until tmux sends it a key.
 
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fmt;
@@ -35,6 +36,15 @@ pub enum Msg {
     /// full path. The directory itself when the kernel's event queue overflowed, or when the
     /// directory was deleted and its watch is gone (watch it again once it is back).
     Changed(PathBuf),
+}
+
+/// What the threads send the pane's loop.
+#[derive(Debug)]
+enum Feed {
+    /// Something to wake up for.
+    Msg(Msg),
+    /// The terminal is gone: no key, click or resize will come any more.
+    InputEnded,
 }
 
 /// What tmux tells the pane by sending it a function key.
@@ -146,7 +156,7 @@ impl Watcher {
     /// # Errors
     ///
     /// Fails when inotify cannot be initialised or the thread cannot be spawned.
-    pub fn start(tx: Sender<Msg>) -> io::Result<Self> {
+    fn start(tx: Sender<Feed>) -> io::Result<Self> {
         let inotify = Inotify::init()?;
         let watches = inotify.watches();
         let watched = Arc::new(Mutex::new(Watched::default()));
@@ -185,7 +195,7 @@ impl Watcher {
 }
 
 /// Reads inotify events until the descriptor fails or nobody listens any more.
-fn read_changes(mut inotify: Inotify, watched: &Mutex<Watched>, tx: &Sender<Msg>) {
+fn read_changes(mut inotify: Inotify, watched: &Mutex<Watched>, tx: &Sender<Feed>) {
     let mut buffer = [0; EVENT_BUFFER];
     loop {
         let events = match inotify.read_events_blocking(&mut buffer) {
@@ -201,25 +211,31 @@ fn read_changes(mut inotify: Inotify, watched: &Mutex<Watched>, tx: &Sender<Msg>
             }
         }
         for path in changed {
-            if tx.send(Msg::Changed(path)).is_err() {
+            if tx.send(Feed::Msg(Msg::Changed(path))).is_err() {
                 return;
             }
         }
     }
 }
 
-/// Reads terminal events until the terminal fails or nobody listens any more.
-fn read_input(tx: &Sender<Msg>) {
+/// Reads terminal events with `read` until the terminal fails or nobody listens any more.
+///
+/// A terminal that fails is gone: the loop learns it from [`Feed::InputEnded`].
+fn read_input(read: &mut dyn FnMut() -> io::Result<Event>, tx: &Sender<Feed>) {
     loop {
-        let msg = match event::read() {
+        let msg = match read() {
             Ok(Event::Key(key)) if key.kind != KeyEventKind::Release => Msg::Key(key),
             Ok(Event::Mouse(mouse)) => Msg::Mouse(mouse),
             Ok(Event::Resize(..)) => Msg::Resize,
             Ok(_) => continue,
             Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
-            Err(_) => return,
+            Err(_) => {
+                // Nobody listening either: nothing left to tell
+                let _ = tx.send(Feed::InputEnded);
+                return;
+            }
         };
-        if tx.send(msg).is_err() {
+        if tx.send(Feed::Msg(msg)).is_err() {
             return;
         }
     }
@@ -228,8 +244,10 @@ fn read_input(tx: &Sender<Msg>) {
 /// The pane's event sources merged into one channel.
 #[derive(Debug)]
 pub struct Runtime {
-    rx: Receiver<Msg>,
+    rx: Receiver<Feed>,
     watcher: Watcher,
+    /// Whether the terminal input ended: every wait from then on is [`Wake::Closed`].
+    ended: Cell<bool>,
 }
 
 impl Runtime {
@@ -243,18 +261,23 @@ impl Runtime {
         let watcher = Watcher::start(tx.clone())?;
         thread::Builder::new()
             .name("cst-input".into())
-            .spawn(move || read_input(&tx))?;
-        Ok(Runtime { rx, watcher })
+            .spawn(move || read_input(&mut event::read, &tx))?;
+        Ok(Runtime::with(rx, watcher))
+    }
+
+    fn with(rx: Receiver<Feed>, watcher: Watcher) -> Self {
+        Runtime {
+            rx,
+            watcher,
+            ended: Cell::new(false),
+        }
     }
 
     /// A runtime with the inotify thread only, for tests that have no terminal.
     #[cfg(test)]
-    fn headless() -> io::Result<Self> {
+    pub(crate) fn headless() -> io::Result<Self> {
         let (tx, rx) = mpsc::channel();
-        Ok(Runtime {
-            rx,
-            watcher: Watcher::start(tx)?,
-        })
+        Ok(Runtime::with(rx, Watcher::start(tx)?))
     }
 
     /// Watches a directory: its entries' changes arrive as [`Msg::Changed`].
@@ -278,7 +301,7 @@ impl Runtime {
     ///
     /// A deadline already past only takes a message that is waiting.
     ///
-    /// Returns `None` when the deadline passes first, or when both threads have stopped.
+    /// Returns `None` when the deadline passes first, or when the terminal input ended.
     pub fn next(&self, deadline: Option<f64>) -> Option<Msg> {
         match self.wait(deadline) {
             Wake::Msg(msg) => Some(msg),
@@ -286,8 +309,11 @@ impl Runtime {
         }
     }
 
-    /// Like [`Runtime::next`], telling a deadline that passed from threads that stopped.
+    /// Like [`Runtime::next`], telling a deadline that passed from a terminal that is gone.
     pub fn wait(&self, deadline: Option<f64>) -> Wake {
+        if self.ended.get() {
+            return Wake::Closed;
+        }
         let received = match deadline {
             None => self.rx.recv().map_err(|_| RecvTimeoutError::Disconnected),
             Some(at) => {
@@ -298,9 +324,12 @@ impl Runtime {
             }
         };
         match received {
-            Ok(msg) => Wake::Msg(msg),
+            Ok(Feed::Msg(msg)) => Wake::Msg(msg),
             Err(RecvTimeoutError::Timeout) => Wake::Timeout,
-            Err(RecvTimeoutError::Disconnected) => Wake::Closed,
+            Ok(Feed::InputEnded) | Err(RecvTimeoutError::Disconnected) => {
+                self.ended.set(true);
+                Wake::Closed
+            }
         }
     }
 }
@@ -312,7 +341,7 @@ pub enum Wake {
     Msg(Msg),
     /// The deadline passed first.
     Timeout,
-    /// Both threads stopped: nothing will ever arrive.
+    /// The terminal is gone, or both threads stopped: the pane's loop must end.
     Closed,
 }
 
@@ -478,16 +507,17 @@ fn install_panic_hook() {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::io;
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
 
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
     use crossterm::Command;
     use tempfile::TempDir;
 
     use crate::paths::write_atomic;
     use crate::ui::runtime::{
-        signal, unix_now, MouseClicks, Msg, Runtime, Schedule, Signal, Wake, Watcher,
+        read_input, signal, unix_now, MouseClicks, Msg, Runtime, Schedule, Signal, Wake, Watcher,
     };
 
     fn visible() -> Schedule {
@@ -614,13 +644,29 @@ mod tests {
         // Nothing feeds this channel any more: a wait with a far deadline ends at once
         let (tx, rx) = mpsc::channel();
         drop(tx);
-        let closed = Runtime {
-            rx,
-            watcher: Watcher::start(mpsc::channel().0).unwrap(),
-        };
+        let closed = Runtime::with(rx, Watcher::start(mpsc::channel().0).unwrap());
         let started = Instant::now();
         assert_eq!(closed.wait(Some(unix_now() + 5.0)), Wake::Closed);
         assert_eq!(closed.wait(None), Wake::Closed);
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn the_end_of_input_closes_the_wait_though_inotify_runs() {
+        let (tx, rx) = mpsc::channel();
+        let runtime = Runtime::with(rx, Watcher::start(tx.clone()).unwrap());
+        let mut reads = vec![
+            Err(io::Error::other("terminal gone")),
+            Ok(Event::Key(KeyEvent::new(
+                KeyCode::Char('a'),
+                KeyModifiers::NONE,
+            ))),
+        ];
+        read_input(&mut || reads.pop().unwrap(), &tx);
+        let key = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE);
+        assert_eq!(runtime.wait(None), Wake::Msg(Msg::Key(key)));
+        let started = Instant::now();
+        assert_eq!(runtime.wait(Some(unix_now() + 5.0)), Wake::Closed);
         assert!(started.elapsed() < Duration::from_secs(1));
     }
 

@@ -3,14 +3,14 @@
 mod support;
 
 use std::fs;
-use std::path::Path;
+use std::ops::Deref;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use cst::paths::write_atomic;
 use cst::state::{Mux, Record, Status};
 use cst::store::process_start;
-use support::{env, PrivateTmux, TestEnv};
+use support::TmuxApp;
 
 /// How long the sidebar gets to start and draw its first frame.
 const START: Duration = Duration::from_secs(5);
@@ -23,61 +23,21 @@ fn now() -> f64 {
 
 /// A private server with two session windows, `alpha` and `beta`, each running `sleep`, and a
 /// third window, current, running `cst sidebar`.
-struct Sidebar {
-    tmux: PrivateTmux,
-    env: TestEnv,
-    /// The sidebar's pane id.
-    pane: String,
+struct Sidebar(TmuxApp);
+
+impl Deref for Sidebar {
+    type Target = TmuxApp;
+
+    fn deref(&self) -> &TmuxApp {
+        &self.0
+    }
 }
 
 impl Sidebar {
     fn start() -> Option<Self> {
-        let tmux = PrivateTmux::new()?;
-        let env = env();
-        tmux.run(&[
-            "-f",
-            "/dev/null",
-            "new-session",
-            "-d",
-            "-s",
-            "t",
-            "-x",
-            "100",
-            "-y",
-            "50",
-            "-n",
-            "alpha",
-            "sleep 600",
-        ]);
+        let (tmux, env) = TmuxApp::server()?;
         tmux.run(&["new-window", "-d", "-t", "t:", "-n", "beta", "sleep 600"]);
-        let bin = Path::new(env!("CARGO_BIN_EXE_cst"))
-            .parent()
-            .expect("binary dir")
-            .display()
-            .to_string();
-        let command = format!(
-            "exec env CST_RUNTIME_DIR='{}' CST_STATE_DIR='{}' CLAUDE_CONFIG_DIR='{}' \
-             PATH='{bin}':\"$PATH\" cst sidebar",
-            env.runtime_dir().display(),
-            env.state_dir().display(),
-            env.claude_dir().display(),
-        );
-        let pane = tmux.run(&[
-            "new-window",
-            "-P",
-            "-F",
-            "#{pane_id}",
-            "-t",
-            "t:",
-            "-n",
-            "side",
-            &command,
-        ]);
-        Some(Sidebar {
-            tmux,
-            env,
-            pane: pane.trim().to_owned(),
-        })
+        Some(Sidebar(TmuxApp::run(tmux, env, "side", "sidebar")))
     }
 
     /// The pane id of the first pane of a window, by name.
@@ -117,54 +77,6 @@ impl Sidebar {
         let path = self.env.runtime_dir().join(format!("{id}.json"));
         let json = serde_json::to_vec(&record).expect("record json");
         write_atomic(&path, &json, None).expect("write record");
-    }
-
-    fn screen(&self) -> String {
-        self.tmux.run(&["capture-pane", "-p", "-t", &self.pane])
-    }
-
-    /// Waits until the screen shows `text`, for at most `limit`.
-    fn shows_within(&self, text: &str, limit: Duration) -> bool {
-        let deadline = Instant::now() + limit;
-        loop {
-            if self.screen().contains(text) {
-                return true;
-            }
-            if Instant::now() >= deadline {
-                return false;
-            }
-            thread::sleep(Duration::from_millis(20));
-        }
-    }
-
-    fn assert_shows(&self, text: &str, limit: Duration) {
-        if self.shows_within(text, limit) {
-            return;
-        }
-        let panes = self
-            .tmux
-            .run(&["list-panes", "-a", "-F", "#{pane_id} #{pane_pid}"]);
-        let log = fs::read_to_string(self.env.state_dir().join("errors.log")).unwrap_or_default();
-        panic!(
-            "{text:?} not shown within {limit:?} in {}\npanes:\n{panes}\nerrors:\n{log}\nscreen:\n{}",
-            self.pane,
-            self.screen()
-        );
-    }
-
-    fn send(&self, key: &str) {
-        self.tmux.run(&["send-keys", "-t", &self.pane, key]);
-    }
-
-    /// The sidebar's process id: the pane runs it directly.
-    fn pid(&self) -> String {
-        let pid = self
-            .tmux
-            .run(&["display-message", "-p", "-t", &self.pane, "#{pane_pid}"]);
-        let pid = pid.trim().to_owned();
-        let comm = fs::read_to_string(format!("/proc/{pid}/comm")).unwrap_or_default();
-        assert_eq!(comm.trim(), "cst", "the pane does not run cst directly");
-        pid
     }
 }
 

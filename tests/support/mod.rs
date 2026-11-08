@@ -3,9 +3,12 @@
 
 pub mod golden;
 
+use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use tempfile::TempDir;
 
@@ -125,6 +128,178 @@ impl PrivateTmux {
             .expect("run tmux");
         String::from_utf8_lossy(&out.stdout).into_owned()
     }
+}
+
+/// The shell command a pane runs for `cst <args>`: the three env vars pointed at `env` and the
+/// test binary first on the PATH. `$TMUX` and `$TMUX_PANE` are the pane's own.
+pub fn pane_command(env: &TestEnv, args: &str) -> String {
+    let bin = Path::new(env!("CARGO_BIN_EXE_cst"))
+        .parent()
+        .expect("binary dir")
+        .display()
+        .to_string();
+    format!(
+        "exec env CST_RUNTIME_DIR='{}' CST_STATE_DIR='{}' CLAUDE_CONFIG_DIR='{}' \
+         PATH='{bin}':\"$PATH\" cst {args}",
+        env.runtime_dir().display(),
+        env.state_dir().display(),
+        env.claude_dir().display(),
+    )
+}
+
+/// `cst` running in a window of a private tmux server, session `t`.
+///
+/// Panes stay after their command exits (`remain-on-exit`), so a `cst` that quits early leaves
+/// its last words and exit status for the failure message.
+pub struct TmuxApp {
+    pub tmux: PrivateTmux,
+    pub env: TestEnv,
+    /// The pane `cst` runs in.
+    pub pane: String,
+}
+
+impl TmuxApp {
+    /// A private server with session `t`, its first window `alpha` running `sleep`; `None`
+    /// when tmux is not installed.
+    pub fn server() -> Option<(PrivateTmux, TestEnv)> {
+        let tmux = PrivateTmux::new()?;
+        let env = env();
+        tmux.run(&[
+            "-f",
+            "/dev/null",
+            "new-session",
+            "-d",
+            "-s",
+            "t",
+            "-x",
+            "100",
+            "-y",
+            "50",
+            "-n",
+            "alpha",
+            "sleep 600",
+            ";",
+            "set-option",
+            "-g",
+            "remain-on-exit",
+            "on",
+        ]);
+        Some((tmux, env))
+    }
+
+    /// Runs `cst <args>` in a new current window named `window`.
+    pub fn run(tmux: PrivateTmux, env: TestEnv, window: &str, args: &str) -> Self {
+        let command = pane_command(&env, args);
+        let pane = tmux.run(&[
+            "new-window",
+            "-P",
+            "-F",
+            "#{pane_id}",
+            "-t",
+            "t:",
+            "-n",
+            window,
+            &command,
+        ]);
+        TmuxApp {
+            tmux,
+            env,
+            pane: pane.trim().to_owned(),
+        }
+    }
+
+    /// What the pane shows.
+    pub fn screen(&self) -> String {
+        self.tmux.run(&["capture-pane", "-p", "-t", &self.pane])
+    }
+
+    /// Waits until the screen shows `text`, for at most `limit`.
+    pub fn shows_within(&self, text: &str, limit: Duration) -> bool {
+        self.within(limit, || self.screen().contains(text))
+    }
+
+    /// Waits until `done` holds, for at most `limit`; returns whether it did.
+    pub fn within(&self, limit: Duration, done: impl Fn() -> bool) -> bool {
+        let deadline = Instant::now() + limit;
+        loop {
+            if done() {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    /// Fails with the panes, the error log and the screen unless `text` shows within `limit`.
+    pub fn assert_shows(&self, text: &str, limit: Duration) {
+        if !self.shows_within(text, limit) {
+            self.fail(&format!("{text:?} not shown within {limit:?}"));
+        }
+    }
+
+    /// Fails with `what`, the panes, the error log and the screen.
+    pub fn fail(&self, what: &str) -> ! {
+        let panes = self.tmux.run(&[
+            "list-panes",
+            "-a",
+            "-F",
+            "#{pane_id} #{pane_pid} dead=#{pane_dead} status=#{pane_dead_status}",
+        ]);
+        let log = fs::read_to_string(self.env.state_dir().join("errors.log")).unwrap_or_default();
+        panic!(
+            "{what} in {}\npanes:\n{panes}\nerrors:\n{log}\nscreen:\n{}",
+            self.pane,
+            self.screen()
+        );
+    }
+
+    /// Sends tmux key names (`Enter`, `F11`) to the pane.
+    pub fn send(&self, key: &str) {
+        self.tmux.run(&["send-keys", "-t", &self.pane, key]);
+    }
+
+    /// Types `text` into the pane as it is.
+    pub fn type_text(&self, text: &str) {
+        self.tmux.run(&["send-keys", "-l", "-t", &self.pane, text]);
+    }
+
+    /// A tmux format of the pane, such as `#{pane_dead}`.
+    pub fn format(&self, format: &str) -> String {
+        let out = self
+            .tmux
+            .run(&["display-message", "-p", "-t", &self.pane, format]);
+        out.trim().to_owned()
+    }
+
+    /// The process the pane runs, checked to be `cst` itself.
+    pub fn pid(&self) -> String {
+        let pid = self.format("#{pane_pid}");
+        let comm = fs::read_to_string(format!("/proc/{pid}/comm")).unwrap_or_default();
+        assert_eq!(comm.trim(), "cst", "the pane does not run cst directly");
+        pid
+    }
+}
+
+/// Writes Claude Code's prompt history in `env`: one prompt per `(session, folder, seconds ago,
+/// prompt)`.
+pub fn write_history(env: &TestEnv, prompts: &[(&str, &Path, f64, &str)]) {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0.0, |d| d.as_secs_f64());
+    let mut lines = String::new();
+    for (id, folder, ago, prompt) in prompts {
+        let line = serde_json::json!({
+            "display": prompt,
+            "timestamp": ((now - ago) * 1000.0) as u64,
+            "project": folder.display().to_string(),
+            "sessionId": id,
+        });
+        lines.push_str(&line.to_string());
+        lines.push('\n');
+    }
+    fs::write(env.claude_dir().join("history.jsonl"), lines).expect("write history");
 }
 
 impl Drop for PrivateTmux {
