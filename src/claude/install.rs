@@ -504,11 +504,11 @@ fn try_install(loc: &Locations, cst: &str, out: &mut dyn Write) -> Result<(), Fa
     let old_line = settings.get("statusLine");
     if new.get("statusLine") != old_line {
         changes.push(if to_save.is_some() {
-            "status line: now cs statusline (yours is kept and still shown)".to_owned()
+            "status line: now cst statusline (yours is kept and still shown)".to_owned()
         } else if old_line.is_some() {
             format!("status line: updated to {cst}")
         } else {
-            "status line: now cs statusline".to_owned()
+            "status line: now cst statusline".to_owned()
         });
     }
     if changes.is_empty() {
@@ -964,7 +964,7 @@ mod tests {
         assert_eq!(code, 0);
         assert_eq!(
             out,
-            "hooks: added to 11 events\nstatus line: now cs statusline\n"
+            "hooks: added to 11 events\nstatus line: now cst statusline\n"
         );
         let data = rig.read(&rig.settings());
         assert_eq!(keys(&data["hooks"]), EVENTS);
@@ -1020,7 +1020,7 @@ mod tests {
             out,
             format!(
                 "hooks: added to 11 events\n\
-                 status line: now cs statusline (yours is kept and still shown)\n\
+                 status line: now cst statusline (yours is kept and still shown)\n\
                  backup: {}\n",
                 backup.display()
             )

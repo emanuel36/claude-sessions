@@ -68,7 +68,7 @@ fn install_registers_the_running_binary() {
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     assert_eq!(
         stdout(&out),
-        "hooks: added to 11 events\nstatus line: now cs statusline\n"
+        "hooks: added to 11 events\nstatus line: now cst statusline\n"
     );
     let settings = read_json(&settings_path(&env));
     let exe = exe();
