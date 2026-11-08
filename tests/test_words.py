@@ -1,4 +1,3 @@
-import datetime
 import time
 
 from claude_sessions.ui import words
@@ -17,20 +16,9 @@ def test_bar_fills_by_rounding_and_colours_by_level():
     assert words.bar(31, 16).spans[0].end == 5
 
 
-def test_reset_at_today_or_weekday():
-    assert words.reset_at(NOW + 2 * 3600 + 33 * 60, NOW) == "16:40"
-    friday = time.mktime((2026, 11, 6, 9, 0, 0, 0, 0, -1))
-    assert words.reset_at(friday, NOW) == "Fri 09:00"
-
-
 def test_thousands_uses_a_comma():
     assert words.thousands(4210) == "4,210"
     assert words.thousands(23) == "23"
-
-
-def test_short_date_names_the_month_in_english():
-    assert words.short_date(datetime.date(2026, 10, 25)) == "25 Oct"
-    assert words.short_date(datetime.date(2026, 1, 5)) == "5 Jan"
 
 
 def test_moved_helpers():

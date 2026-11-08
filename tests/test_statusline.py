@@ -18,7 +18,6 @@ FULL = {
         "total_lines_added": 156,
         "total_lines_removed": 23,
     },
-    "context_window": {"used_percentage": 41.0},
     "rate_limits": {
         "five_hour": {"used_percentage": 23.5, "resets_at": 1738425600},
         "seven_day": {"used_percentage": 41.2, "resets_at": 1738857600},
@@ -33,7 +32,6 @@ def test_parse_full_input():
         "model": "Opus",
         "added": 156,
         "removed": 23,
-        "context": 41.0,
     }
     assert statusline.parse_limits(FULL) == {
         "five_hour": {"pct": 23.5, "resets_at": 1738425600},
@@ -49,7 +47,6 @@ def test_parse_early_session_nulls():
         "model": "claude-opus-4-1",
         "added": 0,
         "removed": 0,
-        "context": None,
     }
     assert statusline.parse_limits(data) == {}
 
@@ -62,7 +59,6 @@ def test_parse_ignores_values_of_the_wrong_type():
         "model": None,
         "added": 0,
         "removed": 0,
-        "context": None,
     }
     assert statusline.parse_limits({"rate_limits": {"five_hour": None}}) == {}
 
@@ -184,7 +180,6 @@ def test_statusline_records_usage_without_touching_status(monkeypatch, capsys):
             "model": "Opus",
             "added": 3,
             "removed": 0,
-            "context": None,
         },
     }
     assert statusline.load_limits(0) == {"five_hour": {"pct": 40, "resets_at": 4_000_000_000}}
@@ -200,7 +195,7 @@ def test_statusline_logs_the_cost_only_when_it_changes(monkeypatch, capsys):
     stdin = json.dumps(STATUS_INPUT).encode()
     cs_statusline(monkeypatch, capsys, stdin)
     cs_statusline(monkeypatch, capsys, stdin)
-    events = journal.read_day(datetime.date.today())
+    events = journal.DayReader().read(datetime.date.today())
     assert [(e["id"], e["cost"]) for e in events if "cost" in e] == [("s1", 1.5)]
 
 
@@ -209,7 +204,7 @@ def test_cost_events_carry_lines(monkeypatch, capsys):
     data = {**STATUS_INPUT, "cost": {"total_cost_usd": 1.0, "total_lines_added": 10}}
     data["cost"]["total_lines_removed"] = 2
     cs_statusline(monkeypatch, capsys, json.dumps(data).encode())
-    events = [e for e in journal.read_day(datetime.date.today()) if "cost" in e]
+    events = [e for e in journal.DayReader().read(datetime.date.today()) if "cost" in e]
     assert [(e["id"], e["cost"], e["added"], e["removed"]) for e in events] == [("s1", 1.0, 10, 2)]
     assert events[0]["model"] == "Opus"
 

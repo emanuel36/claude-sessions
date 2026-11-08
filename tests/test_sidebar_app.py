@@ -175,7 +175,7 @@ def test_load_orders_by_window_index_and_skips_windows_without_sessions(monkeypa
         "status_since": NOW - 5,
         "cwd": "/w/web",
         "started_at": NOW - 900,
-        "usage": {"model": "Opus 4", "context": 12.0, "cost": 1.5, "api_duration": 900.0},
+        "usage": {"model": "Opus 4", "cost": 1.5, "api_duration": 900.0},
         "mux": {"pane": "%4"},
     }
     monkeypatch.setattr(sidebar_app.hook, "live_sessions", lambda now: [record])

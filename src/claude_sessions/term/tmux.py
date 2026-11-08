@@ -104,10 +104,6 @@ class Window:
     leader: dict | None = None
 
     @property
-    def status(self):
-        return self.lead["status"]
-
-    @property
     def head(self):
         """The session whose details the window shows."""
         return self.leader or self.lead

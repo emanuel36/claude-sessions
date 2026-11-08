@@ -69,21 +69,6 @@ def _prune(oldest):
                 os.unlink(os.path.join(journal_dir(), name))
 
 
-def read_day(day):
-    """Returns the events of a day, in the order they were written.
-
-    Lines that do not parse (one torn by a crash mid-write) are skipped.
-
-    Args:
-        day: A `datetime.date`, in local time.
-    """
-    try:
-        with open(_day_path(day), "rb") as f:
-            return _parse(f.read())
-    except FileNotFoundError:
-        return []
-
-
 def _parse(raw):
     events = []
     for line in raw.splitlines():
@@ -106,9 +91,10 @@ class DayReader:
         self.file, self.offset, self.events = None, 0, []
 
     def read(self, day):
-        """Returns the events of a day, as `read_day` does.
+        """Returns the events of a day, in the order they were written.
 
-        A line still being written (no newline yet) waits for the next read. The reading starts
+        Lines that do not parse (one torn by a crash mid-write) are skipped. A line still being
+        written (no newline yet) waits for the next read. The reading starts
         over for another day, another file, or a file shorter than what was read.
 
         Args:
@@ -173,11 +159,6 @@ def window_totals(day_events, first_day):
 
 def _number(value):
     return value if isinstance(value, int | float) else 0
-
-
-def spend_by_session(day_events, first_day):
-    """The cost each session added from `first_day` on, as `window_totals` counts it."""
-    return {sid: t["cost"] for sid, t in window_totals(day_events, first_day).items()}
 
 
 # The model of cost events written before the journal recorded one

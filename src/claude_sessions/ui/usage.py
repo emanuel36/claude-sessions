@@ -30,7 +30,6 @@ class Totals:
     """What the journal adds up to."""
 
     today: float = 0.0
-    week: float = 0.0
     by_project: list[tuple[str, float]] = field(default_factory=list)
     by_model: list[tuple[str, float]] = field(default_factory=list)
     added: int = 0
@@ -75,7 +74,6 @@ class Reader:
         result = Totals(
             # From the same per-day sums as the chart, so the today line and today's column agree
             today=daily[-1][1],
-            week=sum(t["cost"] for t in week.values()),
             by_project=_ranked(projects),
             by_model=_ranked(journal.model_costs(events, days[1])),
             added=sum(t["added"] for t in week.values()),

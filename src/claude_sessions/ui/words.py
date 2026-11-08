@@ -1,7 +1,5 @@
 """Words, numbers, bars and styles the sidebar and the landing page share."""
 
-import datetime
-import time
 import unicodedata
 
 from rich.style import Style
@@ -16,11 +14,8 @@ MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", 
 # Colours by name: ANSI numbers, so they follow the terminal palette
 STYLES = {
     "ink": Style(),
-    "red": Style(color="red"),
-    "yellow": Style(color="yellow"),
     "green": Style(color="green"),
     "blue": Style(color="blue"),
-    "cyan": Style(color="cyan"),
     "magenta": Style(color="magenta"),
     "soft": Style(color="color(244)"),
     "faint": Style(color="color(240)"),
@@ -129,22 +124,13 @@ def bar_style(pct):
     return STYLES["warning"] if pct >= AMBER else STYLES["claude"]
 
 
-def bar(pct, cells, style=None):
-    """A share of 100 as a bar of `cells` half-height cells: filled in `style`, empty in faint."""
+def bar(pct, cells):
+    """A share of 100 as a bar of `cells` half-height cells, coloured by level, empty in faint."""
     filled = max(0, min(cells, round(pct * cells / 100)))
     out = Text()
-    out.append("▄" * filled, style=style or bar_style(pct))
+    out.append("▄" * filled, style=bar_style(pct))
     out.append("▄" * (cells - filled), style=STYLES["subtle"])
     return out
-
-
-def reset_at(resets_at, now):
-    """When a quota resets: the time if today, else the weekday and time."""
-    t = time.localtime(resets_at)
-    hour = time.strftime("%H:%M", t)
-    if datetime.date.fromtimestamp(resets_at) == datetime.date.fromtimestamp(now):
-        return hour
-    return f"{WEEKDAYS[t.tm_wday]} {hour}"
 
 
 def age(timestamp, now):
@@ -157,11 +143,6 @@ def age(timestamp, now):
     if seconds < 100 * 86400:
         return f"{int(seconds // 86400)}d"
     return f"{int(seconds // (7 * 86400))}w"
-
-
-def short_date(day):
-    """A date as `25 Oct`."""
-    return f"{day.day} {MONTHS[day.month - 1]}"
 
 
 def thousands(n):

@@ -113,7 +113,7 @@ def test_windows_of_picks_the_leader_by_its_pane_not_by_urgency(monkeypatch):
     monkeypatch.setattr(tmux, "run", lambda *args: panes)
     by_window = {w.window_id: w for w in tmux.windows_of(records)}
     assert (by_window["@1"].lead["id"], by_window["@1"].leader["id"]) == ("mate", "lead")
-    assert by_window["@1"].status == state.PERMISSION
+    assert by_window["@1"].lead["status"] == state.PERMISSION
     assert by_window["@2"].leader["id"] == "early"
 
 
