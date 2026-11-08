@@ -2,11 +2,73 @@
 
 mod support;
 
+use std::path::Path;
+
+use cst::ui::sidebar::{column, Entry, Run, Stats};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use serde_json::json;
+use serde::Deserialize;
+use serde_json::{json, Value};
 
 use support::golden::runs;
+
+/// The fields of a `sidebar` fixture (see `tools/golden.py`).
+#[derive(Deserialize)]
+struct SidebarFixture {
+    now: f64,
+    entries: Vec<Entry>,
+    current: Option<String>,
+    stats: Stats,
+    height: u16,
+    runs: Vec<Run>,
+}
+
+/// Renders a fixture as the Rust screens draw it; `None` for kinds not ported yet.
+fn render(fixture: &Value) -> Option<Vec<Line<'static>>> {
+    match fixture["kind"].as_str() {
+        Some("sidebar") => {
+            let f: SidebarFixture =
+                serde_json::from_value(fixture.clone()).expect("sidebar fixture");
+            let current = f.current.as_deref().unwrap_or("");
+            Some(column(
+                &f.entries, current, &f.stats, f.now, f.height, &f.runs,
+            ))
+        }
+        _ => None,
+    }
+}
+
+#[test]
+fn screens_match_python() {
+    // Before anything reads local time: the goldens were made in UTC
+    std::env::set_var("TZ", "UTC");
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden");
+    let text = std::fs::read_to_string(dir.join("fixtures.json")).expect("read fixtures");
+    let fixtures: Vec<Value> = serde_json::from_str(&text).expect("parse fixtures");
+    let mut checked = 0;
+    for fixture in &fixtures {
+        let name = fixture["name"].as_str().expect("fixture name");
+        let Some(lines) = render(fixture) else {
+            continue;
+        };
+        let path = dir.join("expected").join(format!("{name}.json"));
+        let expected: Value =
+            serde_json::from_str(&std::fs::read_to_string(path).expect("read expected"))
+                .expect("parse expected");
+        let expected = expected.as_array().expect("expected lines");
+        let actual = runs(&lines);
+        let actual = actual.as_array().expect("actual lines");
+        for (i, (want, got)) in expected.iter().zip(actual).enumerate() {
+            assert_eq!(
+                got, want,
+                "{name}: line {i} differs\nexpected {want}\nactual   {got}"
+            );
+        }
+        assert_eq!(actual.len(), expected.len(), "{name}: line count");
+        checked += 1;
+    }
+    assert_eq!(checked, 7, "sidebar fixtures checked");
+}
 
 #[test]
 fn runs_merge_adjacent_equal_styles() {
