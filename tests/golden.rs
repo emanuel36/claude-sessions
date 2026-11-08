@@ -2,8 +2,10 @@
 
 mod support;
 
+use std::collections::HashMap;
 use std::path::Path;
 
+use cst::ui::picker::{self, Folder, Picker};
 use cst::ui::sidebar::{column, Entry, Run, Stats};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -23,6 +25,20 @@ struct SidebarFixture {
     runs: Vec<Run>,
 }
 
+/// The fields of a `panel` fixture (see `tools/golden.py`).
+#[derive(Deserialize)]
+struct PanelFixture {
+    now: f64,
+    folders: Vec<Folder>,
+    query: String,
+    cursor: usize,
+    expanded: Vec<String>,
+    scroll: HashMap<String, usize>,
+    height: u16,
+    /// The typed paths that are folders.
+    dirs: Vec<String>,
+}
+
 /// Renders a fixture as the Rust screens draw it; `None` for kinds not ported yet.
 fn render(fixture: &Value) -> Option<Vec<Line<'static>>> {
     match fixture["kind"].as_str() {
@@ -33,6 +49,17 @@ fn render(fixture: &Value) -> Option<Vec<Line<'static>>> {
             Some(column(
                 &f.entries, current, &f.stats, f.now, f.height, &f.runs,
             ))
+        }
+        Some("panel") => {
+            let f: PanelFixture = serde_json::from_value(fixture.clone()).expect("panel fixture");
+            let dirs = f.dirs;
+            let mut p = Picker::new(Box::new(move |path| dirs.iter().any(|d| d == path)));
+            p.folders = f.folders;
+            p.query = f.query;
+            p.cursor = f.cursor;
+            p.expanded = f.expanded.into_iter().collect();
+            p.scroll = f.scroll;
+            Some(picker::screen(&mut p, f.now, f.height))
         }
         _ => None,
     }
@@ -67,7 +94,8 @@ fn screens_match_python() {
         assert_eq!(actual.len(), expected.len(), "{name}: line count");
         checked += 1;
     }
-    assert_eq!(checked, 7, "sidebar fixtures checked");
+    // 7 sidebar and 4 panel fixtures; the landing ones are not ported yet
+    assert_eq!(checked, 11, "fixtures checked");
 }
 
 #[test]

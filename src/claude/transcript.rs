@@ -30,7 +30,8 @@ pub fn transcript_path(id: &str, cwd: &str) -> PathBuf {
     transcript_path_in(&paths::config_dir(), id, cwd)
 }
 
-fn transcript_path_in(config: &Path, id: &str, cwd: &str) -> PathBuf {
+/// Like [`transcript_path`], under the config folder `config`.
+pub(crate) fn transcript_path_in(config: &Path, id: &str, cwd: &str) -> PathBuf {
     let folder: String = cwd
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })

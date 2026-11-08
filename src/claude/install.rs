@@ -18,6 +18,7 @@ use serde_json::{json, Value};
 
 use crate::claude::statusline;
 use crate::paths::{self, Lookup};
+use crate::shell::quote;
 
 /// The hook events we register for.
 pub const EVENTS: [&str; 11] = [
@@ -104,18 +105,6 @@ fn split(command: &str) -> Option<Vec<String>> {
         words.push(word);
     }
     Some(words)
-}
-
-/// Quotes a word for a shell like Python's `shlex.quote`.
-fn quote(word: &str) -> String {
-    let safe = |c: char| c.is_ascii_alphanumeric() || "@%+=:,./-_".contains(c);
-    if word.is_empty() {
-        "''".to_owned()
-    } else if word.chars().all(safe) {
-        word.to_owned()
-    } else {
-        format!("'{}'", word.replace('\'', r#"'"'"'"#))
-    }
 }
 
 fn hook_command(cst: &str) -> String {
@@ -602,8 +591,8 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::claude::install::{
-        install_at, is_ours, legacy_saved_path, merge, quote, shape_error, split, uninstall_at,
-        unmerge, Locations, BACKUP, EVENTS, HOOK_TIMEOUT,
+        install_at, is_ours, legacy_saved_path, merge, shape_error, split, uninstall_at, unmerge,
+        Locations, BACKUP, EVENTS, HOOK_TIMEOUT,
     };
 
     const CS: &str = "/opt/bin/cs";
@@ -766,16 +755,6 @@ mod tests {
             let want = want.map(|v| v.into_iter().map(str::to_owned).collect::<Vec<_>>());
             assert_eq!(split(input), want, "{input:?}");
         }
-    }
-
-    #[test]
-    fn quote_matches_shlex_quote() {
-        assert_eq!(quote("/opt/bin/cst"), "/opt/bin/cst");
-        assert_eq!(quote(""), "''");
-        assert_eq!(quote("a b"), "'a b'");
-        assert_eq!(quote("it's"), r#"'it'"'"'s'"#);
-        assert_eq!(quote("a$b"), "'a$b'");
-        assert_eq!(quote("é"), "'é'");
     }
 
     #[test]
