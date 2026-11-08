@@ -1,133 +1,106 @@
 # claude-sessions
 
-Run several Claude Code sessions in tmux and see at a glance which one needs you. Each session
-has its own tmux window. `cst` opens on a landing page, and once a session starts, every
-session has a 30-column sidebar on its left with all the sessions, their status, your quota
-and today's spend.
+**See at a glance which Claude Code session is waiting for you.**
 
-<p>
-  <img src="docs/images/sidebar.svg" alt="A session with the sidebar on its left" width="49%">
-  <img src="docs/images/landing.svg" alt="The landing page" width="49%">
+claude-sessions is a small tool, built on open-source software, for running several Claude Code
+sessions side by side. Its goal is to cut development latency: the time a session sits idle
+waiting for a person to approve a tool, answer a question or read a finished turn.
+
+<p align="center">
+  <img src="docs/images/sidebar.svg" alt="A session with the sidebar on its left">
 </p>
 
-- **Status at a glance:** permission, question, finished, working, shell or idle, with how
-  long a session has waited for you or on a command.
-- **One place for it all:** the sidebar looks the same in every session, so you never lose
-  the list.
-- **Keeps your setup:** `cs install` adds hooks and keeps your own status line; `cs uninstall`
-  puts everything back.
+- **Status at a glance:** every session shows whether it needs approval, has a question, has
+  finished, is working or is idle, and how long it has waited.
+- **Most urgent first:** sessions that need you sit at the top of the sidebar; Alt+↑ / Alt+↓ go
+  to them in that order.
+- **Cost and quota in view:** today's spend, the 5-hour and 7-day quota and the week's spend sit
+  under the sessions.
+- **Keeps your setup:** your own hooks and status line keep working, and uninstalling puts
+  everything back.
+
+## Built on
+
+| Piece | Role |
+|---|---|
+| [tmux](https://github.com/tmux/tmux) | One window per session, with the sidebar on its left |
+| [Claude Code hooks](https://docs.claude.com/en/docs/claude-code/hooks) and status line | Each session's status, cost and model |
+| [Textual](https://github.com/Textualize/textual) | The sidebar, the landing page and the new-session panel |
 
 ## The landing page
 
-`cst` opens on it, and you come back to it when you close the last session. Alt+↑ / Alt+↓
-step over it.
+Where `cst` opens: the folders you ran Claude in, their recent sessions to resume, and the day's
+and week's statistics.
 
-- **Folders:** on the left: the folders you ran Claude in, last used first, each with when it
-  was last used, its number of sessions and its spend over 7 days. → opens a folder's
-  sessions, 5 at a time and newest first, and ← closes them; moving past the last one shown
-  scrolls to older ones. A ▼ on the last line shows the list goes on below.
-- **Statistics:** right after the folders, the two centred together: today's spend, sessions,
-  waiting and the hours your sessions worked; the lines changed today and over 7 days; your
-  5-hour and 7-day quota with the time left until each resets; the spend of each of the last
-  7 days; and the 4 folders that cost most. A small or short terminal shows the sidebar's
-  statistics.
-
-| Keys | Does |
-|---|---|
-| ↑ / ↓ | Move through the folders and their sessions |
-| → / ← | Show or hide a folder's last sessions |
-| Enter | Start a session in the folder, or resume the selected session |
-| / | Search the folders |
-| q | Quit `cst` |
-
-## The sidebar
-
-It sits on the left of every session, always 30 columns wide, and never takes the keyboard:
-what you type goes to Claude.
-
-- **Looks like Claude Code:** each session reads like a step of a Claude Code transcript, in
-  Claude Code's own colours: a `⏺` line, then a `⎿` line with the details.
-- **Most urgent first:** sessions that need you, then running ones, then the rest. Within
-  each, they keep the order they were opened in, so looking at a finished session never
-  moves it.
-- **Named after the session:** a session shows its title (the one Claude gives it, or the one
-  set with `/rename`), and its folder until it has one. A name given with Alt+r wins.
-- **Two lines per session:** the status's bullet, the name and the waiting time; then what it
-  waits on, the cost, the time Claude spent answering and the model. A working session's
-  bullet is Claude Code's spinner, and the current session has a lighter background.
-- **Background runs:** while an automatic Claude run is going, such as a start hook's daily
-  recap, it shows under the sessions with its folder's name and how long it has been running.
-  It leaves the list when it ends and never takes over a session's tab.
-- **Statistics at the bottom:** Today (spend, lines changed, sessions and time waiting on
-  Claude), Usage (5-hour and 7-day quota with the time left until each resets) and Spend 7d
-  (a bar and the spend for each day). Today steps aside when the sessions need its room.
-- **Mouse:** click a session to go to it.
+<p align="center">
+  <img src="docs/images/landing.svg" alt="The landing page">
+</p>
 
 ## Statuses
 
 | Status | Colour | Meaning |
 |---|---|---|
 | Permission | red | Claude needs your approval to run something |
-| Question | amber | Claude asked you something, or has a plan to approve |
+| Question | amber | Claude asked something, or has a plan to approve |
 | Finished | green | The turn ended and you have not looked yet |
-| Working | orange spinner | Running tools, or waiting on background agents |
-| Shell | lavender | The turn ended and a shell command, such as a build, still runs in the background |
+| Working | orange spinner | Running tools or background agents |
+| Shell | lavender | The turn ended; a shell command still runs |
 | Idle | grey | Seen, or interrupted with Esc |
 
 ## Keys
 
-Every shortcut is Alt plus one key, from any session.
-
 | Keys | Does |
 |---|---|
-| Alt+↑ / Alt+↓ | Previous / next session in the sidebar's order, wrapping around |
-| Alt+n | New session: folders by last use, each opening its sessions |
-| Alt+c | Close the current session, after a confirmation |
+| Alt+↑ / Alt+↓ | Previous / next session, most urgent first |
+| Alt+n | New session, or resume one, from the folders you used |
 | Alt+r | Rename the current session |
+| Alt+c | Close the current session, after a confirmation |
 
-Alt+n opens a panel over the session with the landing page's folder list. → opens a folder's sessions, 5 at a time, and ← closes them; Enter on a folder starts a new
-session there, Enter on a session resumes it. Typing searches, and a typed path that exists
-is offered first. Closing a session moves to the next one in the list.
-
-Alt+← and Alt+→ are left to Ghostty, to move to a split beside `cst`, so you can keep a plain
-terminal next to your sessions.
+On the landing page: ↑ ↓ move, → / ← show or hide a folder's sessions, Enter starts or resumes,
+/ searches, q quits.
 
 ## Get started
 
-On Linux with tmux 3.3 or newer, uv and Claude Code, the
-[install script](https://github.com/emanuel36/claude-sessions/blob/main/install.sh) sets
-everything up and registers it with Claude Code. Then open it with `cst`.
+Needs Linux, tmux 3.3 or newer and Claude Code. Install with one command:
 
-- **What it changes:** a hook on 11 Claude Code events and the status line setting in
-  `settings.json`. Your own hooks and status line keep working, and a backup of your settings
-  is kept beside them.
-- **Ghostty:** `cst` opens in the terminal you run it from. Ghostty keeps Alt+↑ / Alt+↓ for
-  its splits unless its config unbinds them; `cst --ghostty` opens a window that leaves them
-  to tmux.
-- **Update:** run the install script again. A running tmux server keeps its old configuration
-  until you quit it and open `cst` again.
-- **Uninstall:** `cs uninstall` restores your settings, then remove the package with uv.
+```sh
+curl -fsSL https://raw.githubusercontent.com/emanuel36/claude-sessions/main/install.sh | sh
+```
+
+The [install script](https://github.com/emanuel36/claude-sessions/blob/main/install.sh):
+
+1. Checks that the system is Linux and that tmux is 3.3 or newer.
+2. Installs [uv](https://github.com/astral-sh/uv) if it is missing; its installer may add
+   `~/.local/bin` to your shell's startup files.
+3. Installs claude-sessions from this repository with uv, which gives the `cs` and `cst`
+   commands.
+4. Registers claude-sessions with Claude Code: a hook on 11 events and the status line in
+   `settings.json`. Your own status line keeps running, and a backup of your settings is kept
+   beside them.
+5. Tells you if uv's command folder is not on your PATH yet.
+
+Then open it with `cst`.
+
+- **Update:** run the same command again, then quit `cst` and open it again.
+- **Uninstall:** `cs uninstall` restores your settings; then remove the package with uv.
 
 ## Troubleshooting
 
 | Symptom | Cause |
 |---|---|
-| A session never changes colour | The session is not in a `cst` window, or the hooks are missing: run `cs install` and check `hook-errors.log` in the runtime folder |
-| Cost or time open is empty | The status line has not reported yet, or another tool replaced it: run `cs install` again |
-| Quota is missing | Claude Code reports usage limits only to subscribers, after the first response |
+| A session never changes colour | It is not in a `cst` window, or the hooks are missing: run `cs install` |
+| Cost is empty | The status line has not reported yet, or another tool replaced it |
+| Quota is missing | Claude Code reports it only to subscribers, after the first response |
 
 ## How it is organised
 
 ```
-claude-sessions/
-├── src/claude_sessions/
-│   ├── cli.py       the cs command
-│   ├── core/        session status, live records, history of costs
-│   ├── claude/      Claude Code side: the hook, the status line, its files, cs install
-│   ├── term/        tmux side: the cst launcher and the tmux config
-│   └── ui/          the landing page, the sidebar and the new-session panel
-├── install.sh       the one-command install
-└── tests/
+src/claude_sessions/
+├── cli.py     the cs command
+├── core/      session status, live records, cost history
+├── claude/    Claude Code side: hook, status line, install
+├── term/      tmux side: the cst launcher and its config
+└── ui/        landing page, sidebar, new-session panel
 ```
 
 ## License
