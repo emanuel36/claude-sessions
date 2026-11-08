@@ -91,7 +91,7 @@ impl Reader {
     ///
     /// The result is computed again only when a day's events changed or `history_gen` did.
     ///
-    /// Args:
+    /// # Arguments
     /// * `history`: the sessions of the prompt history, to name each one's folder.
     /// * `history_gen`: a number that changes when `history` does.
     /// * `now`: current time as a Unix timestamp.

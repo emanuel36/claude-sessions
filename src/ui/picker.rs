@@ -246,7 +246,7 @@ fn matches(folder: &Folder, query: &str) -> bool {
 
 /// The list's rows: a typed path first, then the folders that match, with sessions below.
 ///
-/// Args:
+/// # Arguments
 /// * `folders`: the folders, last used first.
 /// * `query`: what the user typed.
 /// * `expanded`: the paths of the folders showing their sessions.
@@ -410,7 +410,7 @@ fn drop_first(line: &mut Line<'static>) {
 
 /// The rows around the selected one, in `room` lines at most, the selection highlighted.
 ///
-/// Args:
+/// # Arguments
 /// * `shown`: the rows from [`rows`].
 /// * `folders`: the folders the rows point into.
 /// * `cursor`: the index of the selected row.

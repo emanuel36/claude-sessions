@@ -102,7 +102,7 @@ fn append(line: &mut Line<'static>, tail: Line<'static>) {
 /// The lines are those Python draws, even when one is wider than the screen (the header on a
 /// narrow terminal): the terminal crops them. A screen under 2 lines keeps its first lines.
 ///
-/// Args:
+/// # Arguments
 /// * `picker`: the folder list and what the user did in it; its cursor is kept in range.
 /// * `searching`: whether the user is typing a search.
 /// * `opened`: how many sessions are open.

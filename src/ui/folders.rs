@@ -50,7 +50,7 @@ impl Scan {
 
     /// Returns the folders that still exist, last used first, with their latest sessions.
     ///
-    /// Args:
+    /// # Arguments
     /// * `history`: the sessions of the history reader, newest first.
     /// * `generation`: the history reader's generation; the same one is not scanned again.
     /// * `costs`: each session's spend over the last 7 days, by id.

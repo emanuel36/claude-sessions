@@ -114,7 +114,7 @@ pub struct Run {
 /// A window with no live session (the landing page) is left out. The most urgent session of a
 /// window sets its status; the session in its first Claude pane gives the cost and the model.
 ///
-/// Args:
+/// # Arguments
 /// * `records`: the live records, most urgent first.
 /// * `panes`: the server's panes.
 /// * `socket`: the server's socket; records on other servers are left out.
@@ -519,7 +519,7 @@ fn chart_lines(week: &[(NaiveDate, f64)], content: usize) -> Vec<Line<'static>> 
 
 /// A block of what cost most this week, by name, with a bar scaled to the first.
 ///
-/// Args:
+/// # Arguments
 /// * `title`: the block's name.
 /// * `ranked`: `(name, dollars)` pairs, most expensive first; the first [`TOP_RANKED`] show.
 /// * `content`: columns available.
@@ -574,7 +574,7 @@ fn lines_lines(day: &Day, totals: &Totals, content: usize) -> Vec<Line<'static>>
 
 /// A cell per hour of the day, darker the longer sessions worked in it, ruled under it.
 ///
-/// Args:
+/// # Arguments
 /// * `hours`: seconds sessions worked in each hour of the day, midnight first; none drawn
 ///   without any work.
 fn hours_lines(hours: &[f64]) -> Vec<Line<'static>> {
@@ -622,7 +622,7 @@ fn spaced(blocks: Vec<Vec<Line<'static>>>) -> Vec<Line<'static>> {
 /// The statistics at the bottom, under a blank line and with one between blocks: Today,
 /// Usage and Spend 7d.
 ///
-/// Args:
+/// # Arguments
 /// * `stats`: what to show.
 /// * `now`: current time as a Unix timestamp.
 /// * `today`: whether to show the Today block; it goes first when room is short.

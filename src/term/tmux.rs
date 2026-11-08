@@ -13,7 +13,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use crate::core::state::{self, Mux, Record, Status};
 use crate::process::run_capped;
 
-/// A hook makes up to 7 tmux calls; together they must stay under its 10 s timeout.
+/// A hook makes up to 5 tmux calls; together they must stay under its 10 s timeout.
 pub const TIMEOUT: Duration = Duration::from_secs(1);
 /// `claude stop` gets longer: it talks to Claude's daemon.
 pub const STOP_TIMEOUT: Duration = Duration::from_secs(10);
@@ -150,10 +150,10 @@ impl Window {
 /// that shows it with `claude attach`; that is looked up on cst's own server (`-L claude`)
 /// through `tmux`, which must therefore not be bound to another socket.
 ///
-/// Args:
-///     env: The process environment.
-///     session_id: The session's id, to find the pane of a background session.
-///     tmux: Runs the lookup of a background session's pane.
+/// # Arguments
+/// * `env`: The process environment.
+/// * `session_id`: The session's id, to find the pane of a background session.
+/// * `tmux`: Runs the lookup of a background session's pane.
 pub fn detect(env: &HashMap<String, String>, session_id: &str, tmux: &dyn Runner) -> Option<Mux> {
     detect_with(env, session_id, tmux, &Proc)
 }
@@ -282,11 +282,11 @@ pub fn panes(t: &dyn Runner) -> Vec<Pane> {
 /// Groups live session records into the windows of the tmux server at `socket`, most urgent
 /// first.
 ///
-/// Args:
-///     records: The live records, most urgent first.
-///     panes: The server's panes, from [`panes`].
-///     socket: The socket of the server whose windows to list; records on other servers, and
-///         all of them when it is empty, are left out.
+/// # Arguments
+/// * `records`: The live records, most urgent first.
+/// * `panes`: The server's panes, from [`panes`].
+/// * `socket`: The socket of the server whose windows to list; records on other servers, and
+///   all of them when it is empty, are left out.
 pub fn windows_of(records: &[Record], panes: &[Pane], socket: &str) -> Vec<Window> {
     let by_pane: HashMap<&str, &Pane> = panes.iter().map(|p| (p.pane_id.as_str(), p)).collect();
     let mut windows: Vec<Window> = Vec::new();

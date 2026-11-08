@@ -60,12 +60,12 @@ fn lone_sidebars(panes: &[Pane]) -> Vec<String> {
 /// `cst step up|down WINDOW`: goes to the session `offset` places from `window`, in the order the
 /// sidebar lists them.
 ///
-/// Args:
-///     window: The window on screen.
-///     offset: 1 for the session below, -1 for the one above.
-///     records: The live sessions, most urgent first.
-///     socket: The server's socket path; sessions of other servers are left out.
-///     t: Runs tmux on that server.
+/// # Arguments
+/// * `window`: The window on screen.
+/// * `offset`: 1 for the session below, -1 for the one above.
+/// * `records`: The live sessions, most urgent first.
+/// * `socket`: The server's socket path; sessions of other servers are left out.
+/// * `t`: Runs tmux on that server.
 pub fn step(window: &str, offset: i32, records: &[Record], socket: &str, t: &dyn Runner) {
     let entries = sidebar::load_entries(records, &tmux::panes(t), socket);
     if let Some(target) = sidebar::step(&entries, window, offset) {
