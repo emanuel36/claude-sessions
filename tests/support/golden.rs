@@ -1,4 +1,5 @@
-//! The neutral form the screen goldens are written in (see `tools/golden.py`).
+//! The neutral form the screen goldens are written in; they were rendered from the Python
+//! version, whose screens the Rust ones match.
 //!
 //! A screen is an array of lines; a line an array of runs `{"text", "fg", "bg", "bold"}`, with
 //! adjacent runs of equal style merged and empty runs dropped. A colour is `default`, `idx:N`

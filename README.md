@@ -4,7 +4,8 @@
 
 claude-sessions is a small tool, built on open-source software, for running several Claude Code
 sessions side by side. Its goal is to cut development latency: the time a session sits idle
-waiting for a person to approve a tool, answer a question or read a finished turn.
+waiting for a person to approve a tool, answer a question or read a finished turn. It is one
+program, `cst`, with nothing else to install.
 
 <p align="center">
   <img src="docs/images/sidebar.svg" alt="A session with the sidebar on its left">
@@ -18,6 +19,7 @@ waiting for a person to approve a tool, answer a question or read a finished tur
   under the sessions.
 - **Keeps your setup:** your own hooks and status line keep working, and uninstalling puts
   everything back.
+- **Quiet when out of sight:** a sidebar you are not looking at does no work.
 
 ## Built on
 
@@ -25,7 +27,7 @@ waiting for a person to approve a tool, answer a question or read a finished tur
 |---|---|
 | [tmux](https://github.com/tmux/tmux) | One window per session, with the sidebar on its left |
 | [Claude Code hooks](https://docs.claude.com/en/docs/claude-code/hooks) and status line | Each session's status, cost and model |
-| [Textual](https://github.com/Textualize/textual) | The sidebar, the landing page and the new-session panel |
+| [ratatui](https://github.com/ratatui/ratatui) | The sidebar, the landing page and the new-session panel |
 
 ## The landing page
 
@@ -61,7 +63,7 @@ On the landing page: ↑ ↓ move, → / ← show or hide a folder's sessions, E
 
 ## Get started
 
-Needs Linux, tmux 3.3 or newer and Claude Code. Install with one command:
+Needs Linux (x86_64 or arm64), tmux 3.3 or newer and Claude Code. Install with one command:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/emanuel36/claude-sessions/main/install.sh | sh
@@ -70,38 +72,46 @@ curl -fsSL https://raw.githubusercontent.com/emanuel36/claude-sessions/main/inst
 The [install script](https://github.com/emanuel36/claude-sessions/blob/main/install.sh):
 
 1. Checks that the system is Linux and that tmux is 3.3 or newer.
-2. Installs [uv](https://github.com/astral-sh/uv) if it is missing; its installer may add
-   `~/.local/bin` to your shell's startup files.
-3. Installs claude-sessions from this repository with uv, which gives the `cs` and `cst`
-   commands.
-4. Registers claude-sessions with Claude Code: a hook on 11 events and the status line in
+2. Downloads the latest [release](https://github.com/emanuel36/claude-sessions/releases) for
+   your machine and checks its SHA-256.
+3. Removes the Python version (1.x) if it is installed.
+4. Installs `cst` in `~/.local/bin`.
+5. Registers `cst` with Claude Code: a hook on 11 events and the status line in
    `settings.json`. Your own status line keeps running, and a backup of your settings is kept
    beside them.
-5. Tells you if uv's command folder is not on your PATH yet.
+6. Tells you if `~/.local/bin` is not on your PATH yet, and if a `cst` from before is still
+   open.
 
-Then open it with `cst`.
+Then open it with `cst`, or `cst --ghostty` for a new Ghostty window.
 
-- **Update:** run the same command again, then quit `cst` and open it again.
-- **Uninstall:** `cs uninstall` restores your settings; then remove the package with uv.
+- **Update:** run `cst update`, then quit `cst` and open it again.
+- **Uninstall:** run `cst uninstall`, which restores your settings, then delete
+  `~/.local/bin/cst`.
+- **Coming from 1.x:** the hooks and your own status line carry over; the cost history of the
+  Python version is not read, so the day's and week's statistics start afresh.
 
 ## Troubleshooting
 
 | Symptom | Cause |
 |---|---|
-| A session never changes colour | It is not in a `cst` window, or the hooks are missing: run `cs install` |
+| A session never changes colour | It is not in a `cst` window, or the hooks are missing: run `cst update` |
 | Cost is empty | The status line has not reported yet, or another tool replaced it |
 | Quota is missing | Claude Code reports it only to subscribers, after the first response |
+| The sidebar is blank or out of date after an update | Open windows still run the old version: quit `cst` and open it again |
+| Anything else | Failures are written to `~/.local/state/cst/errors.log` |
 
 ## How it is organised
 
-```
-src/claude_sessions/
-├── cli.py     the cs command
-├── core/      session status, live records, cost history
-├── claude/    Claude Code side: hook, status line, install
-├── term/      tmux side: the cst launcher and its config
-└── ui/        landing page, sidebar, new-session panel
-```
+| Folder | What it holds |
+|---|---|
+| [src/core](https://github.com/emanuel36/claude-sessions/tree/main/src/core) | Session status, live records, cost history, where files live |
+| [src/claude](https://github.com/emanuel36/claude-sessions/tree/main/src/claude) | Claude Code side: hook, status line, install, prompt history, transcripts |
+| [src/term](https://github.com/emanuel36/claude-sessions/tree/main/src/term) | tmux side: the `cst` launcher, its config and window layout |
+| [src/ui](https://github.com/emanuel36/claude-sessions/tree/main/src/ui) | Landing page, sidebar, new-session panel, and what they watch |
+| [src](https://github.com/emanuel36/claude-sessions/tree/main/src) | The `cst` command, self-update and capped child processes |
+| [assets](https://github.com/emanuel36/claude-sessions/tree/main/assets) | The tmux configuration `cst` runs with |
+| [tests](https://github.com/emanuel36/claude-sessions/tree/main/tests) | Integration tests and the screen goldens |
+| [bench](https://github.com/emanuel36/claude-sessions/tree/main/bench) | The performance check |
 
 ## License
 

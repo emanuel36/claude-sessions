@@ -15,7 +15,7 @@ use serde_json::{json, Value};
 
 use support::golden::runs;
 
-/// The fields of a `sidebar` fixture (see `tools/golden.py`).
+/// The fields of a `sidebar` fixture (see `tests/golden/fixtures.json`).
 #[derive(Deserialize)]
 struct SidebarFixture {
     now: f64,
@@ -39,7 +39,7 @@ struct ListFixture {
 }
 
 impl ListFixture {
-    /// A picker holding the folders and the user's state, as `tools/golden.py` builds it.
+    /// A picker holding the folders and the user's state, as the goldens were rendered with.
     fn picker(self) -> Picker {
         let dirs = self.dirs;
         let mut p = Picker::new(Box::new(move |path| dirs.iter().any(|d| d == path)));
@@ -52,7 +52,7 @@ impl ListFixture {
     }
 }
 
-/// The fields of a `landing` fixture (see `tools/golden.py`).
+/// The fields of a `landing` fixture (see `tests/golden/fixtures.json`).
 #[derive(Deserialize)]
 struct LandingFixture {
     now: f64,
@@ -65,7 +65,7 @@ struct LandingFixture {
     height: u16,
 }
 
-/// The fields of a `panel` fixture (see `tools/golden.py`).
+/// The fields of a `panel` fixture (see `tests/golden/fixtures.json`).
 #[derive(Deserialize)]
 struct PanelFixture {
     now: f64,
