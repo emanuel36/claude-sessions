@@ -506,6 +506,7 @@ pub fn fit_sidebars(t: &dyn Runner) {
 #[cfg(test)]
 mod tests {
     use crate::core::state::{new_record, Mux, Record, Status};
+    use crate::term::tmux::fake::FakeTmux;
     use crate::term::tmux::{
         add_sidebar_running, attaches, close_window_with, detect, detect_with, fit_sidebars,
         is_headless, name_window, next_session_window, pane_in_view, panes, settle_if_viewed,
@@ -514,40 +515,6 @@ mod tests {
     };
     use std::cell::RefCell;
     use std::collections::HashMap;
-
-    type Reply = Box<dyn Fn(&[&str]) -> String>;
-
-    /// Replays outputs and records every call.
-    struct Fake {
-        calls: RefCell<Vec<Vec<String>>>,
-        reply: Reply,
-    }
-
-    impl Fake {
-        fn new(reply: impl Fn(&[&str]) -> String + 'static) -> Self {
-            Fake {
-                calls: RefCell::new(Vec::new()),
-                reply: Box::new(reply),
-            }
-        }
-
-        fn silent() -> Self {
-            Fake::new(|_| String::new())
-        }
-
-        fn calls(&self) -> Vec<Vec<String>> {
-            self.calls.borrow().clone()
-        }
-    }
-
-    impl Runner for Fake {
-        fn run(&self, args: &[&str]) -> String {
-            self.calls
-                .borrow_mut()
-                .push(args.iter().map(|a| (*a).to_owned()).collect());
-            (self.reply)(args)
-        }
-    }
 
     /// A process table: command lines and children by pid.
     #[derive(Default)]
@@ -638,7 +605,7 @@ mod tests {
 
     #[test]
     fn detect_outside_tmux_is_none_and_inside_is_the_pane() {
-        let t = Fake::silent();
+        let t = FakeTmux::silent();
         assert_eq!(detect(&HashMap::new(), "s1", &t), None);
         assert_eq!(
             detect(&tmux_env(), "s1", &t),
@@ -649,14 +616,14 @@ mod tests {
 
     #[test]
     fn detect_needs_both_tmux_and_the_pane() {
-        let t = Fake::silent();
+        let t = FakeTmux::silent();
         assert_eq!(detect(&env(&[("TMUX", "/s,1,0")]), "s1", &t), None);
         assert_eq!(detect(&env(&[("TMUX_PANE", "%3")]), "s1", &t), None);
     }
 
     #[test]
     fn detect_ignores_the_tab_a_headless_run_inherited() {
-        let t = Fake::silent();
+        let t = FakeTmux::silent();
         let mut headless = tmux_env();
         headless.insert("CLAUDE_CODE_ENTRYPOINT".into(), "sdk-cli".into());
         assert_eq!(detect(&headless, "s1", &t), None);
@@ -679,8 +646,8 @@ mod tests {
         t
     }
 
-    fn attach_listing() -> Fake {
-        Fake::new(|_| "/s/claude\t%1\t100\n/s/claude\t%2\t200".into())
+    fn attach_listing() -> FakeTmux {
+        FakeTmux::new(|_| "/s/claude\t%1\t100\n/s/claude\t%2\t200".into())
     }
 
     #[test]
@@ -732,7 +699,7 @@ mod tests {
 
     #[test]
     fn detect_skips_listing_lines_tmux_did_not_format() {
-        let t = Fake::new(|_| "warning\n/s/claude\t%1\t100\n/s/claude\t%2\t200".into());
+        let t = FakeTmux::new(|_| "warning\n/s/claude\t%1\t100\n/s/claude\t%2\t200".into());
         let bg = env(&[("CLAUDE_CODE_SESSION_KIND", "bg")]);
         assert_eq!(
             detect_with(&bg, SID, &t, &attach_table()),
@@ -886,7 +853,7 @@ mod tests {
                 &["%4", "@3", "1", "3", "", "1", "sessions"],
             ])
         );
-        let t = Fake::new(move |_| out.clone());
+        let t = FakeTmux::new(move |_| out.clone());
         let got = panes(&t);
         assert_eq!(got.len(), 2);
         assert_eq!(got[0], pane("%2", "@1", 2, 1, true, "a\tb"));
@@ -896,8 +863,8 @@ mod tests {
     }
 
     /// Windows @1 (the landing page, no sidebar), @2 and @3 (sessions).
-    fn windows_reply(active: &'static str) -> Fake {
-        Fake::new(move |args| match args {
+    fn windows_reply(active: &'static str) -> FakeTmux {
+        FakeTmux::new(move |args| match args {
             ["list-panes", "-a", ..] => listing(&[
                 &["%1", "@1", "1", "1", "", "1", "sessions"],
                 &["%2", "@2", "1", "2", "1", "", "api"],
@@ -910,7 +877,7 @@ mod tests {
         })
     }
 
-    fn close_without_stops(window: &str, t: &Fake) {
+    fn close_without_stops(window: &str, t: &FakeTmux) {
         close_window_with(window, t, &Table::default(), &|_| {});
     }
 
@@ -939,7 +906,7 @@ mod tests {
 
     #[test]
     fn close_window_stops_attached_background_sessions() {
-        let t = Fake::new(|args| {
+        let t = FakeTmux::new(|args| {
             if args[0] == "list-panes" {
                 "100\n200".into()
             } else {
@@ -964,7 +931,7 @@ mod tests {
 
     #[test]
     fn close_window_skips_flags_and_short_ids_when_stopping() {
-        let t = Fake::new(|args| {
+        let t = FakeTmux::new(|args| {
             if args[0] == "list-panes" {
                 "100".into()
             } else {
@@ -998,7 +965,7 @@ mod tests {
 
     #[test]
     fn pane_in_view_asks_tmux_for_the_active_pane_of_an_attached_window() {
-        let t = Fake::new(|_| "1".into());
+        let t = FakeTmux::new(|_| "1".into());
         assert!(pane_in_view(&mux("/s", "%4"), &t));
         let call = &t.calls()[0];
         assert_eq!(call[..4], ["display-message", "-p", "-t", "%4"]);
@@ -1006,13 +973,16 @@ mod tests {
             call[4],
             "#{&&:#{&&:#{pane_active},#{window_active}},#{session_attached}}"
         );
-        assert!(!pane_in_view(&mux("/s", "%4"), &Fake::new(|_| "0".into())));
-        assert!(!pane_in_view(&mux("/s", "%4"), &Fake::silent()));
+        assert!(!pane_in_view(
+            &mux("/s", "%4"),
+            &FakeTmux::new(|_| "0".into())
+        ));
+        assert!(!pane_in_view(&mux("/s", "%4"), &FakeTmux::silent()));
     }
 
     #[test]
     fn settle_if_viewed_marks_a_finished_session_in_view_seen() {
-        let t = Fake::new(|_| "1".into());
+        let t = FakeTmux::new(|_| "1".into());
         let mut done = record_in("%1", Status::Done);
         done.status_since = 1.0;
         let settled = settle_if_viewed(done, 5.0, &t);
@@ -1023,10 +993,10 @@ mod tests {
     fn settle_if_viewed_keeps_a_session_behind_or_unfinished_or_off_tmux() {
         let behind = record_in("%1", Status::Done);
         assert_eq!(
-            settle_if_viewed(behind.clone(), 5.0, &Fake::new(|_| "0".into())),
+            settle_if_viewed(behind.clone(), 5.0, &FakeTmux::new(|_| "0".into())),
             behind
         );
-        let t = Fake::new(|_| "1".into());
+        let t = FakeTmux::new(|_| "1".into());
         let working = record_in("%1", Status::Working);
         assert_eq!(settle_if_viewed(working.clone(), 5.0, &t), working);
         let bare = Record {
@@ -1037,13 +1007,13 @@ mod tests {
         // Neither of the last two asked tmux
         assert!(t.calls().is_empty());
         // A dead server leaves the record as it is
-        let dead = Fake::silent();
+        let dead = FakeTmux::silent();
         let done = record_in("%1", Status::Done);
         assert_eq!(settle_if_viewed(done.clone(), 5.0, &dead), done);
     }
 
-    fn naming_reply(auto: &'static str, previous: &'static str, current: &'static str) -> Fake {
-        Fake::new(move |args| {
+    fn naming_reply(auto: &'static str, previous: &'static str, current: &'static str) -> FakeTmux {
+        FakeTmux::new(move |args| {
             if args[0] == "display-message" {
                 format!("{auto}\t{previous}\t{current}")
             } else {
@@ -1112,14 +1082,14 @@ mod tests {
             &t,
         );
         assert!(t.calls().is_empty());
-        let dead = Fake::silent();
+        let dead = FakeTmux::silent();
         name_window(&with_cwd("/w/api"), "", &dead);
         assert_eq!(dead.calls().len(), 1);
     }
 
     #[test]
     fn add_sidebar_splits_left_and_marks_the_new_pane() {
-        let t = Fake::new(|args| match args[0] {
+        let t = FakeTmux::new(|args| match args[0] {
             "split-window" => "%7".into(),
             _ => String::new(),
         });
@@ -1149,14 +1119,14 @@ mod tests {
 
     #[test]
     fn add_sidebar_does_nothing_when_the_window_has_one() {
-        let t = Fake::new(|_| "\n1".into());
+        let t = FakeTmux::new(|_| "\n1".into());
         add_sidebar_running("@2", "sleep 600", &t);
         assert_eq!(t.calls().len(), 1);
     }
 
     #[test]
     fn add_sidebar_does_not_mark_when_the_split_failed() {
-        let t = Fake::silent();
+        let t = FakeTmux::silent();
         add_sidebar_running("@2", "sleep 600", &t);
         assert_eq!(t.calls().len(), 2);
     }
@@ -1177,5 +1147,78 @@ mod tests {
                 ["resize-pane", "-t", "%4", "-x", "29"],
             ]
         );
+    }
+}
+
+/// What unit tests use in place of tmux.
+#[cfg(test)]
+pub(crate) mod fake {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use crate::term::tmux::Runner;
+
+    /// A tmux that records every call and answers it with `reply`.
+    ///
+    /// Clones share the calls, so a test keeps one while the code under test owns another.
+    #[derive(Clone)]
+    pub(crate) struct FakeTmux {
+        socket: Option<String>,
+        calls: Rc<RefCell<Vec<Vec<String>>>>,
+        reply: Rc<Reply>,
+    }
+
+    type Reply = dyn Fn(&[&str]) -> String;
+
+    impl FakeTmux {
+        /// Answers every call with `reply(args)`.
+        pub(crate) fn new(reply: impl Fn(&[&str]) -> String + 'static) -> Self {
+            FakeTmux {
+                socket: None,
+                calls: Rc::default(),
+                reply: Rc::new(reply),
+            }
+        }
+
+        /// Answers every call with nothing.
+        pub(crate) fn silent() -> Self {
+            Self::new(|_| String::new())
+        }
+
+        /// The same tmux for the server at `socket`: its calls are recorded as
+        /// `-S <socket> <args>`, as [`crate::term::tmux::Cli::at`] runs them.
+        pub(crate) fn at(&self, socket: &str) -> Self {
+            FakeTmux {
+                socket: Some(socket.to_owned()),
+                ..self.clone()
+            }
+        }
+
+        /// Every call so far, in order.
+        pub(crate) fn calls(&self) -> Vec<Vec<String>> {
+            self.calls.borrow().clone()
+        }
+
+        /// The calls whose first argument is `command`.
+        pub(crate) fn calls_to(&self, command: &str) -> Vec<Vec<String>> {
+            self.calls()
+                .into_iter()
+                .filter(|c| c[0] == command)
+                .collect()
+        }
+
+        /// Whether `command` ran, arguments and all.
+        pub(crate) fn ran(&self, command: &[&str]) -> bool {
+            self.calls().iter().any(|c| c == command)
+        }
+    }
+
+    impl Runner for FakeTmux {
+        fn run(&self, args: &[&str]) -> String {
+            let socket = self.socket.iter().flat_map(|s| ["-S", s.as_str()]);
+            let call = socket.chain(args.iter().copied()).map(str::to_owned);
+            self.calls.borrow_mut().push(call.collect());
+            (self.reply)(args)
+        }
     }
 }

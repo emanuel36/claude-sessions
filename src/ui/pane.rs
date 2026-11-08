@@ -257,33 +257,29 @@ mod tests {
         KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
     };
 
-    use crate::term::tmux::Runner;
+    use crate::term::tmux::fake::FakeTmux;
     use crate::ui::pane::{own_window, picker_key, quits, sight, LogOnce, Sight};
     use crate::ui::picker::Key;
     use crate::ui::runtime::Msg;
 
-    /// Answers each call with the next of its answers, then with nothing.
-    struct Answers(RefCell<Vec<&'static str>>, RefCell<u32>);
-
-    impl Answers {
-        fn new(answers: &[&'static str]) -> Self {
-            let mut answers = answers.to_vec();
-            answers.reverse();
-            Answers(RefCell::new(answers), RefCell::new(0))
-        }
-
-        fn calls(&self) -> u32 {
-            *self.1.borrow()
-        }
+    /// Answers each call with the next of `answers`, then with nothing.
+    fn answering(answers: &[&'static str]) -> FakeTmux {
+        let left = RefCell::new(answers.iter().rev().copied().collect::<Vec<_>>());
+        FakeTmux::new(move |_| left.borrow_mut().pop().unwrap_or_default().to_owned())
     }
 
-    impl Runner for Answers {
-        fn run(&self, args: &[&str]) -> String {
-            let format = "#{window_id}\t#{window_active}";
-            assert_eq!(args, ["display-message", "-p", "-t", "%7", format]);
-            *self.1.borrow_mut() += 1;
-            self.0.borrow_mut().pop().unwrap_or_default().to_owned()
-        }
+    /// How many times `tmux` was asked for pane `%7`'s window, failing on any other call.
+    fn asks(tmux: &FakeTmux) -> usize {
+        let ask = [
+            "display-message",
+            "-p",
+            "-t",
+            "%7",
+            "#{window_id}\t#{window_active}",
+        ];
+        let calls = tmux.calls();
+        assert!(calls.iter().all(|c| c == &ask), "{calls:?}");
+        calls.len()
     }
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -301,35 +297,32 @@ mod tests {
 
     #[test]
     fn own_window_asks_again_until_tmux_answers() {
-        let tmux = Answers::new(&["", "", "@3\t1"]);
+        let tmux = answering(&["", "", "@3\t1"]);
         let got = own_window(&tmux, Some("%7"), Duration::ZERO).unwrap();
-        assert_eq!(
-            (got.id.as_str(), got.current, tmux.calls()),
-            ("@3", true, 3)
-        );
+        assert_eq!((got.id.as_str(), got.current, asks(&tmux)), ("@3", true, 3));
     }
 
     #[test]
     fn own_window_tells_a_window_out_of_sight() {
-        let tmux = Answers::new(&["@3\t0"]);
+        let tmux = answering(&["@3\t0"]);
         let got = own_window(&tmux, Some("%7"), Duration::ZERO).unwrap();
         assert_eq!((got.id.as_str(), got.current), ("@3", false));
     }
 
     #[test]
     fn own_window_gives_up_after_five_asks() {
-        let tmux = Answers::new(&[]);
+        let tmux = answering(&[]);
         let err = own_window(&tmux, Some("%7"), Duration::ZERO).unwrap_err();
-        assert_eq!(tmux.calls(), 5);
+        assert_eq!(asks(&tmux), 5);
         assert!(err.to_string().contains("%7"), "{err}");
     }
 
     #[test]
     fn own_window_needs_a_pane() {
-        let tmux = Answers::new(&["@3"]);
+        let tmux = answering(&["@3"]);
         assert!(own_window(&tmux, None, Duration::ZERO).is_err());
         assert!(own_window(&tmux, Some(""), Duration::ZERO).is_err());
-        assert_eq!(tmux.calls(), 0);
+        assert_eq!(asks(&tmux), 0);
     }
 
     #[test]

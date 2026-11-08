@@ -303,16 +303,14 @@ impl App for Landing {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
     use std::collections::{BTreeMap, HashSet};
     use std::path::PathBuf;
-    use std::rc::Rc;
 
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     use crate::claude::statusline::Quota;
     use crate::core::state::Record;
-    use crate::term::tmux::Runner;
+    use crate::term::tmux::fake::FakeTmux;
     use crate::ui::landing_app::{labels, open_sessions, Landing};
     use crate::ui::pane::{App, LogOnce, Step, Visible};
     use crate::ui::picker::{Folder, Picker, Session};
@@ -320,28 +318,6 @@ mod tests {
     use crate::ui::sidebar::Stats;
 
     const NOW: f64 = 1_700_000_000.0;
-
-    /// Records the tmux commands it is asked to run.
-    #[derive(Clone, Default)]
-    struct Calls(Rc<RefCell<Vec<Vec<String>>>>);
-
-    impl Calls {
-        fn all(&self) -> Vec<Vec<String>> {
-            self.0.borrow().clone()
-        }
-
-        fn ran(&self, command: &[&str]) -> bool {
-            self.all().iter().any(|c| c == command)
-        }
-    }
-
-    impl Runner for Calls {
-        fn run(&self, args: &[&str]) -> String {
-            let args = args.iter().map(|a| (*a).to_owned()).collect();
-            self.0.borrow_mut().push(args);
-            String::new()
-        }
-    }
 
     fn folders() -> Vec<Folder> {
         vec![
@@ -370,8 +346,8 @@ mod tests {
     }
 
     /// A page on screen over two folders, its tmux calls recorded.
-    fn page() -> (Landing, Calls, Runtime) {
-        let calls = Calls::default();
+    fn page() -> (Landing, FakeTmux, Runtime) {
+        let calls = FakeTmux::silent();
         let mut picker = Picker::new(Box::new(|_| false));
         picker.folders = folders();
         let mut page = Landing::new(Box::new(calls.clone()), picker);
@@ -390,7 +366,7 @@ mod tests {
     fn enter_on_a_folder_starts_a_session_there() {
         let (mut page, calls, mut runtime) = page();
         press(&mut page, &mut runtime, &[KeyCode::Down, KeyCode::Enter]);
-        assert_eq!(calls.all(), [["new-window", "-c", "/w/web", "claude"]]);
+        assert_eq!(calls.calls(), [["new-window", "-c", "/w/web", "claude"]]);
     }
 
     #[test]
@@ -414,7 +390,7 @@ mod tests {
         press(&mut page, &mut runtime, &keys);
         assert_eq!(page.picker.query, "web");
         assert!(!page.searching);
-        assert_eq!(calls.all(), Vec::<Vec<String>>::new());
+        assert_eq!(calls.calls(), Vec::<Vec<String>>::new());
         let shown: Vec<_> = page.picker.shown().into_iter().map(|r| r.path).collect();
         assert_eq!(shown, ["/w/web"]);
     }
@@ -431,7 +407,7 @@ mod tests {
     fn q_ends_the_server_but_is_typed_while_searching() {
         let (mut page, calls, mut runtime) = page();
         press(&mut page, &mut runtime, &[KeyCode::Char('q')]);
-        assert_eq!(calls.all(), [["kill-server"]]);
+        assert_eq!(calls.calls(), [["kill-server"]]);
         let (mut page, calls, mut runtime) = self::page();
         press(
             &mut page,
@@ -452,7 +428,7 @@ mod tests {
         }
         assert_eq!(page.picker.query, "");
         // Never closes itself, nor its server, on Ctrl+C or Ctrl+Q
-        assert_eq!(calls.all(), Vec::<Vec<String>>::new());
+        assert_eq!(calls.calls(), Vec::<Vec<String>>::new());
     }
 
     #[test]
@@ -487,7 +463,7 @@ mod tests {
         assert_eq!(page.handle(Msg::Key(f11), NOW, &mut runtime), Step::Wait);
         assert_eq!(page.schedule.next_wake(NOW), None);
         assert!(page.watches.is_empty());
-        assert_eq!(calls.all(), Vec::<Vec<String>>::new());
+        assert_eq!(calls.calls(), Vec::<Vec<String>>::new());
     }
 
     #[test]

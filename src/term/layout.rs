@@ -118,49 +118,9 @@ fn send(pane: &str, key: &str, t: &dyn Runner) {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
-
     use crate::core::state::{new_record, Mux, Record, Status};
     use crate::term::layout::{layout, show, step, HIDDEN, LAST_WINDOW, LAYOUT, SHOWN};
-    use crate::term::tmux::Runner;
-
-    type Reply = Box<dyn Fn(&[&str]) -> String>;
-
-    /// Replays outputs and records every call.
-    struct Fake {
-        calls: RefCell<Vec<Vec<String>>>,
-        reply: Reply,
-    }
-
-    impl Fake {
-        fn new(reply: impl Fn(&[&str]) -> String + 'static) -> Self {
-            Fake {
-                calls: RefCell::new(Vec::new()),
-                reply: Box::new(reply),
-            }
-        }
-
-        fn calls(&self) -> Vec<Vec<String>> {
-            self.calls.borrow().clone()
-        }
-
-        /// The calls whose first argument is `command`.
-        fn calls_to(&self, command: &str) -> Vec<Vec<String>> {
-            self.calls()
-                .into_iter()
-                .filter(|c| c[0] == command)
-                .collect()
-        }
-    }
-
-    impl Runner for Fake {
-        fn run(&self, args: &[&str]) -> String {
-            self.calls
-                .borrow_mut()
-                .push(args.iter().map(|a| (*a).to_owned()).collect());
-            (self.reply)(args)
-        }
-    }
+    use crate::term::tmux::fake::FakeTmux;
 
     fn listing(rows: &[[&str; 7]]) -> String {
         rows.iter()
@@ -184,8 +144,8 @@ mod tests {
 
     /// Answers as [`server`], with `last` as the window shown last and `active` as the panes
     /// that show their window's sidebar or landing page on screen.
-    fn reply(last: &'static str, active: &'static str) -> Fake {
-        Fake::new(move |args| match args {
+    fn reply(last: &'static str, active: &'static str) -> FakeTmux {
+        FakeTmux::new(move |args| match args {
             ["list-panes", "-a", "-F", ..] => server(),
             ["list-panes", "-a", "-f", ..] => active.into(),
             ["show-option", ..] => last.into(),
@@ -193,7 +153,7 @@ mod tests {
         })
     }
 
-    fn sent(t: &Fake) -> Vec<(String, String)> {
+    fn sent(t: &FakeTmux) -> Vec<(String, String)> {
         t.calls_to("send-keys")
             .into_iter()
             .map(|c| (c[2].clone(), c[3].clone()))
@@ -305,7 +265,7 @@ mod tests {
         show("%1", &t);
         assert_eq!(sent(&t), [pair("%1", SHOWN)]);
         // A window shown before that has no sidebar any more gets nothing
-        let t = Fake::new(|args| match args {
+        let t = FakeTmux::new(|args| match args {
             ["list-panes", ..] => listing(&[
                 ["%1", "@1", "1", "1", "", "1", "sessions"],
                 ["%7", "@5", "1", "5", "", "", "bare"],

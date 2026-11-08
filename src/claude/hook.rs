@@ -275,33 +275,17 @@ mod tests {
     use crate::core::journal::JournalEvent;
     use crate::core::state::{new_record, Event, Mux, Pending, Record, Status, Waiting};
     use crate::core::store::{process_start, read_in, write_in};
+    use crate::term::tmux::fake::FakeTmux;
     use crate::term::tmux::{Runner, TIMEOUT};
 
     fn no_journal(_: &JournalEvent) {}
 
     type Reply = Rc<dyn Fn(&[&str]) -> String>;
-    type Calls = Rc<RefCell<Vec<String>>>;
-
-    /// A tmux that records `<socket>: <args>` for every call and replays `reply`.
-    struct Fake {
-        socket: String,
-        calls: Calls,
-        reply: Reply,
-    }
-
-    impl Runner for Fake {
-        fn run(&self, args: &[&str]) -> String {
-            self.calls
-                .borrow_mut()
-                .push(format!("{}: {}", self.socket, args.join(" ")));
-            (self.reply)(args)
-        }
-    }
 
     /// A records directory and a fake tmux.
     struct Rig {
         dir: TempDir,
-        calls: Calls,
+        tmux: FakeTmux,
         bind: Box<Binder>,
     }
 
@@ -313,16 +297,11 @@ mod tests {
         fn replying(reply: impl FnOnce(&Path) -> Reply) -> Self {
             let dir = TempDir::new().expect("create temp dir");
             let reply = reply(dir.path());
-            let calls = Calls::default();
-            let shared = Rc::clone(&calls);
-            let bind = Box::new(move |socket: &str| -> Box<dyn Runner> {
-                Box::new(Fake {
-                    socket: socket.to_owned(),
-                    calls: Rc::clone(&shared),
-                    reply: Rc::clone(&reply),
-                })
-            });
-            Rig { dir, calls, bind }
+            let tmux = FakeTmux::new(move |args| reply(args));
+            let shared = tmux.clone();
+            let bind =
+                Box::new(move |socket: &str| -> Box<dyn Runner> { Box::new(shared.at(socket)) });
+            Rig { dir, tmux, bind }
         }
 
         fn seams(&self) -> Seams<'_> {
@@ -351,8 +330,9 @@ mod tests {
             write_in(self.dir.path(), r, &no_journal).expect("write record");
         }
 
+        /// Each call as one line: `-S <socket> <args>`.
         fn calls(&self) -> Vec<String> {
-            self.calls.borrow().clone()
+            self.tmux.calls().iter().map(|c| c.join(" ")).collect()
         }
     }
 
@@ -457,7 +437,7 @@ mod tests {
         // Only the run with a terminal asked tmux about its window
         let calls = rig.calls();
         assert_eq!(calls.len(), 1, "{calls:?}");
-        assert!(calls[0].starts_with("/tmp/t/claude: display-message -p -t %3 "));
+        assert!(calls[0].starts_with("-S /tmp/t/claude display-message -p -t %3 "));
     }
 
     #[test]
@@ -603,7 +583,7 @@ mod tests {
         let calls = rig.calls();
         assert!(!calls.is_empty());
         assert!(
-            calls.iter().all(|c| c.starts_with("/tmp/t/claude: ")),
+            calls.iter().all(|c| c.starts_with("-S /tmp/t/claude ")),
             "{calls:?}"
         );
         // The pane was on screen, so the finished session is seen at once

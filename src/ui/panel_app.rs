@@ -112,36 +112,16 @@ impl App for Panel {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
-    use std::rc::Rc;
 
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-    use crate::term::tmux::Runner;
+    use crate::term::tmux::fake::FakeTmux;
     use crate::ui::pane::{App, Step};
     use crate::ui::panel_app::Panel;
     use crate::ui::picker::{Folder, Picker, RowKind, Session};
     use crate::ui::runtime::{Msg, Runtime};
 
     const NOW: f64 = 1_700_000_000.0;
-
-    /// Records the tmux commands it is asked to run.
-    #[derive(Clone, Default)]
-    struct Calls(Rc<RefCell<Vec<Vec<String>>>>);
-
-    impl Calls {
-        fn all(&self) -> Vec<Vec<String>> {
-            self.0.borrow().clone()
-        }
-    }
-
-    impl Runner for Calls {
-        fn run(&self, args: &[&str]) -> String {
-            let args = args.iter().map(|a| (*a).to_owned()).collect();
-            self.0.borrow_mut().push(args);
-            String::new()
-        }
-    }
 
     fn session(id: &str, title: &str, last: f64) -> Session {
         Session {
@@ -175,8 +155,8 @@ mod tests {
 
     /// A panel over two folders, `/w/api` and `/w/web` being the only folders on disk; the
     /// steps of its last key and its tmux calls.
-    fn drive(codes: &[KeyCode]) -> (Panel, Vec<Step>, Calls) {
-        let calls = Calls::default();
+    fn drive(codes: &[KeyCode]) -> (Panel, Vec<Step>, FakeTmux) {
+        let calls = FakeTmux::silent();
         let mut picker = Picker::new(Box::new(|p| p == "/w/api" || p == "/w/web"));
         picker.folders = folders();
         let mut panel = Panel::new(Box::new(calls.clone()), picker);
@@ -198,7 +178,7 @@ mod tests {
     #[test]
     fn enter_on_a_folder_starts_a_session_there() {
         let (_, steps, calls) = drive(&[KeyCode::Down, KeyCode::Enter]);
-        assert_eq!(calls.all(), [["new-window", "-c", "/w/web", "claude"]]);
+        assert_eq!(calls.calls(), [["new-window", "-c", "/w/web", "claude"]]);
         assert_eq!(steps, [Step::Draw, Step::Quit]);
     }
 
@@ -206,7 +186,7 @@ mod tests {
     fn right_opens_the_sessions_and_enter_resumes_one() {
         let (_, _, calls) = drive(&[KeyCode::Right, KeyCode::Down, KeyCode::Enter]);
         assert_eq!(
-            calls.all(),
+            calls.calls(),
             [["new-window", "-c", "/w/api", "claude --resume s1"]]
         );
     }
@@ -224,11 +204,11 @@ mod tests {
         let mut keys = chars("web");
         keys.push(KeyCode::Enter);
         let (_, _, calls) = drive(&keys);
-        assert_eq!(calls.all(), [["new-window", "-c", "/w/web", "claude"]]);
+        assert_eq!(calls.calls(), [["new-window", "-c", "/w/web", "claude"]]);
         let mut keys = chars("/w/api");
         keys.push(KeyCode::Enter);
         let (_, _, calls) = drive(&keys);
-        assert_eq!(calls.all(), [["new-window", "-c", "/w/api", "claude"]]);
+        assert_eq!(calls.calls(), [["new-window", "-c", "/w/api", "claude"]]);
     }
 
     #[test]
@@ -244,7 +224,7 @@ mod tests {
     fn escape_closes_without_starting_anything() {
         let (_, steps, calls) = drive(&[KeyCode::Esc]);
         assert_eq!(steps, [Step::Quit]);
-        assert_eq!(calls.all(), Vec::<Vec<String>>::new());
+        assert_eq!(calls.calls(), Vec::<Vec<String>>::new());
     }
 
     #[test]
@@ -254,7 +234,7 @@ mod tests {
             let key = KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
             let mut runtime = Runtime::headless().unwrap();
             assert_eq!(panel.handle(Msg::Key(key), NOW, &mut runtime), Step::Quit);
-            assert_eq!(calls.all(), Vec::<Vec<String>>::new());
+            assert_eq!(calls.calls(), Vec::<Vec<String>>::new());
         }
     }
 
@@ -264,7 +244,7 @@ mod tests {
         keys.push(KeyCode::Enter);
         let (_, steps, calls) = drive(&keys);
         assert_eq!(steps.last(), Some(&Step::Draw));
-        assert_eq!(calls.all(), Vec::<Vec<String>>::new());
+        assert_eq!(calls.calls(), Vec::<Vec<String>>::new());
     }
 
     #[test]

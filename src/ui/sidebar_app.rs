@@ -320,10 +320,8 @@ impl App for Sidebar {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
     use std::collections::BTreeMap;
     use std::path::PathBuf;
-    use std::rc::Rc;
 
     use crossterm::event::{
         KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
@@ -331,7 +329,7 @@ mod tests {
 
     use crate::claude::statusline::Quota;
     use crate::core::state::{Record, Status};
-    use crate::term::tmux::Runner;
+    use crate::term::tmux::fake::FakeTmux;
     use crate::ui::pane::{App, Step, Visible};
     use crate::ui::runtime::{Msg, Runtime};
     use crate::ui::sidebar::{Entry, Run, Stats};
@@ -341,18 +339,6 @@ mod tests {
     use crate::ui::watch::Stale;
 
     const NOW: f64 = 1_700_000_000.0;
-
-    /// Records the tmux commands it is asked to run.
-    #[derive(Clone, Default)]
-    struct Calls(Rc<RefCell<Vec<Vec<String>>>>);
-
-    impl Runner for Calls {
-        fn run(&self, args: &[&str]) -> String {
-            let args = args.iter().map(|a| (*a).to_owned()).collect();
-            self.0.borrow_mut().push(args);
-            String::new()
-        }
-    }
 
     fn record(id: &str, status: Status) -> Record {
         Record {
@@ -379,7 +365,7 @@ mod tests {
         let mut runtime = Runtime::headless().unwrap();
         let layout = Msg::Key(KeyEvent::new(KeyCode::F(10), KeyModifiers::NONE));
         for msg in [Msg::Resize, layout, click(30)] {
-            let mut side = Sidebar::new("@1".into(), String::new(), Box::new(Calls::default()));
+            let mut side = Sidebar::new("@1".into(), String::new(), Box::new(FakeTmux::silent()));
             side.hide(&mut runtime);
             let step = side.handle(msg.clone(), NOW, &mut runtime);
             assert_eq!(step, Step::Draw, "{msg:?}");
@@ -391,7 +377,7 @@ mod tests {
     #[test]
     fn a_hidden_sidebar_drops_changes_on_disk() {
         let mut runtime = Runtime::headless().unwrap();
-        let mut side = Sidebar::new("@1".into(), String::new(), Box::new(Calls::default()));
+        let mut side = Sidebar::new("@1".into(), String::new(), Box::new(FakeTmux::silent()));
         side.hide(&mut runtime);
         let changed = Msg::Changed(PathBuf::from("/run/cst/s1.json"));
         assert_eq!(side.handle(changed, NOW, &mut runtime), Step::Wait);
