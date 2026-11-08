@@ -1,0 +1,22 @@
+[
+[{"text": "  ▐▛███▜▌  ", "fg": "rgb:#d77757", "bg": "default", "bold": false}, {"text": "claude-sessions", "fg": "idx:15", "bg": "default", "bold": true}],
+[{"text": " ▝▜█████▛▘ ", "fg": "rgb:#d77757", "bg": "default", "bold": false}, {"text": "Wed 4 Nov · 0 sessions open", "fg": "idx:244", "bg": "default", "bold": false}],
+[{"text": "   ▘▘ ▝▝   ", "fg": "rgb:#d77757", "bg": "default", "bold": false}],
+[],
+[{"text": " ❯ ", "fg": "idx:4", "bg": "default", "bold": false}, {"text": "/ to search", "fg": "idx:240", "bg": "default", "bold": false}],
+[],
+[{"text": " ▸ ", "fg": "idx:244", "bg": "idx:235", "bold": false}, {"text": "claude-sessions", "fg": "idx:15", "bg": "idx:235", "bold": true}, {"text": "     ", "fg": "default", "bg": "idx:235", "bold": false}, {"text": "2m ago", "fg": "idx:244", "bg": "idx:235", "bold": false}],
+[{"text": "   14 sessions · $41.20 7d", "fg": "idx:244", "bg": "idx:235", "bold": false}, {"text": "   ", "fg": "default", "bg": "idx:235", "bold": false}],
+[{"text": " ────────────────────────────", "fg": "idx:238", "bg": "default", "bold": false}],
+[{"text": " ▸ ", "fg": "idx:244", "bg": "default", "bold": false}, {"text": "vehicle-api", "fg": "idx:15", "bg": "default", "bold": true}, {"text": "         ", "fg": "default", "bg": "default", "bold": false}, {"text": "3h ago", "fg": "idx:244", "bg": "default", "bold": false}],
+[{"text": "   6 sessions · $18.75 7d", "fg": "idx:244", "bg": "default", "bold": false}],
+[{"text": " ────────────────────────────", "fg": "idx:238", "bg": "default", "bold": false}],
+[{"text": " ▸ ", "fg": "idx:244", "bg": "default", "bold": false}, {"text": "notes", "fg": "idx:15", "bg": "default", "bold": true}, {"text": "               ", "fg": "default", "bg": "default", "bold": false}, {"text": "2d ago", "fg": "idx:244", "bg": "default", "bold": false}],
+[{"text": "   1 session", "fg": "idx:244", "bg": "default", "bold": false}],
+[{"text": " ────────────────────────────", "fg": "idx:238", "bg": "default", "bold": false}],
+[{"text": " ▸ ", "fg": "idx:244", "bg": "default", "bold": false}, {"text": "with-a-folder-nam…", "fg": "idx:15", "bg": "default", "bold": true}, {"text": " ", "fg": "default", "bg": "default", "bold": false}, {"text": "40d ago", "fg": "idx:244", "bg": "default", "bold": false}],
+[{"text": "   2 sessions · $0.40 7d", "fg": "idx:244", "bg": "default", "bold": false}],
+[{"text": "▼", "fg": "idx:240", "bg": "default", "bold": false}, {"text": "────────────────────────────", "fg": "idx:238", "bg": "default", "bold": false}],
+[],
+[{"text": " ", "fg": "default", "bg": "default", "bold": false}, {"text": "↑↓", "fg": "rgb:#d77757", "bg": "default", "bold": false}, {"text": " move", "fg": "default", "bg": "default", "bold": false}, {"text": " · ", "fg": "idx:240", "bg": "default", "bold": false}, {"text": "→", "fg": "rgb:#d77757", "bg": "default", "bold": false}, {"text": " sessions", "fg": "default", "bg": "default", "bold": false}, {"text": " · ", "fg": "idx:240", "bg": "default", "bold": false}, {"text": "Ente", "fg": "rgb:#d77757", "bg": "default", "bold": false}, {"text": "…", "fg": "idx:240", "bg": "default", "bold": false}]
+]
