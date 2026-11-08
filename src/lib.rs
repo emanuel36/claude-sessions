@@ -9,3 +9,4 @@ pub mod paths;
 pub mod state;
 pub mod store;
 pub mod term;
+pub mod ui;

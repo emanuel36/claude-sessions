@@ -11,6 +11,10 @@ use serde_json::{json, Value};
 /// Lines as runs of text with a foreground, a background and bold.
 ///
 /// Each span's style is laid over its line's own style, as ratatui draws it.
+///
+/// # Panics
+///
+/// On any modifier other than bold and on an underline colour, which the goldens do not carry.
 pub fn runs(lines: &[Line]) -> Value {
     Value::Array(lines.iter().map(line_runs).collect())
 }
@@ -20,6 +24,17 @@ fn line_runs(line: &Line) -> Value {
     let mut out: Vec<(String, (String, String, bool))> = Vec::new();
     for span in line.spans.iter().filter(|span| !span.content.is_empty()) {
         let style = line.style.patch(span.style);
+        // The Python generator refuses attributes the goldens do not carry; so does this
+        let other = (style.add_modifier | style.sub_modifier) - Modifier::BOLD;
+        assert!(
+            other.is_empty(),
+            "golden runs only carry bold, not {other:?}"
+        );
+        assert!(
+            style.underline_color.is_none(),
+            "golden runs carry no underline colour, got {:?}",
+            style.underline_color
+        );
         let key = (
             colour(style.fg),
             colour(style.bg),

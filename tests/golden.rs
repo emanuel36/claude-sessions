@@ -42,3 +42,55 @@ fn runs_merge_adjacent_equal_styles() {
         ])
     );
 }
+
+#[test]
+fn all_sixteen_named_colours_map_to_their_ansi_index() {
+    let named = [
+        Color::Black,
+        Color::Red,
+        Color::Green,
+        Color::Yellow,
+        Color::Blue,
+        Color::Magenta,
+        Color::Cyan,
+        Color::Gray,
+        Color::DarkGray,
+        Color::LightRed,
+        Color::LightGreen,
+        Color::LightYellow,
+        Color::LightBlue,
+        Color::LightMagenta,
+        Color::LightCyan,
+        Color::White,
+    ];
+    for (index, color) in named.into_iter().enumerate() {
+        let line = Line::from(Span::styled("x", Style::new().fg(color).bg(color)));
+        let expected = format!("idx:{index}");
+        assert_eq!(
+            runs(&[line]),
+            json!([[{"text": "x", "fg": expected, "bg": expected, "bold": false}]]),
+            "{color:?}"
+        );
+    }
+}
+
+#[test]
+#[should_panic(expected = "ITALIC")]
+fn runs_refuse_modifiers_other_than_bold() {
+    let italic = Style::new().add_modifier(Modifier::BOLD | Modifier::ITALIC);
+    runs(&[Line::from(Span::styled("x", italic))]);
+}
+
+#[test]
+#[should_panic(expected = "DIM")]
+fn runs_refuse_a_modifier_on_the_line_style() {
+    let line = Line::from("x").style(Style::new().add_modifier(Modifier::DIM));
+    runs(&[line]);
+}
+
+#[test]
+#[should_panic(expected = "underline colour")]
+fn runs_refuse_an_underline_colour() {
+    let underlined = Style::new().underline_color(Color::Red);
+    runs(&[Line::from(Span::styled("x", underlined))]);
+}
