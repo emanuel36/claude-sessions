@@ -5,6 +5,7 @@ mod support;
 use std::collections::HashMap;
 use std::path::Path;
 
+use cst::ui::landing;
 use cst::ui::picker::{self, Folder, Picker};
 use cst::ui::sidebar::{column, Entry, Run, Stats};
 use ratatui::style::{Color, Modifier, Style};
@@ -25,21 +26,55 @@ struct SidebarFixture {
     runs: Vec<Run>,
 }
 
-/// The fields of a `panel` fixture (see `tools/golden.py`).
+/// What the user did in the folder list, as `landing` and `panel` fixtures hold it.
 #[derive(Deserialize)]
-struct PanelFixture {
-    now: f64,
+struct ListFixture {
     folders: Vec<Folder>,
     query: String,
     cursor: usize,
     expanded: Vec<String>,
     scroll: HashMap<String, usize>,
-    height: u16,
     /// The typed paths that are folders.
     dirs: Vec<String>,
 }
 
-/// Renders a fixture as the Rust screens draw it; `None` for kinds not ported yet.
+impl ListFixture {
+    /// A picker holding the folders and the user's state, as `tools/golden.py` builds it.
+    fn picker(self) -> Picker {
+        let dirs = self.dirs;
+        let mut p = Picker::new(Box::new(move |path| dirs.iter().any(|d| d == path)));
+        p.folders = self.folders;
+        p.query = self.query;
+        p.cursor = self.cursor;
+        p.expanded = self.expanded.into_iter().collect();
+        p.scroll = self.scroll;
+        p
+    }
+}
+
+/// The fields of a `landing` fixture (see `tools/golden.py`).
+#[derive(Deserialize)]
+struct LandingFixture {
+    now: f64,
+    #[serde(flatten)]
+    list: ListFixture,
+    searching: bool,
+    opened: usize,
+    stats: Stats,
+    width: u16,
+    height: u16,
+}
+
+/// The fields of a `panel` fixture (see `tools/golden.py`).
+#[derive(Deserialize)]
+struct PanelFixture {
+    now: f64,
+    #[serde(flatten)]
+    list: ListFixture,
+    height: u16,
+}
+
+/// Renders a fixture as the Rust screens draw it; `None` for an unknown kind.
 fn render(fixture: &Value) -> Option<Vec<Line<'static>>> {
     match fixture["kind"].as_str() {
         Some("sidebar") => {
@@ -50,15 +85,23 @@ fn render(fixture: &Value) -> Option<Vec<Line<'static>>> {
                 &f.entries, current, &f.stats, f.now, f.height, &f.runs,
             ))
         }
+        Some("landing") => {
+            let f: LandingFixture =
+                serde_json::from_value(fixture.clone()).expect("landing fixture");
+            let mut p = f.list.picker();
+            Some(landing::screen(
+                &mut p,
+                f.searching,
+                f.opened,
+                &f.stats,
+                f.now,
+                f.width,
+                f.height,
+            ))
+        }
         Some("panel") => {
             let f: PanelFixture = serde_json::from_value(fixture.clone()).expect("panel fixture");
-            let dirs = f.dirs;
-            let mut p = Picker::new(Box::new(move |path| dirs.iter().any(|d| d == path)));
-            p.folders = f.folders;
-            p.query = f.query;
-            p.cursor = f.cursor;
-            p.expanded = f.expanded.into_iter().collect();
-            p.scroll = f.scroll;
+            let mut p = f.list.picker();
             Some(picker::screen(&mut p, f.now, f.height))
         }
         _ => None,
@@ -94,8 +137,9 @@ fn screens_match_python() {
         assert_eq!(actual.len(), expected.len(), "{name}: line count");
         checked += 1;
     }
-    // 7 sidebar and 4 panel fixtures; the landing ones are not ported yet
-    assert_eq!(checked, 11, "fixtures checked");
+    // Every fixture is compared: 7 sidebar, 5 landing and 4 panel
+    assert_eq!(checked, fixtures.len(), "fixtures checked");
+    assert_eq!(checked, 16, "fixtures checked");
 }
 
 #[test]
