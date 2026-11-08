@@ -251,6 +251,8 @@ def test_the_tmux_pane_is_as_wide_as_the_column():
 
 def test_f12_from_tmux_draws_at_once(monkeypatch):
     stub_tmux(monkeypatch)
+    # A still clock: a tick crossing into the next second would load once more on its own
+    monkeypatch.setattr(sidebar_app.time, "time", lambda: NOW)
     loads = []
 
     async def go():
