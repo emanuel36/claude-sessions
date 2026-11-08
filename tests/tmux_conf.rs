@@ -242,15 +242,19 @@ fn conf_loads_without_errors_on_tmux() {
             "{hook}: {hooks}"
         );
     }
+    // Only after-* hooks hold up the command that set them off, so only they run in the
+    // background; the others stay in order with `cst focus`
+    for hook in ["after-split-window", "after-kill-pane"] {
+        let line = format!("{hook}[0] run-shell -b \"cst layout\"");
+        assert!(hooks.contains(&line), "{hook}: {hooks}");
+    }
     for hook in [
-        "after-split-window",
         "window-resized",
         "pane-exited",
-        "after-kill-pane",
         "window-renamed",
         "window-unlinked",
     ] {
-        let line = format!("{hook}[0] run-shell -b \"cst layout\"");
+        let line = format!("{hook}[0] run-shell \"cst layout\"");
         assert!(hooks.contains(&line), "{hook}: {hooks}");
     }
     let new_window = "after-new-window[0] run-shell -b \"cst layout #{window_id}\"";
