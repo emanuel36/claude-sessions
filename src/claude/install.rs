@@ -595,15 +595,43 @@ fn try_install(loc: &Locations, cst: &str, out: &mut dyn Write) -> Result<(), Fa
             changes.push(format!("backup: {}", backup.display()));
         }
     }
+    // The saved status line goes first, so a settings.json pointing at cst never lacks it; if
+    // settings.json then fails, the earlier saved file comes back
+    let mut earlier = None;
     if let Some(saved) = to_save {
         let bytes = serde_json::to_vec(&saved).map_err(io::Error::from);
         let bytes = bytes.map_err(&io_failure)?;
+        earlier = Some(read_if_present(&loc.saved).map_err(&io_failure)?);
         paths::write_atomic(&loc.saved, &bytes, None).map_err(&io_failure)?;
     }
     let bytes = dump(&new).map_err(&io_failure)?;
-    paths::write_atomic(&real, &bytes, None).map_err(&io_failure)?;
+    if let Err(e) = paths::write_atomic(&real, &bytes, None) {
+        if let Some(earlier) = earlier {
+            restore(&loc.saved, earlier);
+        }
+        return Err(io_failure(e));
+    }
     let _ = writeln!(out, "{}", changes.join("\n"));
     Ok(())
+}
+
+/// The content of `path`, or `None` if there is no such file.
+fn read_if_present(path: &Path) -> io::Result<Option<Vec<u8>>> {
+    match fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+/// Puts `path` back to `earlier`, its content before a change: the file, or no file.
+///
+/// Best effort: this runs while another failure is being reported.
+fn restore(path: &Path, earlier: Option<Vec<u8>>) {
+    let _ = match earlier {
+        Some(bytes) => paths::write_atomic(path, &bytes, None),
+        None => fs::remove_file(path),
+    };
 }
 
 fn try_uninstall(loc: &Locations, out: &mut dyn Write) -> Result<(), Failure> {
@@ -1067,6 +1095,40 @@ mod tests {
         fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).expect("chmod");
         // Install would only say "already installed": nothing to write
         assert_eq!(result, (0, String::new()));
+    }
+
+    /// Makes the settings directory unwritable, with the backup already made so that the
+    /// failure comes at the write of settings.json itself.
+    fn refuse_settings_write(rig: &Rig) -> PathBuf {
+        let dir = rig.settings().parent().expect("parent").to_path_buf();
+        fs::write(dir.join(BACKUP), "{}").expect("backup");
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o500)).expect("chmod");
+        dir
+    }
+
+    #[test]
+    fn a_failed_settings_write_leaves_no_saved_status_line() {
+        let rig = Rig::new();
+        rig.put_settings(&sample());
+        let dir = refuse_settings_write(&rig);
+        let (code, _, err) = rig.install(CS);
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).expect("chmod");
+        assert_eq!(code, 1, "{err}");
+        assert!(err.ends_with("nothing was changed\n"), "{err}");
+        assert!(!rig.saved().exists());
+    }
+
+    #[test]
+    fn a_failed_settings_write_restores_the_previous_saved_status_line() {
+        let rig = Rig::new();
+        rig.put_settings(&sample());
+        let earlier = json!({"type": "command", "command": "earlier.sh"});
+        rig.put(&rig.saved(), &earlier.to_string());
+        let dir = refuse_settings_write(&rig);
+        let (code, _, err) = rig.install(CS);
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).expect("chmod");
+        assert_eq!(code, 1, "{err}");
+        assert_eq!(rig.read(&rig.saved()), earlier);
     }
 
     #[test]
