@@ -236,7 +236,13 @@ fn conf_loads_without_errors_on_tmux() {
     assert!(out.status.success());
     assert_eq!(String::from_utf8_lossy(&out.stderr), "");
     let hooks = server.hooks();
-    let focus = "run-shell \"cst focus --pane #{pane_id} --socket #{q:socket_path}\"";
+    // One copy of the command, which each hook expands
+    let command = server.run(&["show-options", "-gv", "@cs-focus"]);
+    assert_eq!(
+        command.trim(),
+        "cst focus --pane #{pane_id} --socket #{q:socket_path}"
+    );
+    let focus = "run-shell \"#{E:@cs-focus}\"";
     for hook in [
         "session-window-changed",
         "window-pane-changed",

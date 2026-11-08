@@ -266,9 +266,16 @@ fn start_brings_an_older_server_up_to_date_and_keeps_its_sessions() {
         assert!(Instant::now() < deadline, "the sidebar runs {running}");
         std::thread::sleep(Duration::from_millis(20));
     }
+    // Hooks and keys run this `cst`
     let hooks = tmux.run(&["show-hooks", "-g"]);
-    assert!(hooks.contains("cst focus"), "{hooks}");
     assert!(!hooks.contains("\"cs "), "{hooks}");
+    let focus = tmux.run(&["show-options", "-gv", "@cs-focus"]);
+    assert!(focus.starts_with("cst focus "), "{focus}");
+    let keys = tmux.run(&["list-keys"]);
+    assert!(
+        keys.contains("cst step up") && !keys.contains("cs step"),
+        "{keys}"
+    );
     let stamp = tmux.run(&["show-options", "-sv", "@cs-conf"]);
     assert_eq!(stamp.trim(), conf_stamp());
 }
