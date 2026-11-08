@@ -99,6 +99,9 @@ main() {
         download "$tmp"
     fi
 
+    # Before anything is removed: stops with cst's own error if it could not register
+    chmod 755 "$tmp/cst"
+    "$tmp/cst" install --check || exit 1
     remove_python_version
     mkdir -p "$bin"
     # Written beside the old one, then renamed over it: a running cst keeps its own copy

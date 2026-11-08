@@ -291,6 +291,31 @@ fn install_sh_removes_the_python_version_before_installing() {
 }
 
 #[test]
+fn install_sh_keeps_the_python_version_when_settings_are_malformed() {
+    let rig = Rig::new();
+    rig.fake_uv(PYTHON_LISTED);
+    publish(&rig.release(), "v9.9.9", &release_binary("x"), None);
+    fs::create_dir_all(rig.settings().parent().expect("parent")).expect("mkdir");
+    fs::write(rig.settings(), "{oops").expect("write settings");
+
+    let out = rig.run(&[]);
+
+    assert_exit(&out, 1);
+    let err = text(&out.stderr);
+    assert!(
+        err.contains("not a valid JSON object; nothing was changed"),
+        "{err}"
+    );
+    assert!(
+        !rig.log("uv.log").contains("uninstall"),
+        "{}",
+        rig.log("uv.log")
+    );
+    assert!(!rig.installed().exists());
+    assert_eq!(fs::read_to_string(rig.settings()).expect("read"), "{oops");
+}
+
+#[test]
 fn install_sh_refuses_old_tmux() {
     let rig = Rig::new();
     rig.fake_tmux("tmux 3.2", false);

@@ -420,6 +420,22 @@ pub fn install(cst: &Path) -> i32 {
     install_at(&locations(), cst, &mut out, &mut err)
 }
 
+/// Checks that `install` would succeed, and writes nothing. Returns the exit code.
+///
+/// It loads and validates settings.json as `install` does and prints the same error, so a
+/// caller can stop before it changes anything else.
+pub fn check(cst: &Path) -> i32 {
+    let Some(cst) = cst.to_str() else {
+        let _ = writeln!(
+            io::stderr().lock(),
+            "error: {}: not a valid UTF-8 path",
+            cst.display()
+        );
+        return 1;
+    };
+    check_at(&locations(), cst, &mut io::stderr().lock())
+}
+
 /// Takes `cst` out of Claude Code's settings.json. Returns the exit code.
 pub fn uninstall() -> i32 {
     let (mut out, mut err) = (io::stdout().lock(), io::stderr().lock());
@@ -433,6 +449,10 @@ pub(crate) fn install_at(
     err: &mut dyn Write,
 ) -> i32 {
     report(try_install(loc, cst, out), err)
+}
+
+pub(crate) fn check_at(loc: &Locations, cst: &str, err: &mut dyn Write) -> i32 {
+    report(try_check(loc, cst), err)
 }
 
 pub(crate) fn uninstall_at(loc: &Locations, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
@@ -478,8 +498,18 @@ fn python_saved_status_line(loc: &Locations, settings: &Value) -> Option<Value> 
     }
 }
 
-fn try_install(loc: &Locations, cst: &str, out: &mut dyn Write) -> Result<(), Failure> {
-    let io_failure = Failure::io(&loc.settings);
+/// What `install` would do to the settings.
+struct Plan {
+    /// The settings after the change.
+    new: Value,
+    /// The user's own status line to save, if one is being replaced.
+    to_save: Option<Value>,
+    /// One line per change, as printed; empty when already installed.
+    changes: Vec<String>,
+}
+
+/// Loads and validates the settings and works out what installing `cst` changes.
+fn plan_install(loc: &Locations, cst: &str) -> Result<Plan, Failure> {
     let settings = load_settings(&loc.settings)?;
     let saved = saved_status_line(loc, &settings)?;
     let (new, to_save) = merge(&settings, cst, saved);
@@ -511,6 +541,40 @@ fn try_install(loc: &Locations, cst: &str, out: &mut dyn Write) -> Result<(), Fa
             "status line: now cst statusline".to_owned()
         });
     }
+    Ok(Plan {
+        new,
+        to_save,
+        changes,
+    })
+}
+
+/// Fails unless `dir`, or the nearest directory above it that exists, can be written to.
+fn check_writable(dir: &Path, report_as: &Path) -> Result<(), Failure> {
+    let existing = dir
+        .ancestors()
+        .find(|d| d.is_dir())
+        .unwrap_or(Path::new("."));
+    let wanted = rustix::fs::Access::WRITE_OK | rustix::fs::Access::EXEC_OK;
+    rustix::fs::access(existing, wanted).map_err(|e| Failure::io(report_as)(e.into()))
+}
+
+fn try_check(loc: &Locations, cst: &str) -> Result<(), Failure> {
+    let plan = plan_install(loc, cst)?;
+    if plan.changes.is_empty() {
+        return Ok(());
+    }
+    let real = real_path(&loc.settings);
+    check_writable(real.parent().unwrap_or(Path::new(".")), &loc.settings)?;
+    check_writable(&loc.state_dir, &loc.settings)
+}
+
+fn try_install(loc: &Locations, cst: &str, out: &mut dyn Write) -> Result<(), Failure> {
+    let io_failure = Failure::io(&loc.settings);
+    let Plan {
+        new,
+        to_save,
+        mut changes,
+    } = plan_install(loc, cst)?;
     if changes.is_empty() {
         let _ = writeln!(out, "already installed");
         return Ok(());
@@ -591,8 +655,8 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::claude::install::{
-        install_at, is_ours, legacy_saved_path, merge, shape_error, split, uninstall_at, unmerge,
-        Locations, BACKUP, EVENTS, HOOK_TIMEOUT,
+        check_at, install_at, is_ours, legacy_saved_path, merge, shape_error, split, uninstall_at,
+        unmerge, Locations, BACKUP, EVENTS, HOOK_TIMEOUT,
     };
 
     const CS: &str = "/opt/bin/cs";
@@ -916,6 +980,106 @@ mod tests {
 
     fn text(bytes: Vec<u8>) -> String {
         String::from_utf8(bytes).expect("utf-8")
+    }
+
+    /// Every file and directory under `root`, with its size, to tell that nothing was written.
+    fn tree(root: &Path) -> Vec<(PathBuf, u64)> {
+        let mut found = Vec::new();
+        let mut todo = vec![root.to_path_buf()];
+        while let Some(dir) = todo.pop() {
+            let Ok(entries) = fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries.map(|e| e.expect("entry")) {
+                let meta = entry.metadata().expect("meta");
+                if meta.is_dir() {
+                    todo.push(entry.path());
+                }
+                found.push((entry.path(), meta.len()));
+            }
+        }
+        found.sort();
+        found
+    }
+
+    impl Rig {
+        fn check(&self) -> (i32, String) {
+            let mut err = Vec::new();
+            let code = check_at(&self.loc(), CS, &mut err);
+            (code, text(err))
+        }
+    }
+
+    #[test]
+    fn check_accepts_valid_settings_and_writes_nothing() {
+        let rig = Rig::new();
+        rig.put_settings(&sample());
+        let before = tree(rig.dir.path());
+        assert_eq!(rig.check(), (0, String::new()));
+        assert_eq!(tree(rig.dir.path()), before);
+    }
+
+    #[test]
+    fn check_accepts_missing_settings_and_creates_no_directory() {
+        let rig = Rig::new();
+        assert_eq!(rig.check(), (0, String::new()));
+        assert!(tree(rig.dir.path()).is_empty());
+    }
+
+    #[test]
+    fn check_refuses_malformed_settings_with_the_error_install_gives() {
+        let cases = ["{oops", "[1]", r#"{"hooks": []}"#, r#"{"statusLine": "x"}"#];
+        for body in cases {
+            let rig = Rig::new();
+            rig.put(&rig.settings(), body);
+            let before = tree(rig.dir.path());
+            let (_, _, install_err) = rig.install(CS);
+            // The failed install wrote nothing either
+            assert_eq!(tree(rig.dir.path()), before, "{body}");
+            let (code, err) = rig.check();
+            assert_eq!((code, err.as_str()), (1, install_err.as_str()), "{body}");
+            assert_eq!(tree(rig.dir.path()), before, "{body}");
+        }
+    }
+
+    #[test]
+    fn check_refuses_a_settings_directory_it_cannot_write() {
+        let rig = Rig::new();
+        rig.put_settings(&sample());
+        let dir = rig.settings().parent().expect("parent").to_path_buf();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o500)).expect("chmod");
+        let (_, _, install_err) = rig.install(CS);
+        let (code, err) = rig.check();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).expect("chmod");
+        assert_eq!(code, 1, "{err}");
+        assert!(err.starts_with("error: "), "{err}");
+        assert!(err.ends_with("nothing was changed\n"), "{err}");
+        assert_eq!(err.split(": ").nth(2), install_err.split(": ").nth(2));
+    }
+
+    #[test]
+    fn check_accepts_an_installed_settings_in_a_directory_it_cannot_write() {
+        let rig = Rig::new();
+        assert_eq!(rig.install(CS).0, 0);
+        let dir = rig.settings().parent().expect("parent").to_path_buf();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o500)).expect("chmod");
+        let result = rig.check();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).expect("chmod");
+        // Install would only say "already installed": nothing to write
+        assert_eq!(result, (0, String::new()));
+    }
+
+    #[test]
+    fn check_refuses_a_state_directory_it_cannot_create() {
+        let rig = Rig::new();
+        rig.put_settings(&sample());
+        let blocked = rig.dir.path().to_path_buf();
+        // The state directory would go in the temp dir itself
+        fs::set_permissions(&blocked, fs::Permissions::from_mode(0o500)).expect("chmod");
+        let (code, err) = rig.check();
+        fs::set_permissions(&blocked, fs::Permissions::from_mode(0o700)).expect("chmod");
+        assert_eq!(code, 1, "{err}");
+        assert!(err.ends_with("nothing was changed\n"), "{err}");
     }
 
     #[test]

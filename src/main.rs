@@ -78,10 +78,12 @@ fn run_step(window: &str, offset: i32) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// Registers this binary with Claude Code; `install.sh` and `cst update` run it.
-fn run_install() -> ExitCode {
+/// Registers this binary with Claude Code; `install.sh` and `cst update` run it. With
+/// `check_only` it only checks that registering would work and changes nothing.
+fn run_install(check_only: bool) -> ExitCode {
     // The hooks must keep working whatever the current directory or the name it was run by
     match std::env::current_exe().and_then(std::fs::canonicalize) {
+        Ok(exe) if check_only => exit_code(install::check(&exe)),
         Ok(exe) => exit_code(install::install(&exe)),
         Err(e) => {
             eprintln!("error: cannot find the cst executable: {e}");
@@ -128,7 +130,8 @@ fn main() -> ExitCode {
         .as_slice()
     {
         // Hidden: users get it through `install.sh` and `cst update`
-        ["install"] => run_install(),
+        ["install"] => run_install(false),
+        ["install", "--check"] => run_install(true),
         ["uninstall"] => exit_code(install::uninstall()),
         ["update"] => exit_code(update::update()),
         // Hidden: tmux runs them, in each session window's side pane, in the first window and

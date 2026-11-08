@@ -7,7 +7,7 @@ use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 
-use cst::claude::install::{is_ours, EVENTS};
+use cst::claude::install::{is_ours, BACKUP, EVENTS};
 use serde_json::{json, Value};
 use support::{command, env, start, TestEnv};
 
@@ -252,4 +252,40 @@ fn malformed_settings_change_nothing() {
             .join("settings.json.before-claude-sessions")
             .exists());
     }
+}
+
+#[test]
+fn install_check_writes_nothing_and_exits_0_on_valid_settings() {
+    let env = env();
+    let sample = json!({"model": "opus", "hooks": {"Stop": [foreign()]}});
+    fs::write(settings_path(&env), sample.to_string()).expect("write settings");
+
+    let out = run(&env, &["install", "--check"], None);
+
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "");
+    assert_eq!(read_json(&settings_path(&env)), sample);
+    assert!(!saved_path(&env).exists());
+    assert!(!env.claude_dir().join(BACKUP).exists());
+}
+
+#[test]
+fn install_check_refuses_malformed_settings_like_install() {
+    let env = env();
+    fs::write(settings_path(&env), "{oops").expect("write settings");
+
+    let check = run(&env, &["install", "--check"], None);
+    let install = run(&env, &["install"], None);
+
+    assert_eq!(check.status.code(), Some(1));
+    assert_eq!(stderr(&check), stderr(&install));
+    assert!(
+        stderr(&check).contains("not a valid JSON object; nothing was changed"),
+        "{}",
+        stderr(&check)
+    );
+    assert_eq!(
+        fs::read_to_string(settings_path(&env)).expect("read"),
+        "{oops"
+    );
 }
