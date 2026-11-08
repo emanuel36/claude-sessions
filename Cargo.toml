@@ -1,0 +1,41 @@
+[package]
+name = "cst"
+version = "2.0.0"
+edition = "2024"
+rust-version = "1.85"
+description = "A sidebar for Claude Code sessions in tmux"
+license = "Apache-2.0"
+publish = false
+
+[lib]
+name = "cst"
+path = "src/lib.rs"
+
+[[bin]]
+name = "cst"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
+crossterm = "0.28"
+inotify = "0.11"
+ratatui = "0.29"
+rustix = { version = "1", features = ["fs", "process"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "0.10"
+unicode-width = "0.2"
+
+[dev-dependencies]
+insta = "1"
+proptest = "1"
+tempfile = "3"
+uuid = { version = "1", features = ["v4"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+opt-level = 3
