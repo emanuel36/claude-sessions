@@ -211,6 +211,7 @@ def test_cost_events_carry_lines(monkeypatch, capsys):
     cs_statusline(monkeypatch, capsys, json.dumps(data).encode())
     events = [e for e in journal.read_day(datetime.date.today()) if "cost" in e]
     assert [(e["id"], e["cost"], e["added"], e["removed"]) for e in events] == [("s1", 1.0, 10, 2)]
+    assert events[0]["model"] == "Opus"
 
 
 def test_statusline_without_a_valid_session_still_saves_the_limits(monkeypatch, capsys):

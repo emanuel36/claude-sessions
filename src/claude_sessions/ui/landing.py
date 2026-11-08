@@ -56,7 +56,10 @@ def screen(picker, searching, opened, stats, now, width, height):
     """
     wide = width - sidebar.PANEL_WIDTH - GAP >= new_panel.WIDTH
     panel = sidebar.panel_lines(stats, now) if wide else []
-    # The wide statistics also need the height: cut short, they would lose whole blocks
+    # The wide statistics also need the height: cut short, they would lose whole blocks, so
+    # the spend by model, the last, goes first
+    if len(panel) > height - 2:
+        panel = sidebar.panel_lines(stats, now, models=False) if wide else []
     if wide and len(panel) <= height - 2:
         right, right_width = panel, sidebar.PANEL_WIDTH
     elif width - sidebar.WIDTH - GAP >= new_panel.WIDTH:

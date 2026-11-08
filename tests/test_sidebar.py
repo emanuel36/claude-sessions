@@ -94,7 +94,8 @@ def test_the_panel_adds_spend_by_folder_and_the_week():
     by = [("claude-sessions", 18.4), ("api", 9.3), ("dotfiles", 2.1), ("notes", 2.0), ("x", 1.0)]
     hours = [0.0] * 24
     hours[9] = 3600
-    totals = usage.Totals(by_project=by, added=8940, removed=2115, sessions=38)
+    models = [("Opus 5.5", 20.0), ("Sonnet 5.5", 4.0)]
+    totals = usage.Totals(by_project=by, by_model=models, added=8940, removed=2115, sessions=38)
     stats = sidebar.Stats(LIMITS, 9.59, WEEK, day, totals, hours)
     lines = [ln.plain.rstrip() for ln in sidebar.panel_lines(stats, NOW)]
     assert all(len(ln.plain) == sidebar.PANEL_WIDTH for ln in sidebar.panel_lines(stats, NOW))
@@ -114,6 +115,9 @@ def test_the_panel_adds_spend_by_folder_and_the_week():
     assert lines[18].endswith("▄ $8.00")
     assert lines[23].startswith("   ⎿  claude-sessions  ") and lines[23].endswith("$18.40")
     assert not any(" x " in ln for ln in lines)
+    assert lines[-3] == " • By model 7d"
+    assert lines[-2].startswith("   ⎿  Opus 5.5         ") and lines[-2].endswith("$20.00")
+    assert lines[-1].startswith("      Sonnet 5.5       ") and lines[-1].endswith("$4.00")
     # No work recorded today: no hours under Today
     stats.hours = [0.0] * 24
     assert len(sidebar.panel_lines(stats, NOW)) == len(lines) - 2

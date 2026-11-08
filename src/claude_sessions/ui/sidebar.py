@@ -34,9 +34,9 @@ PANEL_WIDTH = 56
 PANEL_CONTENT = PANEL_WIDTH - 2
 # From this many columns the chart names days with three letters and the quota says "resets in"
 WIDE_CHART = 40
-# How many folders the week's spend by folder lists, and the cells their names take
-TOP_FOLDERS = 4
-FOLDER_NAME = 16
+# How many names the spend by folder and by model list, and the cells the names take
+TOP_RANKED = 4
+RANKED_NAME = 16
 # `⏺` shows as an emoji button in some fonts
 BULLET = "•"
 # Claude Code's spinner, played forwards and back, one frame per redraw
@@ -334,18 +334,24 @@ def chart_lines(week, content=CONTENT):
     return lines
 
 
-def folders_lines(by_project, content=CONTENT):
-    """By folder 7d: the folders that cost most this week, with a bar scaled to the first."""
-    shown = by_project[:TOP_FOLDERS]
+def ranked_lines(title, ranked, content=CONTENT):
+    """A block of what cost most this week, by name, with a bar scaled to the first.
+
+    Args:
+        title: The block's name.
+        ranked: `(name, dollars)` pairs, most expensive first; the first `TOP_RANKED` show.
+        content: Columns available.
+    """
+    shown = ranked[:TOP_RANKED]
     if not shown:
         return []
     top = shown[0][1]
     values = [words.money(v) for _, v in shown]
     value_cells = max(len(v) for v in values)
-    lines = [_block("By folder 7d", content=content)]
+    lines = [_block(title, content=content)]
     for i, ((name, dollars), value) in enumerate(zip(shown, values, strict=True)):
         line = _elbow(first=not i)
-        line.append(words.fit(name, FOLDER_NAME).ljust(FOLDER_NAME + 1), style=STYLES["ink"])
+        line.append(words.fit(name, RANKED_NAME).ljust(RANKED_NAME + 1), style=STYLES["ink"])
         cells = content - (line.cell_len - 1) - 1 - value_cells
         line.append(hbar(dollars, top, cells).ljust(cells + 1), style=STYLES["claude"])
         line.append(value.rjust(value_cells), style=STYLES["inactive"])
@@ -422,10 +428,10 @@ def _spaced(blocks):
     return lines
 
 
-def panel_lines(stats, now, content=PANEL_CONTENT):
+def panel_lines(stats, now, content=PANEL_CONTENT, models=True):
     """The landing page's wide statistics, a blank line between blocks: Today with the hours
     it worked, the lines changed today and over 7 days, then the sidebar's blocks with longer
-    bars and the week's spend by folder."""
+    bars and the week's spend by folder and, with `models`, by model."""
     blocks = []
     totals = stats.totals
     if stats.day is not None:
@@ -435,7 +441,9 @@ def panel_lines(stats, now, content=PANEL_CONTENT):
     blocks.append(usage_lines(stats.limits, now, content))
     blocks.append(chart_lines(stats.week, content))
     if totals is not None:
-        blocks.append(folders_lines(totals.by_project, content))
+        blocks.append(ranked_lines("By folder 7d", totals.by_project, content))
+        if models:
+            blocks.append(ranked_lines("By model 7d", totals.by_model, content))
     return [_finish(line, content) for line in _spaced(blocks)]
 
 

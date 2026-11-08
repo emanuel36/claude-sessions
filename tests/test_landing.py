@@ -69,3 +69,14 @@ def test_a_short_screen_falls_back_to_the_sidebar_stats():
 def test_a_footer_too_long_is_cut_with_an_ellipsis():
     assert new_panel.keys_line(landing.FOOTER, 20).plain == " ↑↓ move · → sessio…"
     assert new_panel.keys_line(new_panel.FOOTER, 48).plain.endswith("· Esc")
+
+
+def test_a_screen_short_of_room_drops_the_spend_by_model_first():
+    totals = usage.Totals(by_project=[("api", 2.0)], by_model=[("Opus", 2.0), ("Haiku", 1.0)])
+    stats = sidebar.Stats(LIMITS, 9.5, [], usage.Day(sessions=2), totals)
+    full = len(sidebar.panel_lines(stats, NOW))
+    lines = plain(landing.screen(picker(), False, 2, stats, NOW, 160, full + 1))
+    assert not any("By model" in line for line in lines)
+    assert any("By folder" in line for line in lines)
+    roomy = plain(landing.screen(picker(), False, 2, stats, NOW, 160, full + 2))
+    assert any("By model" in line for line in roomy)

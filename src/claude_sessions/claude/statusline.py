@@ -158,6 +158,7 @@ def record_usage(data, now):
                         "cost": cost,
                         "added": usage["added"],
                         "removed": usage["removed"],
+                        "model": usage["model"],
                     }
                 )
 

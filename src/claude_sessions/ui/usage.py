@@ -32,6 +32,7 @@ class Totals:
     today: float = 0.0
     week: float = 0.0
     by_project: list[tuple[str, float]] = field(default_factory=list)
+    by_model: list[tuple[str, float]] = field(default_factory=list)
     added: int = 0
     removed: int = 0
     sessions: int = 0
@@ -75,7 +76,8 @@ class Reader:
             # From the same per-day sums as the chart, so the today line and today's column agree
             today=daily[-1][1],
             week=sum(t["cost"] for t in week.values()),
-            by_project=sorted(projects.items(), key=lambda item: -item[1]),
+            by_project=_ranked(projects),
+            by_model=_ranked(journal.model_costs(events, days[1])),
             added=sum(t["added"] for t in week.values()),
             removed=sum(t["removed"] for t in week.values()),
             sessions=sum(1 for t in week.values() if any(t.values())),
@@ -109,6 +111,11 @@ class Reader:
             return Day()
         events = {d: r.events for d, r in self.journals.items()}
         return day_summary(events, today, now)
+
+
+def _ranked(costs):
+    """`(name, dollars)` pairs, most expensive first."""
+    return sorted(costs.items(), key=lambda item: -item[1])
 
 
 def working_hours(events, first_day, now):
