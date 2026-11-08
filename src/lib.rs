@@ -8,3 +8,4 @@ pub mod journal;
 pub mod paths;
 pub mod state;
 pub mod store;
+pub mod term;
