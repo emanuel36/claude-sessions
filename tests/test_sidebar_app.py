@@ -2,7 +2,7 @@ import asyncio
 
 from claude_sessions.core import state
 from claude_sessions.term import tmux
-from claude_sessions.ui import sidebar, sidebar_app
+from claude_sessions.ui import sidebar, sidebar_app, window_app
 from claude_sessions.ui.sidebar import Entry
 
 NOW = 1_700_000_000.0
@@ -60,7 +60,7 @@ def test_click_selects_that_window(monkeypatch):
         app = make_app()
         async with app.run_test(size=(sidebar.WIDTH, 30)) as pilot:
             await pilot.pause()
-            await pilot.click("#column", offset=(5, 11))
+            await pilot.click("#text", offset=(5, 11))
             await pilot.pause()
 
     asyncio.run(go())
@@ -83,7 +83,7 @@ def test_last_pane_left_kills_its_window(monkeypatch):
 def test_failed_load_keeps_the_last_lines_and_logs_once(monkeypatch):
     stub_tmux(monkeypatch)
     logged, fail = [], []
-    monkeypatch.setattr(sidebar_app.paths, "log_error", lambda: logged.append(1))
+    monkeypatch.setattr(window_app.paths, "log_error", lambda: logged.append(1))
 
     def load(now):
         if fail:
@@ -106,7 +106,7 @@ def test_failed_load_keeps_the_last_lines_and_logs_once(monkeypatch):
 def test_failed_render_keeps_the_app_alive_and_logs_once(monkeypatch):
     stub_tmux(monkeypatch)
     logged = []
-    monkeypatch.setattr(sidebar_app.paths, "log_error", lambda: logged.append(1))
+    monkeypatch.setattr(window_app.paths, "log_error", lambda: logged.append(1))
 
     def boom(now):
         raise ValueError("bad entry")
@@ -127,7 +127,7 @@ def test_failed_render_keeps_the_app_alive_and_logs_once(monkeypatch):
 
 def test_failed_load_redraws_the_last_data_with_the_current_time(monkeypatch):
     stub_tmux(monkeypatch)
-    monkeypatch.setattr(sidebar_app.paths, "log_error", lambda: None)
+    monkeypatch.setattr(window_app.paths, "log_error", lambda: None)
     drawn, fail = [], []
 
     def load(now):
@@ -151,7 +151,7 @@ def test_failed_load_redraws_the_last_data_with_the_current_time(monkeypatch):
 def test_load_and_draw_errors_are_logged_separately(monkeypatch):
     stub_tmux(monkeypatch)
     logged = []
-    monkeypatch.setattr(sidebar_app.paths, "log_error", lambda: logged.append(1))
+    monkeypatch.setattr(window_app.paths, "log_error", lambda: logged.append(1))
 
     def boom(now):
         raise ValueError("x")
