@@ -42,7 +42,9 @@ def load(now):
     history = files.load_history()
     totals = _reader.totals(history, now)
     live = hook.live_sessions(now)
-    stats = sidebar.Stats(statusline.load_limits(now), totals.today, totals.days, _reader.day(now))
+    limits = statusline.load_limits(now)
+    day, hours = _reader.day(now), _reader.hours(now)
+    stats = sidebar.Stats(limits, totals.today, totals.days, day, totals, hours)
     return Page(
         # A running `claude -p` is no session to resume either, though it is not counted open
         folders.load(history, totals.per_session, {r["id"] for r in live}),

@@ -44,38 +44,94 @@ def test_column_matches_the_spec_text():
     assert body(lines)[:20] == [
         "",
         " " * 9 + " ▐▛███▜▌", " " * 9 + "▝▜█████▛▘", " " * 9 + "  ▘▘ ▝▝", "",
-        "⏺ web                    3m", ELBOW + "approve · $3.10 · 40m",
+        "• web                    3m", ELBOW + "approve · $3.10 · 40m",
         "",
         spin + " vehicle.k265", ELBOW + "working · $0.90 · 1h12",
         "",
-        "⏺ api                    6m", ELBOW + "running · $5.42 · 2h05",
+        "• api                    6m", ELBOW + "running · $5.42 · 2h05",
         "",
-        "⏺ docs", ELBOW + "done · $0.12 · 15m",
+        "• docs", ELBOW + "done · $0.12 · 15m",
         "",
-        "⏺ notes", ELBOW + "$0.05 · 3h00",
+        "• notes", ELBOW + "$0.05 · 3h00",
         "",
     ]  # fmt: skip
-    assert body(lines)[-9:] == [
+    assert body(lines)[-17:] == [
         "",
-        "⏺ Today               $9.59",
+        "• Today               $9.59",
         ELBOW + "+1,376 −58 lines",
         "     4 sessions · 12m wait",
-        "⏺ Usage",
-        ELBOW + "5h █████░░░  58% 16:40",
-        "     7d ██░░░░░░  31% Fri",
-        "⏺ Spend 7d           $24.00",
-        ELBOW + " ▂▄▆█▁▃  We → Tu",
+        "",
+        "• Usage",
+        ELBOW + "5h ▄▄▄▄▄▄▄▄  58% 2h33",
+        "     7d ▄▄▄▄▄▄▄▄  31% 2d18h",
+        "",
+        "• Spend 7d           $24.00",
+        ELBOW + "We                $0.0",
+        "     Th ▄▄▄▄           $2.0",
+        "     Fr ▄▄▄▄▄▄▄        $4.0",
+        "     Sa ▄▄▄▄▄▄▄▄▄▄     $6.0",
+        "     Su ▄▄▄▄▄▄▄▄▄▄▄▄▄▄ $8.0",
+        "     Mo ▄▄             $1.0",
+        "     Tu ▄▄▄▄▄          $3.0",
     ]  # fmt: skip
+    # Today's row is bold
+    assert any(s.style == words.STYLES["strong"] for s in lines[-1].spans)
 
 
-def test_a_week_with_no_spend_draws_an_empty_strip():
+def test_a_week_with_no_spend_draws_empty_rows():
     empty = sidebar.Stats({}, 0.0, [(d, 0.0) for d, _ in WEEK])
-    assert body(sidebar.stats_lines(empty, NOW))[-1] == ELBOW + " " * 7 + "  We → Tu"
+    assert body(sidebar.stats_lines(empty, NOW))[-1] == "     Tu                $0.0"
+
+
+def test_hbar_draws_at_least_one_cell_for_any_spend():
+    assert sidebar.hbar(1, 2, 4) == "▄▄"
+    assert sidebar.hbar(0.001, 100, 4) == "▄"
+    assert sidebar.hbar(0, 0, 4) == ""
+
+
+def test_the_panel_adds_spend_by_folder_and_the_week():
+    day = usage.Day(added=1376, removed=58, sessions=4, waited=720)
+    by = [("claude-sessions", 18.4), ("api", 9.3), ("dotfiles", 2.1), ("notes", 2.0), ("x", 1.0)]
+    hours = [0.0] * 24
+    hours[9] = 3600
+    totals = usage.Totals(by_project=by, added=8940, removed=2115, sessions=38)
+    stats = sidebar.Stats(LIMITS, 9.59, WEEK, day, totals, hours)
+    lines = [ln.plain.rstrip() for ln in sidebar.panel_lines(stats, NOW)]
+    assert all(len(ln.plain) == sidebar.PANEL_WIDTH for ln in sidebar.panel_lines(stats, NOW))
+    assert lines[:8] == [
+        " • Today                                          $9.59",
+        "   ⎿  4 sessions · 12m wait",
+        "      " + "·" * 9 + "█" + "·" * 14,
+        "      0     6     12    18",
+        "",
+        " • Lines",
+        "   ⎿  today  +1,376 −58",
+        "      7d     +8,940 −2,115 · 38 sessions",
+    ]
+    assert lines[10].endswith("58% resets in 2h33")
+    assert lines[10].index("%") == lines[11].index("%")
+    assert lines[14] == "   ⎿  Wed                                         $0.00"
+    assert lines[18].endswith("▄ $8.00")
+    assert lines[23].startswith("   ⎿  claude-sessions  ") and lines[23].endswith("$18.40")
+    assert not any(" x " in ln for ln in lines)
+    # No work recorded today: no hours under Today
+    stats.hours = [0.0] * 24
+    assert len(sidebar.panel_lines(stats, NOW)) == len(lines) - 2
+
+
+def test_active_hours_shade_each_hour_by_the_busiest():
+    hours = [0.0] * 24
+    hours[9], hours[10], hours[14] = 3600, 1800, 100
+    # Wider than the sidebar: only the landing page's panel draws it
+    lines = [ln.plain[1:].rstrip() for ln in sidebar.hours_lines(hours)]
+    assert lines[0] == "     " + "·" * 9 + "█▒···░" + "·" * 9
+    assert lines[1] == "     0     6     12    18"
+    assert sidebar.hours_lines([0.0] * 24) == []
 
 
 def test_name_uses_the_room_the_waiting_time_leaves():
     long = E("@1", "claude-sessions-and-more-of-it", "permission", NOW - 180, 1.0, 60)
-    assert body(sidebar.entry_lines(long, False, NOW))[0] == "⏺ claude-sessions-and-m… 3m"
+    assert body(sidebar.entry_lines(long, False, NOW))[0] == "• claude-sessions-and-m… 3m"
     calm = E("@1", "claude-sessions-and-more-of-it", "working", NOW, 1.0, 60)
     assert body(sidebar.entry_lines(calm, False, NOW))[0][2:] == "claude-sessions-and-more…"
 
@@ -103,16 +159,16 @@ def test_the_bullet_has_the_status_colour_and_spins_while_working():
     }  # fmt: skip
     for status, colour in colours.items():
         first = sidebar.entry_lines(entry(status, 0), False, NOW)[0]
-        assert first.plain[1] == "⏺" and first.spans[0].style == words.STYLES[colour]
+        assert first.plain[1] == "•" and first.spans[0].style == words.STYLES[colour]
     working = entry("working", 0)
     marks = {sidebar.entry_lines(working, False, NOW + t / 8)[0].plain[1] for t in range(6)}
-    assert len(marks) == 6 and "⏺" not in marks
+    assert len(marks) == 6 and "•" not in marks
 
 
 def test_waiting_time_shows_only_for_timed_statuses_from_one_minute():
     assert "10m" not in sidebar.entry_lines(entry("done", waited=600), False, NOW)[0].plain
     fresh = sidebar.entry_lines(entry("permission", waited=30), False, NOW)[0].plain
-    assert fresh.strip() == "⏺ web"
+    assert fresh.strip() == "• web"
 
 
 def test_unknown_usage_leaves_parts_out():
@@ -123,14 +179,14 @@ def test_unknown_usage_leaves_parts_out():
 
 
 def test_short_terminal_keeps_stats_and_cuts_sessions():
-    lines = sidebar.column(ENTRIES, "@3", STATS, NOW, height=14)
-    assert len(lines) == 14 and "Tu" in lines[-1].plain and "web" in lines[5].plain
+    lines = sidebar.column(ENTRIES, "@3", STATS, NOW, height=20)
+    assert len(lines) == 20 and "Tu" in lines[-1].plain and "web" in lines[5].plain
     assert not any("vehicle" in ln.plain for ln in lines)
 
 
 def test_no_limits_leaves_quota_out():
     lines = body(sidebar.column(ENTRIES, "@3", sidebar.Stats({}, 0.0, WEEK), NOW, height=30))
-    assert "⏺ Spend 7d           $24.00" in lines and "⏺ Usage" not in lines
+    assert "• Spend 7d           $24.00" in lines and "• Usage" not in lines
 
 
 def test_entry_at_maps_rows_to_entries():
@@ -147,10 +203,10 @@ def test_entry_at_maps_rows_to_entries():
 
 
 def test_entry_at_ignores_entries_cut_by_a_short_terminal():
-    assert sidebar.entry_at(ENTRIES, 5, 14, STATS).name == "web"
-    assert sidebar.entry_at(ENTRIES, 8, 14, STATS) is None  # the 2nd entry, not drawn
+    assert sidebar.entry_at(ENTRIES, 5, 20, STATS).name == "web"
+    assert sidebar.entry_at(ENTRIES, 8, 20, STATS) is None  # the 2nd entry, not drawn
     no_quota = sidebar.Stats({}, 0.0, WEEK)
-    assert sidebar.entry_at(ENTRIES, 8, 14, no_quota).name == "vehicle.k265"  # more room
+    assert sidebar.entry_at(ENTRIES, 8, 20, no_quota).name == "vehicle.k265"  # more room
 
 
 RUNS = [sidebar.Run("daily-recap", NOW - 150), sidebar.Run("trending-repos", NOW - 70)]
@@ -160,7 +216,7 @@ def test_background_runs_show_under_the_sessions():
     lines = sidebar.column(ENTRIES[:2], "@1", STATS, NOW, height=30, runs=RUNS)
     assert body(lines)[10:14] == [
         "",
-        "⏺ Background",
+        "• Background",
         (ELBOW + "daily-recap").ljust(25) + "2m",
         "     trending-repos".ljust(25) + "1m",
     ]
@@ -173,8 +229,8 @@ def test_no_runs_no_background_section():
 
 
 def test_short_terminal_drops_runs_before_sessions():
-    lines = sidebar.column(ENTRIES[:2], "@1", STATS, NOW, 18, RUNS)
-    assert len(lines) == 18 and any("vehicle.k265" in ln.plain for ln in lines)
+    lines = sidebar.column(ENTRIES[:2], "@1", STATS, NOW, 24, RUNS)
+    assert len(lines) == 24 and any("vehicle.k265" in ln.plain for ln in lines)
     assert not any("daily-recap" in ln.plain for ln in lines)
 
 
@@ -182,8 +238,8 @@ def test_today_goes_first_when_the_sessions_need_its_room():
     day = usage.Day(sessions=2)
     stats = sidebar.Stats(LIMITS, 1.0, WEEK, day)
     roomy = body(sidebar.column(ENTRIES[:2], "@1", stats, NOW, height=40))
-    assert "⏺ Today               $1.00" in roomy and "     2 sessions · 0m wait" in roomy
-    tight = body(sidebar.column(ENTRIES[:2], "@1", stats, NOW, height=17))
+    assert "• Today               $1.00" in roomy and "     2 sessions · 0m wait" in roomy
+    tight = body(sidebar.column(ENTRIES[:2], "@1", stats, NOW, height=23))
     assert "Today" not in "".join(tight) and any("vehicle.k265" in x for x in tight)
     assert "Today" not in "".join(body(sidebar.column(ENTRIES[:2], "@1", STATS, NOW, height=40)))
 
@@ -207,10 +263,12 @@ def test_an_unknown_status_is_listed_with_the_idle_sessions():
     assert rows == [("first", odd), ("second", odd)]
 
 
-def test_a_reset_within_a_day_shows_its_time_even_tomorrow():
-    tonight = time.mktime((2026, 11, 3, 23, 30, 0, 0, 0, -1))
-    assert sidebar._reset(tonight + 90 * 60, tonight) == "01:00"
-    assert sidebar._reset(tonight + 3 * 86400, tonight) == "Fri"
+def test_a_reset_shows_the_time_left():
+    assert words.remaining(40 * 60) == "40m"
+    assert words.remaining(90 * 60) == "1h30"
+    assert words.remaining(3 * 86400 + 4 * 3600 + 59) == "3d4h"
+    assert words.remaining(86400 + 59) == "1d"
+    assert words.remaining(-5) == "0m"
 
 
 def test_a_long_model_fits_alone_on_an_empty_line():

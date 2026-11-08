@@ -22,12 +22,15 @@ and today's spend.
 `cst` opens on it, and you come back to it when you close the last session. Alt+↑ / Alt+↓
 step over it.
 
-- **Folders:** on the left, as wide as the terminal allows so session titles show whole: the
-  folders you ran Claude in, last used first, each with its number of sessions and its spend
-  over 7 days. → opens a folder's sessions, 5 at a time and newest first, and ← closes them;
-  moving past the last one shown scrolls to older ones.
-- **Statistics:** on the right, as in the sidebar: today's spend, activity and waiting, your
-  5-hour and 7-day quota, and the last 7 days' spend.
+- **Folders:** on the left: the folders you ran Claude in, last used first, each with when it
+  was last used, its number of sessions and its spend over 7 days. → opens a folder's
+  sessions, 5 at a time and newest first, and ← closes them; moving past the last one shown
+  scrolls to older ones. A ▼ on the last line shows the list goes on below.
+- **Statistics:** right after the folders, the two centred together: today's spend, sessions,
+  waiting and the hours your sessions worked; the lines changed today and over 7 days; your
+  5-hour and 7-day quota with the time left until each resets; the spend of each of the last
+  7 days; and the 4 folders that cost most. A small or short terminal shows the sidebar's
+  statistics.
 
 | Keys | Does |
 |---|---|
@@ -56,8 +59,8 @@ what you type goes to Claude.
   recap, it shows under the sessions with its folder's name and how long it has been running.
   It leaves the list when it ends and never takes over a session's tab.
 - **Statistics at the bottom:** Today (spend, lines changed, sessions and time waiting on
-  Claude), Usage (5-hour and 7-day quota with when each resets) and Spend 7d (a block per
-  day). Today steps aside when the sessions need its room.
+  Claude), Usage (5-hour and 7-day quota with the time left until each resets) and Spend 7d
+  (a bar and the spend for each day). Today steps aside when the sessions need its room.
 - **Mouse:** click a session to go to it.
 
 ## Statuses

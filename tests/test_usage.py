@@ -67,3 +67,33 @@ def test_day_summary_adds_up_lines_sessions_and_waiting():
     assert day.waited == 600 + 1800
     # Lines count only what the sessions grew by today; an ended session is not one of today's
     assert (day.added, day.removed, day.sessions) == (30, 5, 2)
+
+
+def test_working_hours_split_spans_across_hours():
+    day = datetime.date(2026, 11, 3)
+    nine = time.mktime((2026, 11, 3, 9, 30, 0, 0, 0, -1))
+    events = {
+        day: [
+            {"t": nine, "id": "a", "status": "working"},
+            {"t": nine + 3600, "id": "a", "status": "done"},
+            {"t": nine, "id": "b", "status": "permission"},
+            {"t": nine + 600, "id": "b", "status": "working"},
+        ]
+    }
+    hours = usage.working_hours(events, day, nine + 1200)
+    # a: 9:30-10:30; b: 9:40 until now, 9:50
+    assert hours[9] == 1800 + 600 and hours[10] == 1800 and sum(hours) == 4200
+    # A session left working with no end counts two hours at most
+    assert sum(usage.working_hours(events, day, nine + 86400)) == 3600 + usage.MAX_OPEN
+
+
+def test_working_hours_count_work_from_yesterday_from_midnight():
+    today = datetime.date(2026, 11, 3)
+    midnight = time.mktime(today.timetuple())
+    events = {
+        today - datetime.timedelta(days=1): [{"t": midnight - 600, "id": "a", "status": "working"}],
+        today: [{"t": midnight + 5 * 3600, "id": "a", "status": "done"}],
+    }
+    hours = usage.working_hours(events, today, midnight + 6 * 3600)
+    # A closed span counts whole, however long
+    assert hours[:5] == [3600.0] * 5 and sum(hours) == 5 * 3600

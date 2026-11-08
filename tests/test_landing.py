@@ -38,15 +38,34 @@ def test_screen_has_the_list_on_the_left_and_the_stats_on_the_right():
     p.folders = [Folder("/w/api", "api", NOW - 60, 3, 12.5, [Session("s1", long_title, NOW, 2.0)])]
     p.key("right")
     width = 140
-    lines = plain(landing.screen(p, False, 2, STATS, NOW, width, 30))
+    # The list and the statistics together, centred
+    margin = (width - landing.LIST_MAX - landing.GAP - sidebar.PANEL_WIDTH) // 2
+    lines = [line[margin:] for line in plain(landing.screen(p, False, 2, STATS, NOW, width, 30))]
     assert len(lines) == 30 and lines[4].startswith(" ❯ / to search")
     assert lines[6].startswith(" ▾ api") and lines[7].startswith("   3 sessions · $12.50 7d")
-    assert long_title in lines[8]
-    stats_at = width - sidebar.WIDTH
-    assert lines[1][stats_at:].strip() == "⏺ Today               $9.50"
-    assert lines[-1].strip().startswith("↑↓ move")
+    # The list stops at its widest, the statistics right after it
+    assert len(lines[8]) == landing.LIST_MAX and "a session title long enough" in lines[8]
+    stats_at = landing.LIST_MAX + landing.GAP
+    assert lines[0][stats_at:].strip().startswith("• Today")
+    assert lines[-1].startswith(" ↑↓ move")
 
 
 def test_a_narrow_screen_shows_the_list_alone():
     lines = plain(landing.screen(picker(), False, 2, STATS, NOW, 60, 30))
     assert not any("Today" in line for line in lines) and lines[6].startswith(" ▸ api")
+
+
+def test_a_middling_screen_falls_back_to_the_sidebar_stats():
+    width = new_panel.WIDTH + landing.GAP + sidebar.WIDTH
+    lines = plain(landing.screen(picker(), False, 2, STATS, NOW, width, 30))
+    assert lines[1][new_panel.WIDTH + landing.GAP :].strip() == "• Today               $9.50"
+
+
+def test_a_short_screen_falls_back_to_the_sidebar_stats():
+    lines = plain(landing.screen(picker(), False, 2, STATS, NOW, 160, 8))
+    assert lines[1].endswith("• Today               $9.50")
+
+
+def test_a_footer_too_long_is_cut_with_an_ellipsis():
+    assert new_panel.keys_line(landing.FOOTER, 20).plain == " ↑↓ move · → sessio…"
+    assert new_panel.keys_line(new_panel.FOOTER, 48).plain.endswith("· Esc")

@@ -1,10 +1,9 @@
 """The sidebar column: mascot, sessions by urgency, background runs, and the statistics.
 
-It reads like Claude Code's own transcript: each session is a `⏺` line with a `⎿` line under it.
+It reads like Claude Code's own transcript: each session is a `•` line with a `⎿` line under it.
 """
 
-import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from rich.style import Style
 from rich.text import Text
@@ -20,15 +19,26 @@ CONTENT = 27
 ELBOW = "  ⎿  "
 INDENT = " " * len(ELBOW)
 DETAIL_ROOM = CONTENT - len(ELBOW)
-# Quota bars leave room for the label, the percent and the reset time: `5h ████ 58% 19:00`
-BAR_CELLS = DETAIL_ROOM - 3 - 5 - 6
 # A blank line, the mascot (3) and a blank line: the mascot level with Claude Code's own
 HEAD = 5
 # Lines of one session entry, not counting the blank line between entries
 ENTRY = 2
 DAY_NAMES = ("Mo", "Tu", "We", "Th", "Fr", "Sa", "Su")
-BLOCKS = " ▁▂▃▄▅▆▇█"
-BULLET = "⏺"
+# A bar cell: half height, so stacked bars have a gap between them
+BAR = "▄"
+# Active hours: a cell per hour, from no work to the busiest hour, and the hours ruled under it
+HEAT = "·░▒▓█"
+HOURS_RULER = "0     6     12    18"
+# The landing page's wide statistics: their width, and the room inside the padding
+PANEL_WIDTH = 56
+PANEL_CONTENT = PANEL_WIDTH - 2
+# From this many columns the chart names days with three letters and the quota says "resets in"
+WIDE_CHART = 40
+# How many folders the week's spend by folder lists, and the cells their names take
+TOP_FOLDERS = 4
+FOLDER_NAME = 16
+# `⏺` shows as an emoji button in some fonts
+BULLET = "•"
 # Claude Code's spinner, played forwards and back, one frame per redraw
 SPINNER = "·✢✳✶✻✽✻✶✳✢"
 BOLD = Style(bold=True)
@@ -77,6 +87,10 @@ class Stats:
     week: list
     # What today's journal adds up to (a `usage.Day`); None leaves the TODAY block out
     day: object = None
+    # The week's `usage.Totals`, for the landing page's spend by folder and lines blocks
+    totals: object = None
+    # Seconds sessions worked in each hour of today, for the landing page's Today block
+    hours: list = field(default_factory=list)
 
 
 @dataclass
@@ -120,26 +134,28 @@ def _line(base=None):
     return Text(" ", style=base or "")
 
 
-def _finish(text):
+def _finish(text, content=CONTENT):
     """Pads a line to the full width, so a background reaches both edges."""
-    text.pad_right(WIDTH - text.cell_len)
+    text.pad_right(content + 2 - text.cell_len)
     return text
 
 
-def _right(line, value, style):
+def _right(line, value, style, content=CONTENT):
     """Ends a line with `value` against the right edge."""
-    line.append(" " * (CONTENT - (line.cell_len - 1) - len(value)))
+    line.append(" " * (content - (line.cell_len - 1) - len(value)))
     line.append(value, style=style)
 
 
-def _bullet(mark, mark_style, title, title_style, value="", value_style=None, base=None):
-    """A `⏺` line: the mark, a title cut to fit, and a value on the right."""
+def _bullet(
+    mark, mark_style, title, title_style, value="", value_style=None, base=None, content=CONTENT
+):
+    """A `•` line: the mark, a title cut to fit, and a value on the right."""
     line = _line(base)
     line.append(mark + " ", style=mark_style)
-    room = CONTENT - 2 - (len(value) + 1 if value else 0)
+    room = content - 2 - (len(value) + 1 if value else 0)
     line.append(words.fit(title, room), style=title_style)
     if value:
-        _right(line, value, value_style)
+        _right(line, value, value_style, content)
     return line
 
 
@@ -223,34 +239,54 @@ def runs_lines(runs, now, room):
     return [_finish(line) for line in lines]
 
 
-def _block(title, value=""):
-    """A statistics block's `⏺` line: its name, and its total on the right."""
-    return _bullet(BULLET, STYLES["claude"], title, STYLES["strong"], value, STYLES["strong"])
+def _block(title, value="", content=CONTENT):
+    """A statistics block's `•` line: its name, and its total on the right."""
+    strong = STYLES["strong"]
+    return _bullet(BULLET, STYLES["claude"], title, strong, value, strong, content=content)
 
 
-def _reset(resets_at, now):
-    """When a quota resets, in five cells at most: the time within a day, else the weekday."""
-    if resets_at - now < 86400:
-        return time.strftime("%H:%M", time.localtime(resets_at))
-    return words.WEEKDAYS[time.localtime(resets_at).tm_wday]
+def hbar(value, top, cells):
+    """`value` as a horizontal bar scaled so `top` fills `cells`.
+
+    Any value above zero shows at least one cell.
+    """
+    filled = round(value / top * cells) if top else 0
+    return BAR * max(1 if value > 0 else 0, min(cells, filled))
 
 
-def today_lines(day, spent):
-    """Today: its spend, the lines changed, the sessions and the time spent waiting."""
-    changed = _elbow()
-    changed.append(f"+{words.thousands(day.added)}", style=STYLES["success"])
-    changed.append(f" −{words.thousands(day.removed)}", style=STYLES["error"])
-    changed.append(" lines", style=STYLES["inactive"])
-    changed.truncate(1 + CONTENT)
-    counts = _elbow(first=False)
+def _changed(added, removed, content, after=""):
+    """A `⎿` line with the lines added and removed, and `after` in grey."""
+    line = _elbow()
+    line.append(f"+{words.thousands(added)}", style=STYLES["success"])
+    line.append(f" −{words.thousands(removed)}", style=STYLES["error"])
+    line.append(" lines" + after, style=STYLES["inactive"])
+    line.truncate(1 + content)
+    return line
+
+
+def _sessions_waited(day):
+    """A day's sessions and the time they waited on you, as `4 sessions · 12m wait`."""
     plural = "s" * (day.sessions != 1)
-    waited = words.span(day.waited) or "0m"
-    said = f"{day.sessions} session{plural} · {waited} wait"
-    counts.append(words.fit(said, DETAIL_ROOM), style=STYLES["inactive"])
-    return [_block("Today", words.money(spent)), changed, counts]
+    return f"{day.sessions} session{plural} · {words.span(day.waited) or '0m'} wait"
 
 
-def usage_lines(limits, now):
+def today_lines(day, spent, content=CONTENT):
+    """Today: its spend, the lines changed, the sessions and the time spent waiting.
+
+    The counts share the lines' row when they fit, else go on a row of their own.
+    """
+    changed = _changed(day.added, day.removed, content)
+    said = _sessions_waited(day)
+    head = _block("Today", words.money(spent), content)
+    if changed.cell_len - 1 + 3 + len(said) <= content:
+        changed.append(f" · {said}", style=STYLES["inactive"])
+        return [head, changed]
+    counts = _elbow(first=False)
+    counts.append(words.fit(said, content - len(ELBOW)), style=STYLES["inactive"])
+    return [head, changed, counts]
+
+
+def usage_lines(limits, now, content=CONTENT):
     """Usage: the 5-hour and 7-day quota bars, with when each resets; none without quota."""
     lines = []
     for label, key in (("5h", "five_hour"), ("7d", "seven_day")):
@@ -259,44 +295,148 @@ def usage_lines(limits, now):
             continue
         line = _elbow(first=not lines)
         line.append(f"{label} ", style=STYLES["inactive"])
-        line.append_text(words.bar(quota["pct"], BAR_CELLS))
+        left = words.remaining(quota["resets_at"] - now)
+        reset = f"resets in {left}" if content >= WIDE_CHART else left
+        # The room the longest reset takes, so both bars end in the same column
+        room = len("resets in ") * (content >= WIDE_CHART) + 5
+        cells = content - len(ELBOW) - 3 - 5 - 1 - room
+        line.append_text(words.bar(quota["pct"], cells))
         line.append(f"{round(quota['pct'])}%".rjust(5))
-        line.append(" " + _reset(quota["resets_at"], now), style=STYLES["inactive"])
+        line.append(" " + reset, style=STYLES["inactive"])
         lines.append(line)
-    return [_block("Usage"), *lines] if lines else []
+    return [_block("Usage", content=content), *lines] if lines else []
 
 
-def chart_lines(week):
-    """Spend 7d: the total, and a block per day scaled to the most expensive one.
+def chart_lines(week, content=CONTENT):
+    """Spend 7d: the total, then a row per day with a bar scaled to the most expensive one.
+
+    A wide block names each day with three letters, a narrow one with two;
+    today's row is bold.
 
     Args:
         week: `(date, dollars)` for each day, oldest first, today last.
+        content: Columns available.
     """
-    top = max((v for _, v in week), default=0) or 1
-    line = _elbow()
-    for _, dollars in week:
-        # A day with any spend at least shows the thinnest block
-        line.append(BLOCKS[max(1, round(dollars / top * 8))] if dollars else " ", STYLES["claude"])
-    if week:
-        span = f"{DAY_NAMES[week[0][0].weekday()]} → {DAY_NAMES[week[-1][0].weekday()]}"
-        line.append("  " + span, style=STYLES["inactive"])
-    return [_block("Spend 7d", words.money(sum(v for _, v in week))), line]
+    top = max((v for _, v in week), default=0)
+    wide = content >= WIDE_CHART
+    values = [f"${v:.2f}" if wide else f"${v:.1f}" for _, v in week]
+    value_cells = max((len(v) for v in values), default=0)
+    lines = [_block("Spend 7d", words.money(sum(v for _, v in week)), content)]
+    for i, ((day, dollars), value) in enumerate(zip(week, values, strict=True)):
+        today = i == len(week) - 1
+        name = (words.WEEKDAYS if wide else DAY_NAMES)[day.weekday()]
+        line = _elbow(first=not i)
+        line.append(name + " ", style=STYLES["strong" if today else "inactive"])
+        cells = content - (line.cell_len - 1) - 1 - value_cells
+        line.append(hbar(dollars, top, cells).ljust(cells + 1), style=STYLES["claude"])
+        line.append(value.rjust(value_cells), style=STYLES["strong" if today else "inactive"])
+        lines.append(line)
+    return lines
+
+
+def folders_lines(by_project, content=CONTENT):
+    """By folder 7d: the folders that cost most this week, with a bar scaled to the first."""
+    shown = by_project[:TOP_FOLDERS]
+    if not shown:
+        return []
+    top = shown[0][1]
+    values = [words.money(v) for _, v in shown]
+    value_cells = max(len(v) for v in values)
+    lines = [_block("By folder 7d", content=content)]
+    for i, ((name, dollars), value) in enumerate(zip(shown, values, strict=True)):
+        line = _elbow(first=not i)
+        line.append(words.fit(name, FOLDER_NAME).ljust(FOLDER_NAME + 1), style=STYLES["ink"])
+        cells = content - (line.cell_len - 1) - 1 - value_cells
+        line.append(hbar(dollars, top, cells).ljust(cells + 1), style=STYLES["claude"])
+        line.append(value.rjust(value_cells), style=STYLES["inactive"])
+        lines.append(line)
+    return lines
+
+
+def lines_lines(day, totals, content=CONTENT):
+    """Lines: the lines changed today, and over the last 7 days with their sessions."""
+    rows = [("today", day.added, day.removed), ("7d", totals.added, totals.removed)]
+    added_cells = max(len(f"+{words.thousands(r[1])}") for r in rows)
+    lines = [_block("Lines", content=content)]
+    for i, (label, added, removed) in enumerate(rows):
+        line = _elbow(first=not i)
+        line.append(label.ljust(7), style=STYLES["inactive"])
+        line.append(f"+{words.thousands(added)}".ljust(added_cells), style=STYLES["success"])
+        line.append(f" −{words.thousands(removed)}", style=STYLES["error"])
+        if label == "7d":
+            plural = "s" * (totals.sessions != 1)
+            line.append(f" · {totals.sessions} session{plural}", style=STYLES["inactive"])
+        line.truncate(1 + content)
+        lines.append(line)
+    return lines
+
+
+def hours_lines(hours):
+    """A cell per hour of the day, darker the longer sessions worked in it, ruled under it.
+
+    Args:
+        hours: Seconds sessions worked in each hour of the day, midnight first; none drawn
+            without any work.
+    """
+    top = max(hours, default=0)
+    if not top:
+        return []
+    line = _elbow(first=False)
+    for seconds in hours:
+        level = -(-seconds * (len(HEAT) - 1) // top) if seconds else 0
+        line.append(HEAT[int(level)], style=STYLES["claude" if seconds else "subtle"])
+    ruler = _elbow(first=False)
+    ruler.append(HOURS_RULER, style=STYLES["inactive"])
+    return [line, ruler]
+
+
+def panel_today_lines(day, spent, hours, content=CONTENT):
+    """Today on the landing page: its spend, sessions and waiting, and the hours it worked."""
+    counts = _elbow()
+    counts.append(_sessions_waited(day), style=STYLES["inactive"])
+    return [_block("Today", words.money(spent), content), counts, *hours_lines(hours)]
 
 
 def stats_lines(stats, now, today=True):
-    """The statistics at the bottom, under a blank line: Today, Usage and Spend 7d.
+    """The statistics at the bottom, under a blank line and with one between blocks: Today,
+    Usage and Spend 7d.
 
     Args:
         stats: What to show.
         now: Current time as a Unix timestamp.
         today: Whether to show the Today block; it goes first when room is short.
     """
-    lines = [_line()]
+    blocks = []
     if today and stats.day is not None:
-        lines += today_lines(stats.day, stats.today)
-    lines += usage_lines(stats.limits, now)
-    lines += chart_lines(stats.week)
-    return [_finish(line) for line in lines]
+        blocks.append(today_lines(stats.day, stats.today))
+    blocks.append(usage_lines(stats.limits, now))
+    blocks.append(chart_lines(stats.week))
+    return [_finish(line) for line in [_line(), *_spaced(blocks)]]
+
+
+def _spaced(blocks):
+    """The lines of the blocks that have any, a blank line between them."""
+    lines = []
+    for block in filter(None, blocks):
+        lines += [_line()] * bool(lines) + block
+    return lines
+
+
+def panel_lines(stats, now, content=PANEL_CONTENT):
+    """The landing page's wide statistics, a blank line between blocks: Today with the hours
+    it worked, the lines changed today and over 7 days, then the sidebar's blocks with longer
+    bars and the week's spend by folder."""
+    blocks = []
+    totals = stats.totals
+    if stats.day is not None:
+        blocks.append(panel_today_lines(stats.day, stats.today, stats.hours, content))
+        if totals is not None:
+            blocks.append(lines_lines(stats.day, totals, content))
+    blocks.append(usage_lines(stats.limits, now, content))
+    blocks.append(chart_lines(stats.week, content))
+    if totals is not None:
+        blocks.append(folders_lines(totals.by_project, content))
+    return [_finish(line, content) for line in _spaced(blocks)]
 
 
 def plan(entries, room):

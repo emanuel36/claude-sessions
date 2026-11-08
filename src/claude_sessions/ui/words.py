@@ -63,6 +63,15 @@ def span(seconds):
     return f"{minutes // 60}h{minutes % 60:02d}"
 
 
+def remaining(seconds):
+    """How long until a moment, in five cells at most: `40m`, `2h33` or `3d4h`."""
+    seconds = max(0.0, seconds)
+    if seconds < 86400:
+        return span(seconds)
+    days, hours = int(seconds // 86400), int(seconds % 86400 // 3600)
+    return f"{days}d{hours}h" if hours else f"{days}d"
+
+
 def next_tick(now, per_second=1):
     """Seconds until the next redraw: the next whole second, or the next frame when animating.
 
@@ -121,11 +130,11 @@ def bar_style(pct):
 
 
 def bar(pct, cells, style=None):
-    """A share of 100 as a bar of `cells` cells: filled in `style`, empty in faint."""
+    """A share of 100 as a bar of `cells` half-height cells: filled in `style`, empty in faint."""
     filled = max(0, min(cells, round(pct * cells / 100)))
     out = Text()
-    out.append("█" * filled, style=style or bar_style(pct))
-    out.append("░" * (cells - filled), style=STYLES["subtle"])
+    out.append("▄" * filled, style=style or bar_style(pct))
+    out.append("▄" * (cells - filled), style=STYLES["subtle"])
     return out
 
 

@@ -46,7 +46,7 @@ def test_app_draws_the_column_and_highlights_its_window(monkeypatch):
             await pilot.pause()
             lines = screen_text(app)
             # client needs you, then api runs, then notes is done
-            assert lines[8].startswith(" ⏺ api")
+            assert lines[8].startswith(" • api")
             strip = app.screen._compositor.render_strips()[8]
             assert any(seg.style.bgcolor for seg in strip if "api" in seg.text)
 

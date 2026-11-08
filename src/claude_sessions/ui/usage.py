@@ -2,11 +2,16 @@
 
 import datetime
 import os
+import time
 from dataclasses import dataclass, field
 
 from claude_sessions.core import journal, state
 
 WEEK_DAYS = 7
+HOUR = datetime.timedelta(hours=1)
+# The longest a span still open at `now` counts: a session killed mid-turn writes no event
+# to end it
+MAX_OPEN = 2 * 3600
 
 
 @dataclass
@@ -80,6 +85,17 @@ class Reader:
         self.cached = (inputs, result)
         return result
 
+    def hours(self, now):
+        """Returns the seconds sessions worked in each hour of today, midnight first.
+
+        Reads what `totals` read last, so call it after `totals` in the same tick.
+
+        Args:
+            now: Current time as a Unix timestamp.
+        """
+        events = {d: r.events for d, r in self.journals.items()}
+        return working_hours(events, datetime.date.fromtimestamp(now), now)
+
     def day(self, now):
         """Returns today's activity, lines, sessions and waiting.
 
@@ -93,6 +109,46 @@ class Reader:
             return Day()
         events = {d: r.events for d, r in self.journals.items()}
         return day_summary(events, today, now)
+
+
+def working_hours(events, first_day, now):
+    """Adds up, by hour of the day, the time sessions spent working from `first_day` on.
+
+    A session works from a `working` event to its next status event; work that began the day
+    before counts from midnight. One still working counts up to `now`, `MAX_OPEN` at most.
+
+    Args:
+        events: The events of each day, by `datetime.date`.
+        first_day: The first day to count.
+        now: Current time as a Unix timestamp.
+
+    Returns:
+        24 sums of seconds, midnight first.
+    """
+    hours = [0.0] * 24
+    started = {}
+    spans = []
+    midnight = time.mktime(first_day.timetuple())
+    for day in sorted(d for d in events if d >= first_day - datetime.timedelta(days=1)):
+        for event in events[day]:
+            sid, status = event.get("id"), event.get("status")
+            if status is None:
+                continue
+            if sid in started:
+                spans.append((started.pop(sid), event["t"]))
+            if status == state.WORKING:
+                started[sid] = event["t"]
+    spans += [(t, min(now, t + MAX_OPEN)) for t in started.values()]
+    for start, end in spans:
+        start = max(start, midnight)
+        while start < end:
+            # The end of the hour `start` falls in, in local time
+            t = datetime.datetime.fromtimestamp(start)
+            edge = (t.replace(minute=0, second=0, microsecond=0) + HOUR).timestamp()
+            stop = min(end, edge)
+            hours[t.hour] += stop - start
+            start = stop
+    return hours
 
 
 def day_summary(events, today, now):
