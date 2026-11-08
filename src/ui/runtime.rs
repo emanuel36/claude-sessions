@@ -15,13 +15,15 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, MutexGuard, Once, PoisonError};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, MouseEvent};
 use crossterm::{cursor, execute, terminal, Command};
 use inotify::{EventMask, Inotify, WatchDescriptor, WatchMask, Watches};
 use ratatui::backend::CrosstermBackend;
 use ratatui::{Frame, Terminal};
+
+use crate::core::state::unix_now;
 
 /// One thing the pane's loop wakes up for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,13 +68,6 @@ pub fn signal(key: &KeyEvent) -> Option<Signal> {
         KeyCode::F(10) => Some(Signal::Layout),
         _ => None,
     }
-}
-
-/// The current time as seconds since the Unix epoch.
-pub(crate) fn unix_now() -> f64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0.0, |d| d.as_secs_f64())
 }
 
 /// The events a watched directory reports: enough to see a file written in place, appended
@@ -516,8 +511,9 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::core::paths::write_atomic;
+    use crate::core::state::unix_now;
     use crate::ui::runtime::{
-        read_input, signal, unix_now, MouseClicks, Msg, Runtime, Schedule, Signal, Wake, Watcher,
+        read_input, signal, MouseClicks, Msg, Runtime, Schedule, Signal, Wake, Watcher,
     };
 
     fn visible() -> Schedule {

@@ -3,10 +3,10 @@
 use std::collections::HashMap;
 use std::io::Read;
 use std::process::ExitCode;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use cst::claude::{hook, install, statusline};
 use cst::core::paths;
+use cst::core::state::unix_now;
 use cst::term::tmux::{self, Cli};
 use cst::term::{launcher, layout};
 use cst::ui::pane::own_socket;
@@ -30,7 +30,7 @@ Options:
 fn run_hook() -> ExitCode {
     let mut input = Vec::new();
     let read = std::io::stdin().lock().read_to_end(&mut input);
-    let now = now();
+    let now = unix_now();
     // `vars()` panics on non-UTF-8 values, so convert lossily instead.
     let env: HashMap<String, String> = std::env::vars_os()
         .map(|(k, v)| {
@@ -57,22 +57,15 @@ fn run_statusline() -> ExitCode {
     if let Err(e) = std::io::stdin().lock().read_to_end(&mut input) {
         paths::log_error(&format_args!("statusline: cannot read stdin: {e}"));
     }
-    statusline::run(&input, now(), &mut std::io::stdout().lock());
+    statusline::run(&input, unix_now(), &mut std::io::stdout().lock());
     ExitCode::SUCCESS
-}
-
-/// Seconds since the epoch.
-fn now() -> f64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0.0, |d| d.as_secs_f64())
 }
 
 /// `cst focus --pane P --socket S`, which tmux runs when a window comes on screen. Prints
 /// nothing and exits 0 whatever happens: tmux shows a failed command's output over the pane.
 fn run_focus(args: &[&str]) -> ExitCode {
     match args {
-        ["--pane", pane, "--socket", socket] => layout::focus(pane, socket, now()),
+        ["--pane", pane, "--socket", socket] => layout::focus(pane, socket, unix_now()),
         _ => paths::log_error(&format_args!("focus: bad arguments {args:?}")),
     }
     ExitCode::SUCCESS
@@ -80,7 +73,7 @@ fn run_focus(args: &[&str]) -> ExitCode {
 
 /// `cst step up|down WINDOW`, for Alt+Up/Down.
 fn run_step(window: &str, offset: i32) -> ExitCode {
-    let records = hook::live_sessions(now());
+    let records = hook::live_sessions(unix_now());
     layout::step(window, offset, &records, &own_socket(), &Cli::default());
     ExitCode::SUCCESS
 }

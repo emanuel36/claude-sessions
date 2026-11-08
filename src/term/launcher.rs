@@ -264,7 +264,7 @@ pub fn main(ghostty: bool) -> i32 {
         program: "tmux".into(),
         socket: SOCKET.to_owned(),
         conf,
-        home: std::env::var_os("HOME").map_or_else(|| PathBuf::from("/"), PathBuf::from),
+        home: paths::home(&paths::process_env),
         // tmux runs the hooks' `cst`, which is this one
         env: vec![(
             "PATH".into(),

@@ -9,18 +9,19 @@ use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 
 use rustix::fs::{flock, FlockOperation};
 
 use crate::core::journal::{self, JournalEvent};
 use crate::core::paths::{self, LIMITS_FILE};
-use crate::core::state::{self, Record};
+use crate::core::state::{self, unix_now, Record};
 
 /// A lock file nobody holds, whose session has no record, is deleted once this old.
 pub const STALE_LOCK_SECONDS: f64 = 60.0;
 
-const RECORD_SUFFIX: &str = ".json";
+/// What a record file's name ends with, after the session id.
+pub(crate) const RECORD_SUFFIX: &str = ".json";
 
 /// Where the store reports status changes; the journal outside of tests.
 pub(crate) type Sink<'a> = &'a dyn Fn(&JournalEvent);
@@ -68,12 +69,6 @@ fn record_id(name: Option<&str>) -> Option<&str> {
     let name = name.filter(|&n| n != LIMITS_FILE)?;
     name.strip_suffix(RECORD_SUFFIX)
         .filter(|id| is_session_id(id))
-}
-
-fn unix_now() -> f64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0.0, |d| d.as_secs_f64())
 }
 
 /// Removes the lock an ended session left behind, once no hook can still be waiting on it.
@@ -245,10 +240,7 @@ pub(crate) fn load_all_in(dir: &Path, now: f64, journal: Sink<'_>) -> Vec<Record
             remove_in(dir, id, false, journal);
         }
     }
-    records.sort_by(|a, b| {
-        let (a, b) = (state::sort_key(a), state::sort_key(b));
-        a.0.cmp(&b.0).then(a.1.total_cmp(&b.1))
-    });
+    records.sort_by(state::by_urgency);
     records
 }
 

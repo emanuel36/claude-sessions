@@ -10,9 +10,10 @@ use anyhow::bail;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::core::paths;
-use crate::term::tmux::Runner;
+use crate::core::state::unix_now;
+use crate::term::tmux::{self, Runner};
 use crate::ui::picker;
-use crate::ui::runtime::{signal, unix_now, Msg, Runtime, Schedule, Screen, Signal, Wake};
+use crate::ui::runtime::{signal, Msg, Runtime, Schedule, Screen, Signal, Wake};
 
 /// How many times tmux is asked for the pane's window before giving up.
 const WINDOW_TRIES: u32 = 5;
@@ -180,7 +181,7 @@ pub fn own_window(
 pub fn own_socket() -> String {
     std::env::var("TMUX")
         .ok()
-        .and_then(|t| t.split(',').next().map(str::to_owned))
+        .and_then(|t| tmux::socket_of(&t).map(str::to_owned))
         .unwrap_or_default()
 }
 

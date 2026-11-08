@@ -13,11 +13,12 @@ use ratatui::widgets::Paragraph;
 use crate::claude::history::HistoryReader;
 use crate::claude::hook;
 use crate::claude::transcript::Titles;
+use crate::core::state::unix_now;
 use crate::term::tmux::{Cli, Runner};
 use crate::ui::folders::Scan;
 use crate::ui::pane::{self, open, picker_key, quits, App, LogOnce, Step};
 use crate::ui::picker::{self, Folder, Picker};
-use crate::ui::runtime::{unix_now, Msg, Runtime, Schedule, Screen};
+use crate::ui::runtime::{Msg, Runtime, Schedule, Screen};
 use crate::ui::usage::Reader;
 
 /// Runs the panel in the terminal this process runs in, until the user leaves it.

@@ -15,7 +15,7 @@ use crate::claude::transcript::{title_of, was_interrupted};
 use crate::core::journal;
 use crate::core::paths;
 use crate::core::state::{
-    apply_event, mark_interrupted, mark_seen, sort_key, Event, Record, Status, INTERRUPTIBLE,
+    apply_event, by_urgency, mark_interrupted, mark_seen, Event, Record, Status, INTERRUPTIBLE,
 };
 use crate::core::store::{self, Sink};
 use crate::term::tmux::{self, Cli, Runner};
@@ -203,10 +203,7 @@ fn live_sessions_in(s: &Seams<'_>, now: f64) -> Vec<Record> {
         })
         .collect();
     // Settling changes a status, and with it the order
-    records.sort_by(|a, b| {
-        let (a, b) = (sort_key(a), sort_key(b));
-        a.0.cmp(&b.0).then(a.1.total_cmp(&b.1))
-    });
+    records.sort_by(by_urgency);
     records
 }
 

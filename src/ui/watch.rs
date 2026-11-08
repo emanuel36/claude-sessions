@@ -9,11 +9,9 @@ use crate::claude::hook::QUIET_SECONDS;
 use crate::core::journal::journal_dir;
 use crate::core::paths::{self, LIMITS_FILE};
 use crate::core::state::{Record, INTERRUPTIBLE};
+use crate::core::store::RECORD_SUFFIX;
 use crate::ui::pane::LogOnce;
 use crate::ui::runtime::Runtime;
-
-/// What a record's file name ends with; its lock file and temporary files do not.
-const RECORD_SUFFIX: &str = ".json";
 
 /// What must be read again before the next draw.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

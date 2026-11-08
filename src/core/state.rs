@@ -2,7 +2,9 @@
 //!
 //! Pure: no I/O. A [`Record`] is plain data that round-trips through JSON unchanged.
 
+use std::cmp::Ordering;
 use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
@@ -409,6 +411,19 @@ pub fn since(r: &Record) -> f64 {
 /// Orders sessions by status, then the ones in that status longest first.
 pub fn sort_key(r: &Record) -> (u8, f64) {
     (r.status.rank(), since(r))
+}
+
+/// Compares two sessions by [`sort_key`]: the most urgent first.
+pub fn by_urgency(a: &Record, b: &Record) -> Ordering {
+    let (a, b) = (sort_key(a), sort_key(b));
+    a.0.cmp(&b.0).then(a.1.total_cmp(&b.1))
+}
+
+/// The current time as seconds since the Unix epoch.
+pub fn unix_now() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0.0, |d| d.as_secs_f64())
 }
 
 #[cfg(test)]

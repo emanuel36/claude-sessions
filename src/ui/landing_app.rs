@@ -15,6 +15,7 @@ use crate::claude::history::HistoryReader;
 use crate::claude::hook;
 use crate::claude::statusline::load_limits;
 use crate::claude::transcript::Titles;
+use crate::core::state::unix_now;
 use crate::core::state::Record;
 use crate::term::tmux::{Cli, Runner};
 use crate::ui::folders::Scan;
@@ -23,7 +24,7 @@ use crate::ui::pane::{
     self, open, own_window, picker_key, App, LogOnce, Step, Visible, WINDOW_PAUSE,
 };
 use crate::ui::picker::{self, Folder, Picker};
-use crate::ui::runtime::{signal, unix_now, Msg, Runtime, Schedule, Screen, Signal};
+use crate::ui::runtime::{signal, Msg, Runtime, Schedule, Screen, Signal};
 use crate::ui::sidebar::Stats;
 use crate::ui::usage::Reader;
 use crate::ui::watch::{Stale, Watches};

@@ -181,7 +181,7 @@ fn detect_with(
     if is_headless(env) {
         return None;
     }
-    let socket = set("TMUX")?.split(',').next()?;
+    let socket = socket_of(set("TMUX")?)?;
     let pane = set("TMUX_PANE")?;
     Some(Mux {
         socket: socket.to_owned(),
@@ -324,10 +324,7 @@ pub fn windows_of(records: &[Record], panes: &[Pane], socket: &str) -> Vec<Windo
     for (id, (_, r)) in leaders {
         windows[slot[id]].leader = Some(r.clone());
     }
-    windows.sort_by(|a, b| {
-        let (a, b) = (state::sort_key(&a.lead), state::sort_key(&b.lead));
-        a.0.cmp(&b.0).then(a.1.total_cmp(&b.1))
-    });
+    windows.sort_by(|a, b| state::by_urgency(&a.lead, &b.lead));
     windows
 }
 
@@ -410,6 +407,11 @@ pub fn settle_if_viewed(r: Record, now: f64, t: &dyn Runner) -> Record {
         Some(m) if r.status == Status::Done && pane_in_view(m, t) => state::mark_seen(&r, now),
         _ => r,
     }
+}
+
+/// The server socket in a `$TMUX` value: `<socket>,<pid>,<session>`.
+pub fn socket_of(tmux: &str) -> Option<&str> {
+    tmux.split(',').next()
 }
 
 /// Closes a window, first stopping the background sessions its panes show.
