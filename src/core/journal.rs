@@ -328,10 +328,11 @@ pub fn day_costs(days: &Days) -> BTreeMap<NaiveDate, f64> {
             });
             peak[i].1 = peak[i].1.max(cost);
         }
+        // Folded from +0.0: an empty f64 sum is -0.0, which formats as $-0.00
         let total = peak
             .iter()
             .map(|&(id, top)| (top - last.get(id).copied().unwrap_or(0.0)).max(0.0))
-            .sum();
+            .fold(0.0, |sum, v| sum + v);
         totals.insert(day, total);
         last.extend(peak);
     }
@@ -755,6 +756,14 @@ mod tests {
         let day = date(2026, 11, 1);
         let data = [(day, vec![status(0.0, "a", "idle")])];
         assert_eq!(day_costs(&days(&data)), BTreeMap::from([(day, 0.0)]));
+    }
+
+    #[test]
+    fn day_costs_gives_an_empty_day_a_positive_zero() {
+        let day = date(2026, 11, 1);
+        let data = [(day, vec![])];
+        let total = day_costs(&days(&data))[&day];
+        assert!(total.is_sign_positive(), "{total} formats as {total:.2}");
     }
 
     #[test]

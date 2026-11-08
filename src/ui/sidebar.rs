@@ -958,6 +958,23 @@ mod tests {
     }
 
     #[test]
+    fn an_empty_journal_shows_a_positive_zero_spend() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut reader = crate::ui::usage::Reader::in_dir(dir.path().to_path_buf());
+        let totals = reader.totals(&[], 0, NOW).clone();
+        let stats = Stats {
+            today: totals.today,
+            week: totals.days,
+            day: Some(Day::default()),
+            ..Stats::default()
+        };
+        let b = body(&stats_lines(&stats, NOW, true));
+        assert_eq!(b[1], "• Today               $0.00");
+        assert!(b.iter().any(|l| l.ends_with(" $0.0")), "{b:#?}");
+        assert!(!b.iter().any(|l| l.contains('-')), "{b:#?}");
+    }
+
+    #[test]
     fn hbar_draws_at_least_one_cell_for_any_spend() {
         assert_eq!(hbar(1.0, 2.0, 4), "▄▄");
         assert_eq!(hbar(0.001, 100.0, 4), "▄");
