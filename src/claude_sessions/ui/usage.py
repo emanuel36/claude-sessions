@@ -38,6 +38,8 @@ class Totals:
     per_session: dict[str, float] = field(default_factory=dict)
     # What each of the last 7 days cost, oldest first, today last
     days: list[tuple[datetime.date, float]] = field(default_factory=list)
+    # `journal.window_totals` from today on, for the lines of the day
+    today_by_session: dict = field(default_factory=dict)
 
 
 class Reader:
@@ -81,6 +83,7 @@ class Reader:
             sessions=sum(1 for t in week.values() if any(t.values())),
             per_session={sid: t["cost"] for sid, t in week.items()},
             days=daily,
+            today_by_session=journal.window_totals(events, first_day=today),
         )
         self.cached = (inputs, result)
         return result
@@ -108,7 +111,8 @@ class Reader:
         if today not in self.journals:
             return Day()
         events = {d: r.events for d, r in self.journals.items()}
-        return day_summary(events, today, now)
+        # The lines need the whole week's costs, which `totals` added up once
+        return day_summary(events, today, now, self.cached[1].today_by_session)
 
 
 def _ranked(costs):
@@ -156,13 +160,14 @@ def working_hours(events, first_day, now):
     return hours
 
 
-def day_summary(events, today, now):
+def day_summary(events, today, now, totals=None):
     """Adds up one day of the journal.
 
     Args:
         events: The events of each day, by `datetime.date`, including the days before.
         today: The day to add up.
         now: Current time as a Unix timestamp, where a wait still going ends.
+        totals: `journal.window_totals` of the events from `today` on, if already known.
     """
     day = Day()
     seen, last = set(), {}
@@ -177,8 +182,9 @@ def day_summary(events, today, now):
             day.waited += event["t"] - before[1]
         last[sid] = (status, event["t"])
     day.waited += sum(max(0.0, now - t) for status, t in last.values() if status in state.NEEDS_YOU)
-    week = journal.window_totals(events, first_day=today)
-    day.added = sum(t["added"] for t in week.values())
-    day.removed = sum(t["removed"] for t in week.values())
+    if totals is None:
+        totals = journal.window_totals(events, first_day=today)
+    day.added = sum(t["added"] for t in totals.values())
+    day.removed = sum(t["removed"] for t in totals.values())
     day.sessions = len(seen)
     return day

@@ -97,3 +97,20 @@ def test_working_hours_count_work_from_yesterday_from_midnight():
     hours = usage.working_hours(events, today, midnight + 6 * 3600)
     # A closed span counts whole, however long
     assert hours[:5] == [3600.0] * 5 and sum(hours) == 5 * 3600
+
+
+def test_the_day_reuses_the_lines_totals_added_up(monkeypatch):
+    log("a", 1, 1.0, 5)
+    log("a", 0, 2.0, 15)
+    reader, history = usage.Reader(), [session("a")]
+    reader.totals(history, NOW)
+    counted = []
+    real = journal.window_totals
+    monkeypatch.setattr(
+        journal, "window_totals", lambda *a, **k: counted.append(1) or real(*a, **k)
+    )
+    assert reader.day(NOW).added == 10
+    assert reader.day(NOW + 1).added == 10 and counted == []
+    log("a", 0, 3.0, 20)
+    reader.totals(history, NOW)
+    assert reader.day(NOW).added == 15
