@@ -247,13 +247,9 @@ fn needs_you(status: &str) -> bool {
 ///
 /// A session works from a `working` event to its next status event; work that began the day
 /// before counts from midnight. One still working counts up to `now`, [`MAX_OPEN`] at most.
-/// Hours and midnight are local time.
+/// Hours and midnight are in the zone `tz`.
 ///
 /// Returns 24 sums of seconds, midnight first.
-pub fn working_hours(events: &Days, first_day: NaiveDate, now: f64) -> [f64; 24] {
-    working_hours_in(events, first_day, now, &Local)
-}
-
 fn working_hours_in<Tz: TimeZone>(
     events: &Days,
     first_day: NaiveDate,

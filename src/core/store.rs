@@ -1,9 +1,8 @@
 //! Session records on disk: one JSON file per live Claude Code session.
 //!
 //! Records are `<id>.json` in the runtime directory, each with a lock file `<id>.json.lock`.
-//! Every public function is a thin wrapper over one that takes the directory and a journal
-//! sink, so unit tests use a temporary directory and never touch the process environment or
-//! the real journal.
+//! The functions take the directory and a journal sink, so unit tests use a temporary directory
+//! and never touch the process environment or the real journal.
 
 use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
@@ -39,57 +38,6 @@ pub fn is_session_id(s: &str) -> bool {
             .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
 }
 
-/// Takes the lock of a session, waiting for whoever holds it.
-///
-/// Hooks of parallel tool calls can overlap, so a read-modify-write of a record goes under it.
-///
-/// # Errors
-///
-/// Fails if the id is not a [`is_session_id`], or the lock file cannot be opened or locked.
-pub fn lock(id: &str) -> io::Result<Lock> {
-    lock_in(&paths::runtime_dir()?, id)
-}
-
-/// Returns the record of a session, or `None` if there is none or it is not readable.
-pub fn read(id: &str) -> Option<Record> {
-    read_in(&paths::runtime_dir().ok()?, id)
-}
-
-/// Writes a record atomically, so readers never see a partial file.
-///
-/// A change of status, or a new session, also goes to the journal, at [`state::since`]. Callers
-/// hold the lock, so the record on disk is the one this write replaces.
-///
-/// # Errors
-///
-/// Fails if the id is not a [`is_session_id`] or the file cannot be written.
-pub fn write(r: &Record) -> io::Result<()> {
-    write_in(&paths::runtime_dir()?, r, &journal::append)
-}
-
-/// Deletes a session's record and, unless a hook may still hold it, its lock.
-///
-/// Removing a record ends the session in the journal, so a wait it was in stops counting.
-/// Failures go to the error log.
-pub fn remove(id: &str, keep_lock: bool) {
-    match paths::runtime_dir() {
-        Ok(dir) => remove_in(&dir, id, keep_lock, &journal::append),
-        Err(e) => paths::log_error(&format_args!("store: cannot remove {id}: {e}")),
-    }
-}
-
-/// Deletes the records of sessions this one replaced in the same Claude process.
-///
-/// `/clear` and `/resume` start another session in the same process; the one before it ends
-/// without a `SessionEnd`, and would otherwise linger until the process exits. The lock stays,
-/// as on `SessionEnd`: a hook of the old session may be waiting on it.
-pub fn remove_replaced(r: &Record) {
-    match paths::runtime_dir() {
-        Ok(dir) => remove_replaced_in(&dir, r, &journal::append),
-        Err(e) => paths::log_error(&format_args!("store: cannot remove replaced: {e}")),
-    }
-}
-
 /// Returns the start time of a process from `/proc`, or `None` if it is gone.
 pub fn process_start(pid: i32) -> Option<u64> {
     let stat = fs::read(format!("/proc/{pid}/stat")).ok()?;
@@ -102,20 +50,6 @@ pub fn is_alive(r: &Record) -> bool {
         return false;
     };
     process_start(pid) == r.pid_start
-}
-
-/// Returns the records of all live sessions, ordered for display.
-///
-/// Records of dead processes are deleted, and so are the locks ended sessions left behind.
-/// `now` is the current time as a Unix timestamp.
-pub fn load_all(now: f64) -> Vec<Record> {
-    match paths::runtime_dir() {
-        Ok(dir) => load_all_in(&dir, now, &journal::append),
-        Err(e) => {
-            paths::log_error(&format_args!("store: cannot list records: {e}"));
-            Vec::new()
-        }
-    }
 }
 
 /// Reads field 22 (`starttime`) of the contents of `/proc/<pid>/stat`.
@@ -165,6 +99,13 @@ fn record_path(dir: &Path, id: &str) -> io::Result<PathBuf> {
     Ok(dir.join(format!("{id}{RECORD_SUFFIX}")))
 }
 
+/// Takes the lock of a session in `dir`, waiting for whoever holds it.
+///
+/// Hooks of parallel tool calls can overlap, so a read-modify-write of a record goes under it.
+///
+/// # Errors
+///
+/// Fails if the id is not a [`is_session_id`], or the lock file cannot be opened or locked.
 pub(crate) fn lock_in(dir: &Path, id: &str) -> io::Result<Lock> {
     let mut path = record_path(dir, id)?.into_os_string();
     path.push(".lock");
@@ -182,11 +123,20 @@ pub(crate) fn lock_in(dir: &Path, id: &str) -> io::Result<Lock> {
     }
 }
 
+/// Returns the record of a session, or `None` if there is none or it is not readable.
 pub(crate) fn read_in(dir: &Path, id: &str) -> Option<Record> {
     let bytes = fs::read(record_path(dir, id).ok()?).ok()?;
     serde_json::from_slice(&bytes).ok()
 }
 
+/// Writes a record atomically, so readers never see a partial file.
+///
+/// A change of status, or a new session, also goes to `journal`, at [`state::since`]. Callers
+/// hold the lock, so the record on disk is the one this write replaces.
+///
+/// # Errors
+///
+/// Fails if the id is not a [`is_session_id`] or the file cannot be written.
 pub(crate) fn write_in(dir: &Path, r: &Record, journal: Sink<'_>) -> io::Result<()> {
     let path = record_path(dir, &r.id)?;
     let before = read_in(dir, &r.id);
@@ -204,6 +154,10 @@ pub(crate) fn write_in(dir: &Path, r: &Record, journal: Sink<'_>) -> io::Result<
     Ok(())
 }
 
+/// Deletes a session's record and, unless a hook may still hold it, its lock.
+///
+/// Removing a record ends the session in `journal`, so a wait it was in stops counting.
+/// Failures go to the error log.
 pub(crate) fn remove_in(dir: &Path, id: &str, keep_lock: bool, journal: Sink<'_>) {
     let Ok(path) = record_path(dir, id) else {
         return;
@@ -230,6 +184,11 @@ pub(crate) fn remove_in(dir: &Path, id: &str, keep_lock: bool, journal: Sink<'_>
     }
 }
 
+/// Deletes the records of sessions `r` replaced in the same Claude process.
+///
+/// `/clear` and `/resume` start another session in the same process; the one before it ends
+/// without a `SessionEnd`, and would otherwise linger until the process exits. The lock stays,
+/// as on `SessionEnd`: a hook of the old session may be waiting on it.
 pub(crate) fn remove_replaced_in(dir: &Path, r: &Record, journal: Sink<'_>) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
@@ -254,6 +213,10 @@ pub(crate) fn remove_replaced_in(dir: &Path, r: &Record, journal: Sink<'_>) {
     }
 }
 
+/// Returns the records of all live sessions, ordered for display.
+///
+/// Records of dead processes are deleted, and so are the locks ended sessions left behind.
+/// `now` is the current time as a Unix timestamp.
 pub(crate) fn load_all_in(dir: &Path, now: f64, journal: Sink<'_>) -> Vec<Record> {
     let Ok(entries) = fs::read_dir(dir) else {
         return Vec::new();

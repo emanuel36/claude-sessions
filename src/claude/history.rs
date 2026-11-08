@@ -109,7 +109,8 @@ impl Sessions {
 }
 
 /// Groups history lines by session, most recent first.
-pub fn read_history(lines: &[&str]) -> Vec<HistorySession> {
+#[cfg(test)]
+pub(crate) fn read_history(lines: &[&str]) -> Vec<HistorySession> {
     let mut sessions = Sessions::default();
     for line in lines {
         sessions.add_line(line.as_bytes());
@@ -223,7 +224,8 @@ impl HistoryReader {
     }
 
     /// Like [`HistoryReader::new`], with the config and state folders given.
-    pub fn with_dirs(stored: bool, config: PathBuf, state: PathBuf) -> Self {
+    #[cfg(test)]
+    pub(crate) fn with_dirs(stored: bool, config: PathBuf, state: PathBuf) -> Self {
         Self {
             config: Some(config),
             state: Some(state),

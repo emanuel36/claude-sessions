@@ -25,12 +25,8 @@ pub const TITLES_FILE: &str = "titles.json";
 /// A title the user set with /rename wins over the one Claude Code made up.
 const TITLE_KEYS: [&str; 2] = ["customTitle", "aiTitle"];
 
-/// Returns where Claude Code keeps a session's transcript: one folder per project path.
-pub fn transcript_path(id: &str, cwd: &str) -> PathBuf {
-    transcript_path_in(&paths::config_dir(), id, cwd)
-}
-
-/// Like [`transcript_path`], under the config folder `config`.
+/// Returns where Claude Code, with its config folder `config`, keeps a session's transcript:
+/// one folder per project path.
 pub(crate) fn transcript_path_in(config: &Path, id: &str, cwd: &str) -> PathBuf {
     let folder: String = cwd
         .chars()
@@ -188,7 +184,8 @@ impl Titles {
     }
 
     /// Like [`Titles::new`], keeping the titles in `state` instead of the state folder.
-    pub fn in_dir(stored: bool, state: PathBuf) -> Self {
+    #[cfg(test)]
+    pub(crate) fn in_dir(stored: bool, state: PathBuf) -> Self {
         Self {
             state: Some(state),
             ..Self::new(stored)

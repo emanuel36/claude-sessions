@@ -155,15 +155,6 @@ impl DayReader {
         Self::default()
     }
 
-    /// Returns the events of a day, in the order they were written.
-    ///
-    /// Lines that do not parse (one torn by a crash mid-write) are skipped. A line still being
-    /// written (no newline yet) waits for the next read. The reading starts over for another
-    /// day, another file, or a file shorter than what was read.
-    pub fn read(&mut self, day: NaiveDate) -> &[JournalEvent] {
-        self.read_in(&journal_dir(), day)
-    }
-
     /// A number that changes only when a read parsed new events or dropped the old ones, so
     /// callers can tell nothing changed without comparing the events.
     pub fn generation(&self) -> u64 {
@@ -175,6 +166,11 @@ impl DayReader {
         &self.events
     }
 
+    /// Returns the events of a day in `dir`, in the order they were written.
+    ///
+    /// Lines that do not parse (one torn by a crash mid-write) are skipped. A line still being
+    /// written (no newline yet) waits for the next read. The reading starts over for another
+    /// day, another file, or a file shorter than what was read.
     pub(crate) fn read_in(&mut self, dir: &Path, day: NaiveDate) -> &[JournalEvent] {
         match File::open(day_path(dir, day)) {
             // A file that cannot be read keeps what was read; the sidebar asks again each second,

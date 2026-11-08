@@ -15,7 +15,7 @@ use rustix::process::{pidfd_open, Pid, PidfdFlags};
 const POLL: Duration = Duration::from_millis(2);
 
 /// Starts a job on a thread of its own; a seam for tests.
-pub type Spawner<'a> = &'a dyn Fn(Box<dyn FnOnce() + Send>) -> io::Result<()>;
+pub(crate) type Spawner<'a> = &'a dyn Fn(Box<dyn FnOnce() + Send>) -> io::Result<()>;
 
 /// Starts `job` on a new thread; unlike `thread::spawn`, fails instead of panicking when the
 /// system is out of threads.
@@ -23,7 +23,7 @@ pub type Spawner<'a> = &'a dyn Fn(Box<dyn FnOnce() + Send>) -> io::Result<()>;
 /// # Errors
 ///
 /// Fails if the thread cannot be created.
-pub fn spawn_thread(job: Box<dyn FnOnce() + Send>) -> io::Result<()> {
+pub(crate) fn spawn_thread(job: Box<dyn FnOnce() + Send>) -> io::Result<()> {
     thread::Builder::new().spawn(job).map(drop)
 }
 
@@ -70,7 +70,7 @@ fn run_capped_with(mut cmd: Command, timeout: Duration, spawn: Spawner<'_>) -> S
 /// # Errors
 ///
 /// Fails if the thread cannot start.
-pub fn read_on_thread(
+pub(crate) fn read_on_thread(
     mut from: impl Read + Send + 'static,
     spawn: Spawner<'_>,
 ) -> io::Result<mpsc::Receiver<Vec<u8>>> {
@@ -85,7 +85,7 @@ pub fn read_on_thread(
 
 /// Waits up to `timeout` for the child's output on `rx`, then until `deadline` for the child to
 /// exit; returns the output, or `None` if either ran late and the caller is to give up on it.
-pub fn collect(
+pub(crate) fn collect(
     child: &mut Child,
     rx: &mpsc::Receiver<Vec<u8>>,
     timeout: Duration,

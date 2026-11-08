@@ -213,13 +213,6 @@ fn live_sessions_in(s: &Seams<'_>, now: f64) -> Vec<Record> {
 /// Writes an Esc interrupt to disk, unless a hook changed the session meanwhile.
 ///
 /// Returns the record as it is afterwards, or `None` if there is none.
-pub fn settle_interrupted(id: &str, now: f64) -> Option<Record> {
-    with_seams(|s| settle_interrupted_in(s, id, now)).unwrap_or_else(|e| {
-        paths::log_error(&format_args!("hook: cannot settle {id}: {e:#}"));
-        None
-    })
-}
-
 fn settle_interrupted_in(s: &Seams<'_>, id: &str, now: f64) -> Option<Record> {
     let _lock = store::lock_in(s.dir, id).ok()?;
     let current = store::read_in(s.dir, id)?;

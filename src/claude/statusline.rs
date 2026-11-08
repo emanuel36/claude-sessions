@@ -133,11 +133,7 @@ pub(crate) fn load_limits_in(dir: &Path, now: f64) -> BTreeMap<String, Quota> {
 ///
 /// # Errors
 ///
-/// Fails if the records directory is unusable or the file cannot be written.
-pub fn save_limits(limits: &BTreeMap<String, Quota>, now: f64) -> io::Result<()> {
-    save_limits_in(&paths::runtime_dir()?, limits, now)
-}
-
+/// Fails if the file in the records directory `dir` cannot be written.
 pub(crate) fn save_limits_in(
     dir: &Path,
     limits: &BTreeMap<String, Quota>,

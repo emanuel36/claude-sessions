@@ -468,6 +468,7 @@ pub fn add_sidebar(window_id: &str, t: &dyn Runner) {
 }
 
 /// [`add_sidebar`] with the command that runs in the new pane.
+#[doc(hidden)]
 pub fn add_sidebar_running(window_id: &str, command: &str, t: &dyn Runner) {
     let flags = t.run(&["list-panes", "-t", window_id, "-F", "#{@cs-sidebar}"]);
     if flags.split_whitespace().any(|f| f == "1") {
