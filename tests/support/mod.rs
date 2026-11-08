@@ -1,6 +1,8 @@
 //! Helpers shared by the integration test crates.
 #![allow(dead_code)]
 
+pub mod golden;
+
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};

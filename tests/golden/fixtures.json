@@ -1,0 +1,1286 @@
+[
+  {
+    "name": "sidebar_all_statuses",
+    "kind": "sidebar",
+    "now": 1793806200.625,
+    "entries": [
+      {
+        "window_id": "@1",
+        "name": "web",
+        "status": "permission",
+        "since": 1793806020.625,
+        "cost": 3.1,
+        "duration": 2400,
+        "model": "opus"
+      },
+      {
+        "window_id": "@2",
+        "name": "vehicle.k265",
+        "status": "working",
+        "since": 1793806195.625,
+        "cost": 0.9,
+        "duration": null,
+        "model": "opus"
+      },
+      {
+        "window_id": "@3",
+        "name": "api",
+        "status": "shell",
+        "since": 1793798900.625,
+        "cost": 5.42,
+        "duration": 7500,
+        "model": null
+      },
+      {
+        "window_id": "@4",
+        "name": "chat",
+        "status": "input",
+        "since": 1793806155.625,
+        "cost": 12.34,
+        "duration": 60,
+        "model": "sonnet"
+      },
+      {
+        "window_id": "@5",
+        "name": "docs",
+        "status": "done",
+        "since": 1793806191.625,
+        "cost": null,
+        "duration": 900,
+        "model": "sonnet"
+      },
+      {
+        "window_id": "@6",
+        "name": "notes",
+        "status": "idle",
+        "since": 1793806191.625,
+        "cost": 0.05,
+        "duration": 10800,
+        "model": "claude-opus-4-6[1m]"
+      },
+      {
+        "window_id": "@7",
+        "name": "scratch",
+        "status": "idle",
+        "since": 1793776200.625,
+        "cost": null,
+        "duration": null,
+        "model": null
+      }
+    ],
+    "current": "@2",
+    "stats": {
+      "limits": {
+        "five_hour": {"pct": 58, "resets_at": 1793815380.625},
+        "seven_day": {"pct": 76, "resets_at": 1794043920.625}
+      },
+      "today": 9.59,
+      "week": [
+        ["2026-10-29", 0],
+        ["2026-10-30", 2.4],
+        ["2026-10-31", 4.15],
+        ["2026-11-01", 6.0],
+        ["2026-11-02", 8.62],
+        ["2026-11-03", 1.3],
+        ["2026-11-04", 3.07]
+      ],
+      "day": {"added": 1376, "removed": 58, "sessions": 4, "waited": 720},
+      "totals": {
+        "by_project": [
+          ["claude-sessions", 41.2],
+          ["vehicle-api", 18.75],
+          ["a-very-long-folder-name-indeed", 9.1],
+          ["docs", 3.3],
+          ["scratch", 0.4]
+        ],
+        "by_model": [
+          ["claude-opus-4-6", 52.1],
+          ["claude-sonnet-4-5", 19.6],
+          ["claude-haiku-4-5", 1.05]
+        ],
+        "added": 12873,
+        "removed": 4410,
+        "sessions": 23
+      },
+      "hours": [0, 0, 0, 0, 0, 0, 0, 0, 1200, 3600, 2700, 600, 0, 1800, 3600, 1830, 0, 0, 0, 0, 0, 0, 0, 0]
+    },
+    "height": 50,
+    "runs": []
+  },
+  {
+    "name": "sidebar_long_names",
+    "kind": "sidebar",
+    "now": 1793806200.625,
+    "entries": [
+      {
+        "window_id": "@10",
+        "name": "v2 日本語のリファクタリング作業を続ける",
+        "status": "permission",
+        "since": 1793805600.625,
+        "cost": 1.2,
+        "duration": 300,
+        "model": null
+      },
+      {
+        "window_id": "@11",
+        "name": "🚀 deploy-pipeline-fixes-for-staging 🎉",
+        "status": "done",
+        "since": 1793806180.625,
+        "cost": 0.66,
+        "duration": 1500,
+        "model": "opus"
+      },
+      {
+        "window_id": "@12",
+        "name": "数据库迁移 🐛 修复",
+        "status": "working",
+        "since": 1793806130.625,
+        "cost": 2.0,
+        "duration": 640,
+        "model": null
+      },
+      {
+        "window_id": "@13",
+        "name": "데이터베이스 마이그레이션 스크립트 정리",
+        "status": "input",
+        "since": 1793802200.625,
+        "cost": 0.3,
+        "duration": 90,
+        "model": null
+      },
+      {
+        "window_id": "@14",
+        "name": "two  spaced   name that is far too long here",
+        "status": "idle",
+        "since": 1793806150.625,
+        "cost": null,
+        "duration": null,
+        "model": null
+      }
+    ],
+    "current": "@11",
+    "stats": {
+      "limits": {
+        "five_hour": {"pct": 92, "resets_at": 1793806800.625},
+        "seven_day": {"pct": 100, "resets_at": 1794065430.625}
+      },
+      "today": 9.59,
+      "week": [
+        ["2026-10-29", 0],
+        ["2026-10-30", 2.4],
+        ["2026-10-31", 4.15],
+        ["2026-11-01", 6.0],
+        ["2026-11-02", 8.62],
+        ["2026-11-03", 1.3],
+        ["2026-11-04", 3.07]
+      ],
+      "day": {"added": 1376, "removed": 58, "sessions": 4, "waited": 720},
+      "totals": {
+        "by_project": [
+          ["claude-sessions", 41.2],
+          ["vehicle-api", 18.75],
+          ["a-very-long-folder-name-indeed", 9.1],
+          ["docs", 3.3],
+          ["scratch", 0.4]
+        ],
+        "by_model": [
+          ["claude-opus-4-6", 52.1],
+          ["claude-sonnet-4-5", 19.6],
+          ["claude-haiku-4-5", 1.05]
+        ],
+        "added": 12873,
+        "removed": 4410,
+        "sessions": 23
+      },
+      "hours": [0, 0, 0, 0, 0, 0, 0, 0, 1200, 3600, 2700, 600, 0, 1800, 3600, 1830, 0, 0, 0, 0, 0, 0, 0, 0]
+    },
+    "height": 40,
+    "runs": [
+      {"name": "夜間ビルドのスモークテスト実行中", "started": 1793806075.625}
+    ]
+  },
+  {
+    "name": "sidebar_no_quota",
+    "kind": "sidebar",
+    "now": 1793806200.625,
+    "entries": [
+      {
+        "window_id": "@21",
+        "name": "web",
+        "status": "done",
+        "since": 1793805900.625,
+        "cost": 0.42,
+        "duration": 200,
+        "model": "haiku"
+      },
+      {
+        "window_id": "@22",
+        "name": "api",
+        "status": "permission",
+        "since": 1793799000.625,
+        "cost": 1.5,
+        "duration": 600,
+        "model": null
+      }
+    ],
+    "current": "@21",
+    "stats": {
+      "limits": {},
+      "today": 9.59,
+      "week": [
+        ["2026-10-29", 0],
+        ["2026-10-30", 2.4],
+        ["2026-10-31", 4.15],
+        ["2026-11-01", 6.0],
+        ["2026-11-02", 8.62],
+        ["2026-11-03", 1.3],
+        ["2026-11-04", 3.07]
+      ],
+      "day": {"added": 1376, "removed": 58, "sessions": 4, "waited": 720},
+      "totals": {
+        "by_project": [
+          ["claude-sessions", 41.2],
+          ["vehicle-api", 18.75],
+          ["a-very-long-folder-name-indeed", 9.1],
+          ["docs", 3.3],
+          ["scratch", 0.4]
+        ],
+        "by_model": [
+          ["claude-opus-4-6", 52.1],
+          ["claude-sonnet-4-5", 19.6],
+          ["claude-haiku-4-5", 1.05]
+        ],
+        "added": 12873,
+        "removed": 4410,
+        "sessions": 23
+      },
+      "hours": [0, 0, 0, 0, 0, 0, 0, 0, 1200, 3600, 2700, 600, 0, 1800, 3600, 1830, 0, 0, 0, 0, 0, 0, 0, 0]
+    },
+    "height": 36,
+    "runs": []
+  },
+  {
+    "name": "sidebar_background_runs",
+    "kind": "sidebar",
+    "now": 1793806200.625,
+    "entries": [
+      {
+        "window_id": "@31",
+        "name": "web",
+        "status": "working",
+        "since": 1793806185.625,
+        "cost": 0.2,
+        "duration": 30,
+        "model": null
+      },
+      {
+        "window_id": "@32",
+        "name": "api",
+        "status": "idle",
+        "since": 1793805300.625,
+        "cost": 4.0,
+        "duration": 1200,
+        "model": null
+      }
+    ],
+    "current": null,
+    "stats": {
+      "limits": {
+        "five_hour": {"pct": 41.7, "resets_at": 1793820601.625}
+      },
+      "today": 9.59,
+      "week": [
+        ["2026-10-29", 0],
+        ["2026-10-30", 2.4],
+        ["2026-10-31", 4.15],
+        ["2026-11-01", 6.0],
+        ["2026-11-02", 8.62],
+        ["2026-11-03", 1.3],
+        ["2026-11-04", 3.07]
+      ],
+      "day": null,
+      "totals": {
+        "by_project": [
+          ["claude-sessions", 41.2],
+          ["vehicle-api", 18.75],
+          ["a-very-long-folder-name-indeed", 9.1],
+          ["docs", 3.3],
+          ["scratch", 0.4]
+        ],
+        "by_model": [
+          ["claude-opus-4-6", 52.1],
+          ["claude-sonnet-4-5", 19.6],
+          ["claude-haiku-4-5", 1.05]
+        ],
+        "added": 12873,
+        "removed": 4410,
+        "sessions": 23
+      },
+      "hours": [0, 0, 0, 0, 0, 0, 0, 0, 1200, 3600, 2700, 600, 0, 1800, 3600, 1830, 0, 0, 0, 0, 0, 0, 0, 0]
+    },
+    "height": 27,
+    "runs": [
+      {"name": "claude -p 'summarise the release notes'", "started": 1793806170.625},
+      {"name": "nightly-triage", "started": 1793795395.625},
+      {"name": "a background run with a name far too long to fit", "started": 1793805780.625},
+      {"name": "fourth run that has no room", "started": 1793806140.625}
+    ]
+  },
+  {
+    "name": "sidebar_short_5",
+    "kind": "sidebar",
+    "now": 1793806200.625,
+    "entries": [
+      {
+        "window_id": "@41",
+        "name": "web",
+        "status": "permission",
+        "since": 1793806020.625,
+        "cost": 3.1,
+        "duration": 2400,
+        "model": null
+      },
+      {
+        "window_id": "@42",
+        "name": "api",
+        "status": "working",
+        "since": 1793806195.625,
+        "cost": 0.9,
+        "duration": 4320,
+        "model": null
+      },
+      {
+        "window_id": "@43",
+        "name": "docs",
+        "status": "done",
+        "since": 1793806191.625,
+        "cost": 0.12,
+        "duration": 900,
+        "model": null
+      }
+    ],
+    "current": "@42",
+    "stats": {
+      "limits": {
+        "five_hour": {"pct": 58, "resets_at": 1793815380.625},
+        "seven_day": {"pct": 76, "resets_at": 1794043920.625}
+      },
+      "today": 9.59,
+      "week": [
+        ["2026-10-29", 0],
+        ["2026-10-30", 2.4],
+        ["2026-10-31", 4.15],
+        ["2026-11-01", 6.0],
+        ["2026-11-02", 8.62],
+        ["2026-11-03", 1.3],
+        ["2026-11-04", 3.07]
+      ],
+      "day": {"added": 1376, "removed": 58, "sessions": 4, "waited": 720},
+      "totals": {
+        "by_project": [
+          ["claude-sessions", 41.2],
+          ["vehicle-api", 18.75],
+          ["a-very-long-folder-name-indeed", 9.1],
+          ["docs", 3.3],
+          ["scratch", 0.4]
+        ],
+        "by_model": [
+          ["claude-opus-4-6", 52.1],
+          ["claude-sonnet-4-5", 19.6],
+          ["claude-haiku-4-5", 1.05]
+        ],
+        "added": 12873,
+        "removed": 4410,
+        "sessions": 23
+      },
+      "hours": [0, 0, 0, 0, 0, 0, 0, 0, 1200, 3600, 2700, 600, 0, 1800, 3600, 1830, 0, 0, 0, 0, 0, 0, 0, 0]
+    },
+    "height": 5,
+    "runs": []
+  },
+  {
+    "name": "sidebar_short_20",
+    "kind": "sidebar",
+    "now": 1793806200.625,
+    "entries": [
+      {
+        "window_id": "@51",
+        "name": "web",
+        "status": "permission",
+        "since": 1793806020.625,
+        "cost": 3.1,
+        "duration": 2400,
+        "model": null
+      },
+      {
+        "window_id": "@52",
+        "name": "api",
+        "status": "working",
+        "since": 1793806195.625,
+        "cost": 0.9,
+        "duration": 4320,
+        "model": null
+      },
+      {
+        "window_id": "@53",
+        "name": "docs",
+        "status": "done",
+        "since": 1793806191.625,
+        "cost": 0.12,
+        "duration": 900,
+        "model": null
+      }
+    ],
+    "current": "@52",
+    "stats": {
+      "limits": {
+        "five_hour": {"pct": 70, "resets_at": 1793806170.625},
+        "seven_day": {"pct": 85, "resets_at": 1794407400.625}
+      },
+      "today": 9.59,
+      "week": [
+        ["2026-10-29", 0],
+        ["2026-10-30", 2.4],
+        ["2026-10-31", 4.15],
+        ["2026-11-01", 6.0],
+        ["2026-11-02", 8.62],
+        ["2026-11-03", 1.3],
+        ["2026-11-04", 3.07]
+      ],
+      "day": {"added": 1376, "removed": 58, "sessions": 4, "waited": 720},
+      "totals": {
+        "by_project": [
+          ["claude-sessions", 41.2],
+          ["vehicle-api", 18.75],
+          ["a-very-long-folder-name-indeed", 9.1],
+          ["docs", 3.3],
+          ["scratch", 0.4]
+        ],
+        "by_model": [
+          ["claude-opus-4-6", 52.1],
+          ["claude-sonnet-4-5", 19.6],
+          ["claude-haiku-4-5", 1.05]
+        ],
+        "added": 12873,
+        "removed": 4410,
+        "sessions": 23
+      },
+      "hours": [0, 0, 0, 0, 0, 0, 0, 0, 1200, 3600, 2700, 600, 0, 1800, 3600, 1830, 0, 0, 0, 0, 0, 0, 0, 0]
+    },
+    "height": 20,
+    "runs": [
+      {"name": "claude -p 'no room for me'", "started": 1793806110.625}
+    ]
+  },
+  {
+    "name": "sidebar_empty",
+    "kind": "sidebar",
+    "now": 1793806200.625,
+    "entries": [],
+    "current": null,
+    "stats": {
+      "limits": {},
+      "today": 0.0,
+      "week": [
+        ["2026-10-29", 0],
+        ["2026-10-30", 0],
+        ["2026-10-31", 0],
+        ["2026-11-01", 0],
+        ["2026-11-02", 0],
+        ["2026-11-03", 0],
+        ["2026-11-04", 0]
+      ],
+      "day": null,
+      "totals": null,
+      "hours": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    },
+    "height": 30,
+    "runs": []
+  },
+  {
+    "name": "landing_wide_200x50",
+    "kind": "landing",
+    "now": 1793806200.625,
+    "folders": [
+      {
+        "path": "/home/dev/work/claude-sessions",
+        "name": "claude-sessions",
+        "last": 1793806080.625,
+        "count": 14,
+        "spend": 41.2,
+        "sessions": [
+          {"id": "c1", "title": "port the golden harness to Rust", "last": 1793806080.625, "cost": 3.42},
+          {"id": "c2", "title": "fix the sidebar spinner drift", "last": 1793803200.625, "cost": 1.08},
+          {"id": "c3", "title": "summarise the release notes", "last": 1793791800.625, "cost": 0.51},
+          {
+            "id": "c4",
+            "title": "review install.sh migration from the Python cs command",
+            "last": 1793773800.625,
+            "cost": 12.3
+          },
+          {"id": "c5", "title": "why is the hook slow", "last": 1793719740.625, "cost": null},
+          {"id": "c6", "title": "statusline chain timeout", "last": 1793547000.625, "cost": 0.07},
+          {"id": "c7", "title": "tmux.conf signal keys", "last": 1793374200.625, "cost": 2.9},
+          {"id": "c8", "title": "first session", "last": 1793269800.625, "cost": 0.33}
+        ]
+      },
+      {
+        "path": "/home/dev/work/vehicle-api",
+        "name": "vehicle-api",
+        "last": 1793795400.625,
+        "count": 6,
+        "spend": 18.75,
+        "sessions": [
+          {"id": "v1", "title": "k265 telemetry backfill", "last": 1793795400.625, "cost": 6.1},
+          {"id": "v2", "title": "flaky integration test", "last": 1793633400.625, "cost": 9.4},
+          {"id": "v3", "title": "bump dependencies", "last": 1793460600.625, "cost": 3.25}
+        ]
+      },
+      {
+        "path": "/home/dev/notes",
+        "name": "notes",
+        "last": 1793633400.625,
+        "count": 1,
+        "spend": 0.0,
+        "sessions": [
+          {"id": "n1", "title": "weekly plan", "last": 1793633400.625, "cost": 0.02}
+        ]
+      },
+      {
+        "path": "/home/dev/a/very/deep/path/with-a-folder-name-that-is-really-long",
+        "name": "with-a-folder-name-that-is-really-long-for-the-list-to-cut",
+        "last": 1790350200.625,
+        "count": 2,
+        "spend": 0.4,
+        "sessions": []
+      },
+      {
+        "path": "/srv/legacy",
+        "name": "legacy",
+        "last": 1776526200.625,
+        "count": 0,
+        "spend": 0.0,
+        "sessions": []
+      }
+    ],
+    "query": "",
+    "cursor": 0,
+    "expanded": [],
+    "scroll": {},
+    "searching": false,
+    "opened": 3,
+    "stats": {
+      "limits": {
+        "five_hour": {"pct": 58, "resets_at": 1793815380.625},
+        "seven_day": {"pct": 76, "resets_at": 1794043920.625}
+      },
+      "today": 9.59,
+      "week": [
+        ["2026-10-29", 0],
+        ["2026-10-30", 2.4],
+        ["2026-10-31", 4.15],
+        ["2026-11-01", 6.0],
+        ["2026-11-02", 8.62],
+        ["2026-11-03", 1.3],
+        ["2026-11-04", 3.07]
+      ],
+      "day": {"added": 1376, "removed": 58, "sessions": 4, "waited": 720},
+      "totals": {
+        "by_project": [
+          ["claude-sessions", 41.2],
+          ["vehicle-api", 18.75],
+          ["a-very-long-folder-name-indeed", 9.1],
+          ["docs", 3.3],
+          ["scratch", 0.4]
+        ],
+        "by_model": [
+          ["claude-opus-4-6", 52.1],
+          ["claude-sonnet-4-5", 19.6],
+          ["claude-haiku-4-5", 1.05]
+        ],
+        "added": 12873,
+        "removed": 4410,
+        "sessions": 23
+      },
+      "hours": [0, 0, 0, 0, 0, 0, 0, 0, 1200, 3600, 2700, 600, 0, 1800, 3600, 1830, 0, 0, 0, 0, 0, 0, 0, 0]
+    },
+    "width": 200,
+    "height": 50,
+    "dirs": []
+  },
+  {
+    "name": "landing_medium_100x40",
+    "kind": "landing",
+    "now": 1793806200.625,
+    "folders": [
+      {
+        "path": "/home/dev/work/claude-sessions",
+        "name": "claude-sessions",
+        "last": 1793806080.625,
+        "count": 14,
+        "spend": 41.2,
+        "sessions": [
+          {"id": "c1", "title": "port the golden harness to Rust", "last": 1793806080.625, "cost": 3.42},
+          {"id": "c2", "title": "fix the sidebar spinner drift", "last": 1793803200.625, "cost": 1.08},
+          {"id": "c3", "title": "summarise the release notes", "last": 1793791800.625, "cost": 0.51},
+          {
+            "id": "c4",
+            "title": "review install.sh migration from the Python cs command",
+            "last": 1793773800.625,
+            "cost": 12.3
+          },
+          {"id": "c5", "title": "why is the hook slow", "last": 1793719740.625, "cost": null},
+          {"id": "c6", "title": "statusline chain timeout", "last": 1793547000.625, "cost": 0.07},
+          {"id": "c7", "title": "tmux.conf signal keys", "last": 1793374200.625, "cost": 2.9},
+          {"id": "c8", "title": "first session", "last": 1793269800.625, "cost": 0.33}
+        ]
+      },
+      {
+        "path": "/home/dev/work/vehicle-api",
+        "name": "vehicle-api",
+        "last": 1793795400.625,
+        "count": 6,
+        "spend": 18.75,
+        "sessions": [
+          {"id": "v1", "title": "k265 telemetry backfill", "last": 1793795400.625, "cost": 6.1},
+          {"id": "v2", "title": "flaky integration test", "last": 1793633400.625, "cost": 9.4},
+          {"id": "v3", "title": "bump dependencies", "last": 1793460600.625, "cost": 3.25}
+        ]
+      },
+      {
+        "path": "/home/dev/notes",
+        "name": "notes",
+        "last": 1793633400.625,
+        "count": 1,
+        "spend": 0.0,
+        "sessions": [
+          {"id": "n1", "title": "weekly plan", "last": 1793633400.625, "cost": 0.02}
+        ]
+      },
+      {
+        "path": "/home/dev/a/very/deep/path/with-a-folder-name-that-is-really-long",
+        "name": "with-a-folder-name-that-is-really-long-for-the-list-to-cut",
+        "last": 1790350200.625,
+        "count": 2,
+        "spend": 0.4,
+        "sessions": []
+      },
+      {
+        "path": "/srv/legacy",
+        "name": "legacy",
+        "last": 1776526200.625,
+        "count": 0,
+        "spend": 0.0,
+        "sessions": []
+      }
+    ],
+    "query": "",
+    "cursor": 2,
+    "expanded": [],
+    "scroll": {},
+    "searching": false,
+    "opened": 1,
+    "stats": {
+      "limits": {
+        "five_hour": {"pct": 58, "resets_at": 1793815380.625},
+        "seven_day": {"pct": 76, "resets_at": 1794043920.625}
+      },
+      "today": 9.59,
+      "week": [
+        ["2026-10-29", 0],
+        ["2026-10-30", 2.4],
+        ["2026-10-31", 4.15],
+        ["2026-11-01", 6.0],
+        ["2026-11-02", 8.62],
+        ["2026-11-03", 1.3],
+        ["2026-11-04", 3.07]
+      ],
+      "day": {"added": 1376, "removed": 58, "sessions": 4, "waited": 720},
+      "totals": {
+        "by_project": [
+          ["claude-sessions", 41.2],
+          ["vehicle-api", 18.75],
+          ["a-very-long-folder-name-indeed", 9.1],
+          ["docs", 3.3],
+          ["scratch", 0.4]
+        ],
+        "by_model": [
+          ["claude-opus-4-6", 52.1],
+          ["claude-sonnet-4-5", 19.6],
+          ["claude-haiku-4-5", 1.05]
+        ],
+        "added": 12873,
+        "removed": 4410,
+        "sessions": 23
+      },
+      "hours": [0, 0, 0, 0, 0, 0, 0, 0, 1200, 3600, 2700, 600, 0, 1800, 3600, 1830, 0, 0, 0, 0, 0, 0, 0, 0]
+    },
+    "width": 100,
+    "height": 40,
+    "dirs": []
+  },
+  {
+    "name": "landing_narrow_30x20",
+    "kind": "landing",
+    "now": 1793806200.625,
+    "folders": [
+      {
+        "path": "/home/dev/work/claude-sessions",
+        "name": "claude-sessions",
+        "last": 1793806080.625,
+        "count": 14,
+        "spend": 41.2,
+        "sessions": [
+          {"id": "c1", "title": "port the golden harness to Rust", "last": 1793806080.625, "cost": 3.42},
+          {"id": "c2", "title": "fix the sidebar spinner drift", "last": 1793803200.625, "cost": 1.08},
+          {"id": "c3", "title": "summarise the release notes", "last": 1793791800.625, "cost": 0.51},
+          {
+            "id": "c4",
+            "title": "review install.sh migration from the Python cs command",
+            "last": 1793773800.625,
+            "cost": 12.3
+          },
+          {"id": "c5", "title": "why is the hook slow", "last": 1793719740.625, "cost": null},
+          {"id": "c6", "title": "statusline chain timeout", "last": 1793547000.625, "cost": 0.07},
+          {"id": "c7", "title": "tmux.conf signal keys", "last": 1793374200.625, "cost": 2.9},
+          {"id": "c8", "title": "first session", "last": 1793269800.625, "cost": 0.33}
+        ]
+      },
+      {
+        "path": "/home/dev/work/vehicle-api",
+        "name": "vehicle-api",
+        "last": 1793795400.625,
+        "count": 6,
+        "spend": 18.75,
+        "sessions": [
+          {"id": "v1", "title": "k265 telemetry backfill", "last": 1793795400.625, "cost": 6.1},
+          {"id": "v2", "title": "flaky integration test", "last": 1793633400.625, "cost": 9.4},
+          {"id": "v3", "title": "bump dependencies", "last": 1793460600.625, "cost": 3.25}
+        ]
+      },
+      {
+        "path": "/home/dev/notes",
+        "name": "notes",
+        "last": 1793633400.625,
+        "count": 1,
+        "spend": 0.0,
+        "sessions": [
+          {"id": "n1", "title": "weekly plan", "last": 1793633400.625, "cost": 0.02}
+        ]
+      },
+      {
+        "path": "/home/dev/a/very/deep/path/with-a-folder-name-that-is-really-long",
+        "name": "with-a-folder-name-that-is-really-long-for-the-list-to-cut",
+        "last": 1790350200.625,
+        "count": 2,
+        "spend": 0.4,
+        "sessions": []
+      },
+      {
+        "path": "/srv/legacy",
+        "name": "legacy",
+        "last": 1776526200.625,
+        "count": 0,
+        "spend": 0.0,
+        "sessions": []
+      }
+    ],
+    "query": "",
+    "cursor": 0,
+    "expanded": [],
+    "scroll": {},
+    "searching": false,
+    "opened": 0,
+    "stats": {
+      "limits": {
+        "five_hour": {"pct": 58, "resets_at": 1793815380.625},
+        "seven_day": {"pct": 76, "resets_at": 1794043920.625}
+      },
+      "today": 9.59,
+      "week": [
+        ["2026-10-29", 0],
+        ["2026-10-30", 2.4],
+        ["2026-10-31", 4.15],
+        ["2026-11-01", 6.0],
+        ["2026-11-02", 8.62],
+        ["2026-11-03", 1.3],
+        ["2026-11-04", 3.07]
+      ],
+      "day": {"added": 1376, "removed": 58, "sessions": 4, "waited": 720},
+      "totals": {
+        "by_project": [
+          ["claude-sessions", 41.2],
+          ["vehicle-api", 18.75],
+          ["a-very-long-folder-name-indeed", 9.1],
+          ["docs", 3.3],
+          ["scratch", 0.4]
+        ],
+        "by_model": [
+          ["claude-opus-4-6", 52.1],
+          ["claude-sonnet-4-5", 19.6],
+          ["claude-haiku-4-5", 1.05]
+        ],
+        "added": 12873,
+        "removed": 4410,
+        "sessions": 23
+      },
+      "hours": [0, 0, 0, 0, 0, 0, 0, 0, 1200, 3600, 2700, 600, 0, 1800, 3600, 1830, 0, 0, 0, 0, 0, 0, 0, 0]
+    },
+    "width": 30,
+    "height": 20,
+    "dirs": []
+  },
+  {
+    "name": "landing_searching_no_match",
+    "kind": "landing",
+    "now": 1793806200.625,
+    "folders": [
+      {
+        "path": "/home/dev/work/claude-sessions",
+        "name": "claude-sessions",
+        "last": 1793806080.625,
+        "count": 14,
+        "spend": 41.2,
+        "sessions": [
+          {"id": "c1", "title": "port the golden harness to Rust", "last": 1793806080.625, "cost": 3.42},
+          {"id": "c2", "title": "fix the sidebar spinner drift", "last": 1793803200.625, "cost": 1.08},
+          {"id": "c3", "title": "summarise the release notes", "last": 1793791800.625, "cost": 0.51},
+          {
+            "id": "c4",
+            "title": "review install.sh migration from the Python cs command",
+            "last": 1793773800.625,
+            "cost": 12.3
+          },
+          {"id": "c5", "title": "why is the hook slow", "last": 1793719740.625, "cost": null},
+          {"id": "c6", "title": "statusline chain timeout", "last": 1793547000.625, "cost": 0.07},
+          {"id": "c7", "title": "tmux.conf signal keys", "last": 1793374200.625, "cost": 2.9},
+          {"id": "c8", "title": "first session", "last": 1793269800.625, "cost": 0.33}
+        ]
+      },
+      {
+        "path": "/home/dev/work/vehicle-api",
+        "name": "vehicle-api",
+        "last": 1793795400.625,
+        "count": 6,
+        "spend": 18.75,
+        "sessions": [
+          {"id": "v1", "title": "k265 telemetry backfill", "last": 1793795400.625, "cost": 6.1},
+          {"id": "v2", "title": "flaky integration test", "last": 1793633400.625, "cost": 9.4},
+          {"id": "v3", "title": "bump dependencies", "last": 1793460600.625, "cost": 3.25}
+        ]
+      },
+      {
+        "path": "/home/dev/notes",
+        "name": "notes",
+        "last": 1793633400.625,
+        "count": 1,
+        "spend": 0.0,
+        "sessions": [
+          {"id": "n1", "title": "weekly plan", "last": 1793633400.625, "cost": 0.02}
+        ]
+      },
+      {
+        "path": "/home/dev/a/very/deep/path/with-a-folder-name-that-is-really-long",
+        "name": "with-a-folder-name-that-is-really-long-for-the-list-to-cut",
+        "last": 1790350200.625,
+        "count": 2,
+        "spend": 0.4,
+        "sessions": []
+      },
+      {
+        "path": "/srv/legacy",
+        "name": "legacy",
+        "last": 1776526200.625,
+        "count": 0,
+        "spend": 0.0,
+        "sessions": []
+      }
+    ],
+    "query": "zzz",
+    "cursor": 0,
+    "expanded": [],
+    "scroll": {},
+    "searching": true,
+    "opened": 3,
+    "stats": {
+      "limits": {
+        "five_hour": {"pct": 58, "resets_at": 1793815380.625},
+        "seven_day": {"pct": 76, "resets_at": 1794043920.625}
+      },
+      "today": 9.59,
+      "week": [
+        ["2026-10-29", 0],
+        ["2026-10-30", 2.4],
+        ["2026-10-31", 4.15],
+        ["2026-11-01", 6.0],
+        ["2026-11-02", 8.62],
+        ["2026-11-03", 1.3],
+        ["2026-11-04", 3.07]
+      ],
+      "day": {"added": 1376, "removed": 58, "sessions": 4, "waited": 720},
+      "totals": {
+        "by_project": [
+          ["claude-sessions", 41.2],
+          ["vehicle-api", 18.75],
+          ["a-very-long-folder-name-indeed", 9.1],
+          ["docs", 3.3],
+          ["scratch", 0.4]
+        ],
+        "by_model": [
+          ["claude-opus-4-6", 52.1],
+          ["claude-sonnet-4-5", 19.6],
+          ["claude-haiku-4-5", 1.05]
+        ],
+        "added": 12873,
+        "removed": 4410,
+        "sessions": 23
+      },
+      "hours": [0, 0, 0, 0, 0, 0, 0, 0, 1200, 3600, 2700, 600, 0, 1800, 3600, 1830, 0, 0, 0, 0, 0, 0, 0, 0]
+    },
+    "width": 120,
+    "height": 33,
+    "dirs": []
+  },
+  {
+    "name": "landing_expanded_scrolled",
+    "kind": "landing",
+    "now": 1793806200.625,
+    "folders": [
+      {
+        "path": "/home/dev/work/claude-sessions",
+        "name": "claude-sessions",
+        "last": 1793806080.625,
+        "count": 14,
+        "spend": 41.2,
+        "sessions": [
+          {"id": "c1", "title": "port the golden harness to Rust", "last": 1793806080.625, "cost": 3.42},
+          {"id": "c2", "title": "fix the sidebar spinner drift", "last": 1793803200.625, "cost": 1.08},
+          {"id": "c3", "title": "summarise the release notes", "last": 1793791800.625, "cost": 0.51},
+          {
+            "id": "c4",
+            "title": "review install.sh migration from the Python cs command",
+            "last": 1793773800.625,
+            "cost": 12.3
+          },
+          {"id": "c5", "title": "why is the hook slow", "last": 1793719740.625, "cost": null},
+          {"id": "c6", "title": "statusline chain timeout", "last": 1793547000.625, "cost": 0.07},
+          {"id": "c7", "title": "tmux.conf signal keys", "last": 1793374200.625, "cost": 2.9},
+          {"id": "c8", "title": "first session", "last": 1793269800.625, "cost": 0.33}
+        ]
+      },
+      {
+        "path": "/home/dev/work/vehicle-api",
+        "name": "vehicle-api",
+        "last": 1793795400.625,
+        "count": 6,
+        "spend": 18.75,
+        "sessions": [
+          {"id": "v1", "title": "k265 telemetry backfill", "last": 1793795400.625, "cost": 6.1},
+          {"id": "v2", "title": "flaky integration test", "last": 1793633400.625, "cost": 9.4},
+          {"id": "v3", "title": "bump dependencies", "last": 1793460600.625, "cost": 3.25}
+        ]
+      },
+      {
+        "path": "/home/dev/notes",
+        "name": "notes",
+        "last": 1793633400.625,
+        "count": 1,
+        "spend": 0.0,
+        "sessions": [
+          {"id": "n1", "title": "weekly plan", "last": 1793633400.625, "cost": 0.02}
+        ]
+      },
+      {
+        "path": "/home/dev/a/very/deep/path/with-a-folder-name-that-is-really-long",
+        "name": "with-a-folder-name-that-is-really-long-for-the-list-to-cut",
+        "last": 1790350200.625,
+        "count": 2,
+        "spend": 0.4,
+        "sessions": []
+      },
+      {
+        "path": "/srv/legacy",
+        "name": "legacy",
+        "last": 1776526200.625,
+        "count": 0,
+        "spend": 0.0,
+        "sessions": []
+      }
+    ],
+    "query": "",
+    "cursor": 5,
+    "expanded": ["/home/dev/work/claude-sessions"],
+    "scroll": {"/home/dev/work/claude-sessions": 2},
+    "searching": false,
+    "opened": 3,
+    "stats": {
+      "limits": {
+        "five_hour": {"pct": 58, "resets_at": 1793815380.625},
+        "seven_day": {"pct": 76, "resets_at": 1794043920.625}
+      },
+      "today": 9.59,
+      "week": [
+        ["2026-10-29", 0],
+        ["2026-10-30", 2.4],
+        ["2026-10-31", 4.15],
+        ["2026-11-01", 6.0],
+        ["2026-11-02", 8.62],
+        ["2026-11-03", 1.3],
+        ["2026-11-04", 3.07]
+      ],
+      "day": {"added": 1376, "removed": 58, "sessions": 4, "waited": 720},
+      "totals": {
+        "by_project": [
+          ["claude-sessions", 41.2],
+          ["vehicle-api", 18.75],
+          ["a-very-long-folder-name-indeed", 9.1],
+          ["docs", 3.3],
+          ["scratch", 0.4]
+        ],
+        "by_model": [
+          ["claude-opus-4-6", 52.1],
+          ["claude-sonnet-4-5", 19.6],
+          ["claude-haiku-4-5", 1.05]
+        ],
+        "added": 12873,
+        "removed": 4410,
+        "sessions": 23
+      },
+      "hours": [0, 0, 0, 0, 0, 0, 0, 0, 1200, 3600, 2700, 600, 0, 1800, 3600, 1830, 0, 0, 0, 0, 0, 0, 0, 0]
+    },
+    "width": 140,
+    "height": 24,
+    "dirs": []
+  },
+  {
+    "name": "panel_default",
+    "kind": "panel",
+    "now": 1793806200.625,
+    "folders": [
+      {
+        "path": "/home/dev/work/claude-sessions",
+        "name": "claude-sessions",
+        "last": 1793806080.625,
+        "count": 14,
+        "spend": 41.2,
+        "sessions": [
+          {"id": "c1", "title": "port the golden harness to Rust", "last": 1793806080.625, "cost": 3.42},
+          {"id": "c2", "title": "fix the sidebar spinner drift", "last": 1793803200.625, "cost": 1.08},
+          {"id": "c3", "title": "summarise the release notes", "last": 1793791800.625, "cost": 0.51},
+          {
+            "id": "c4",
+            "title": "review install.sh migration from the Python cs command",
+            "last": 1793773800.625,
+            "cost": 12.3
+          },
+          {"id": "c5", "title": "why is the hook slow", "last": 1793719740.625, "cost": null},
+          {"id": "c6", "title": "statusline chain timeout", "last": 1793547000.625, "cost": 0.07},
+          {"id": "c7", "title": "tmux.conf signal keys", "last": 1793374200.625, "cost": 2.9},
+          {"id": "c8", "title": "first session", "last": 1793269800.625, "cost": 0.33}
+        ]
+      },
+      {
+        "path": "/home/dev/work/vehicle-api",
+        "name": "vehicle-api",
+        "last": 1793795400.625,
+        "count": 6,
+        "spend": 18.75,
+        "sessions": [
+          {"id": "v1", "title": "k265 telemetry backfill", "last": 1793795400.625, "cost": 6.1},
+          {"id": "v2", "title": "flaky integration test", "last": 1793633400.625, "cost": 9.4},
+          {"id": "v3", "title": "bump dependencies", "last": 1793460600.625, "cost": 3.25}
+        ]
+      },
+      {
+        "path": "/home/dev/notes",
+        "name": "notes",
+        "last": 1793633400.625,
+        "count": 1,
+        "spend": 0.0,
+        "sessions": [
+          {"id": "n1", "title": "weekly plan", "last": 1793633400.625, "cost": 0.02}
+        ]
+      },
+      {
+        "path": "/home/dev/a/very/deep/path/with-a-folder-name-that-is-really-long",
+        "name": "with-a-folder-name-that-is-really-long-for-the-list-to-cut",
+        "last": 1790350200.625,
+        "count": 2,
+        "spend": 0.4,
+        "sessions": []
+      },
+      {
+        "path": "/srv/legacy",
+        "name": "legacy",
+        "last": 1776526200.625,
+        "count": 0,
+        "spend": 0.0,
+        "sessions": []
+      }
+    ],
+    "query": "",
+    "cursor": 1,
+    "expanded": [],
+    "scroll": {},
+    "height": 20,
+    "dirs": []
+  },
+  {
+    "name": "panel_expanded_scrolled",
+    "kind": "panel",
+    "now": 1793806200.625,
+    "folders": [
+      {
+        "path": "/home/dev/work/claude-sessions",
+        "name": "claude-sessions",
+        "last": 1793806080.625,
+        "count": 14,
+        "spend": 41.2,
+        "sessions": [
+          {"id": "c1", "title": "port the golden harness to Rust", "last": 1793806080.625, "cost": 3.42},
+          {"id": "c2", "title": "fix the sidebar spinner drift", "last": 1793803200.625, "cost": 1.08},
+          {"id": "c3", "title": "summarise the release notes", "last": 1793791800.625, "cost": 0.51},
+          {
+            "id": "c4",
+            "title": "review install.sh migration from the Python cs command",
+            "last": 1793773800.625,
+            "cost": 12.3
+          },
+          {"id": "c5", "title": "why is the hook slow", "last": 1793719740.625, "cost": null},
+          {"id": "c6", "title": "statusline chain timeout", "last": 1793547000.625, "cost": 0.07},
+          {"id": "c7", "title": "tmux.conf signal keys", "last": 1793374200.625, "cost": 2.9},
+          {"id": "c8", "title": "first session", "last": 1793269800.625, "cost": 0.33}
+        ]
+      },
+      {
+        "path": "/home/dev/work/vehicle-api",
+        "name": "vehicle-api",
+        "last": 1793795400.625,
+        "count": 6,
+        "spend": 18.75,
+        "sessions": [
+          {"id": "v1", "title": "k265 telemetry backfill", "last": 1793795400.625, "cost": 6.1},
+          {"id": "v2", "title": "flaky integration test", "last": 1793633400.625, "cost": 9.4},
+          {"id": "v3", "title": "bump dependencies", "last": 1793460600.625, "cost": 3.25}
+        ]
+      },
+      {
+        "path": "/home/dev/notes",
+        "name": "notes",
+        "last": 1793633400.625,
+        "count": 1,
+        "spend": 0.0,
+        "sessions": [
+          {"id": "n1", "title": "weekly plan", "last": 1793633400.625, "cost": 0.02}
+        ]
+      },
+      {
+        "path": "/home/dev/a/very/deep/path/with-a-folder-name-that-is-really-long",
+        "name": "with-a-folder-name-that-is-really-long-for-the-list-to-cut",
+        "last": 1790350200.625,
+        "count": 2,
+        "spend": 0.4,
+        "sessions": []
+      },
+      {
+        "path": "/srv/legacy",
+        "name": "legacy",
+        "last": 1776526200.625,
+        "count": 0,
+        "spend": 0.0,
+        "sessions": []
+      }
+    ],
+    "query": "",
+    "cursor": 6,
+    "expanded": ["/home/dev/work/claude-sessions"],
+    "scroll": {"/home/dev/work/claude-sessions": 3},
+    "height": 12,
+    "dirs": []
+  },
+  {
+    "name": "panel_typed_path",
+    "kind": "panel",
+    "now": 1793806200.625,
+    "folders": [
+      {
+        "path": "/home/dev/work/claude-sessions",
+        "name": "claude-sessions",
+        "last": 1793806080.625,
+        "count": 14,
+        "spend": 41.2,
+        "sessions": [
+          {"id": "c1", "title": "port the golden harness to Rust", "last": 1793806080.625, "cost": 3.42},
+          {"id": "c2", "title": "fix the sidebar spinner drift", "last": 1793803200.625, "cost": 1.08},
+          {"id": "c3", "title": "summarise the release notes", "last": 1793791800.625, "cost": 0.51},
+          {
+            "id": "c4",
+            "title": "review install.sh migration from the Python cs command",
+            "last": 1793773800.625,
+            "cost": 12.3
+          },
+          {"id": "c5", "title": "why is the hook slow", "last": 1793719740.625, "cost": null},
+          {"id": "c6", "title": "statusline chain timeout", "last": 1793547000.625, "cost": 0.07},
+          {"id": "c7", "title": "tmux.conf signal keys", "last": 1793374200.625, "cost": 2.9},
+          {"id": "c8", "title": "first session", "last": 1793269800.625, "cost": 0.33}
+        ]
+      },
+      {
+        "path": "/home/dev/work/vehicle-api",
+        "name": "vehicle-api",
+        "last": 1793795400.625,
+        "count": 6,
+        "spend": 18.75,
+        "sessions": [
+          {"id": "v1", "title": "k265 telemetry backfill", "last": 1793795400.625, "cost": 6.1},
+          {"id": "v2", "title": "flaky integration test", "last": 1793633400.625, "cost": 9.4},
+          {"id": "v3", "title": "bump dependencies", "last": 1793460600.625, "cost": 3.25}
+        ]
+      },
+      {
+        "path": "/home/dev/notes",
+        "name": "notes",
+        "last": 1793633400.625,
+        "count": 1,
+        "spend": 0.0,
+        "sessions": [
+          {"id": "n1", "title": "weekly plan", "last": 1793633400.625, "cost": 0.02}
+        ]
+      },
+      {
+        "path": "/home/dev/a/very/deep/path/with-a-folder-name-that-is-really-long",
+        "name": "with-a-folder-name-that-is-really-long-for-the-list-to-cut",
+        "last": 1790350200.625,
+        "count": 2,
+        "spend": 0.4,
+        "sessions": []
+      },
+      {
+        "path": "/srv/legacy",
+        "name": "legacy",
+        "last": 1776526200.625,
+        "count": 0,
+        "spend": 0.0,
+        "sessions": []
+      }
+    ],
+    "query": "/home/dev/work",
+    "cursor": 0,
+    "expanded": [],
+    "scroll": {},
+    "height": 16,
+    "dirs": ["/home/dev/work"]
+  },
+  {
+    "name": "panel_empty",
+    "kind": "panel",
+    "now": 1793806200.625,
+    "folders": [],
+    "query": "",
+    "cursor": 0,
+    "expanded": [],
+    "scroll": {},
+    "height": 10,
+    "dirs": []
+  }
+]
