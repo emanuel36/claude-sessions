@@ -3,5 +3,6 @@
 /// The version of this build, printed by `cst --version`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+pub mod journal;
 pub mod paths;
 pub mod state;
