@@ -46,11 +46,14 @@ pub fn process_start(pid: i32) -> Option<u64> {
 }
 
 /// Tells whether the Claude process behind a record still runs, and is the same one.
+///
+/// A record needs both its pid and the start time it was written with: without a start time
+/// there is nothing to tell the process from another that took the pid, so it counts as dead.
 pub fn is_alive(r: &Record) -> bool {
-    let Some(pid) = r.pid else {
+    let (Some(pid), Some(start)) = (r.pid, r.pid_start) else {
         return false;
     };
-    process_start(pid) == r.pid_start
+    process_start(pid) == Some(start)
 }
 
 /// Reads field 22 (`starttime`) of the contents of `/proc/<pid>/stat`.
@@ -345,6 +348,29 @@ mod tests {
         let all = load_all_in(tmp.path(), 0.0, &quiet);
         assert_eq!(ids(&all), ["alive"]);
         assert_eq!(read_in(tmp.path(), "dead"), None);
+    }
+
+    #[test]
+    fn a_record_without_a_start_time_is_swept_as_dead() {
+        let tmp = TempDir::new().unwrap();
+        // No such process, and nothing to tell one from another: not alive
+        let gone = Record {
+            pid: Some(i32::MAX),
+            pid_start: None,
+            ..new_record("gone")
+        };
+        write_in(tmp.path(), &gone, &quiet).unwrap();
+        assert!(load_all_in(tmp.path(), 0.0, &quiet).is_empty());
+        assert_eq!(read_in(tmp.path(), "gone"), None);
+    }
+
+    #[test]
+    fn a_running_pid_without_a_start_time_is_not_alive() {
+        let r = Record {
+            pid_start: None,
+            ..live_record("unproven")
+        };
+        assert!(!is_alive(&r));
     }
 
     #[test]
