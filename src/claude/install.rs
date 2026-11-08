@@ -473,13 +473,19 @@ fn saved_status_line(loc: &Locations, settings: &Value) -> Result<Option<Value>,
     match read_object(&loc.saved).map_err(Failure::io(&loc.settings))? {
         Read::Object(saved) => Ok(Some(saved)),
         Read::Invalid => Ok(None),
-        Read::Missing if settings.get("statusLine").is_some_and(entry_is_ours) => {
-            Ok(match read_object(&loc.legacy_saved) {
-                Ok(Read::Object(saved)) => Some(saved),
-                _ => None,
-            })
-        }
-        Read::Missing => Ok(None),
+        Read::Missing => Ok(python_saved_status_line(loc, settings)),
+    }
+}
+
+/// Returns the user's own status line saved by the Python version, if the status line in
+/// `settings` is still ours and the file is a valid one.
+fn python_saved_status_line(loc: &Locations, settings: &Value) -> Option<Value> {
+    if !settings.get("statusLine").is_some_and(entry_is_ours) {
+        return None;
+    }
+    match read_object(&loc.legacy_saved) {
+        Ok(Read::Object(saved)) => Some(saved),
+        _ => None,
     }
 }
 
@@ -551,7 +557,7 @@ fn try_uninstall(loc: &Locations, out: &mut dyn Write) -> Result<(), Failure> {
     let io_failure = Failure::io(&loc.settings);
     let settings = load_settings(&loc.settings)?;
     let saved = match read_object(&loc.saved).map_err(&io_failure)? {
-        Read::Missing => None,
+        Read::Missing => python_saved_status_line(loc, &settings),
         Read::Invalid => return Err(Failure::new(&loc.saved, "not a valid JSON object")),
         Read::Object(saved) => Some(saved),
     };
@@ -1187,6 +1193,43 @@ mod tests {
             "hooks": hooks,
             "statusLine": {"type": "command", "command": "/home/u/.local/bin/cs statusline"},
         }));
+    }
+
+    #[test]
+    fn uninstall_over_a_python_install_restores_its_saved_status_line() {
+        let rig = Rig::new();
+        python_install(&rig);
+        let mine = json!({"type": "command", "command": "~/.claude/statusline.sh"});
+        rig.put(&rig.legacy(), &mine.to_string());
+        let (code, out, _) = rig.uninstall();
+        assert_eq!(code, 0);
+        assert!(out.contains("status line: yours restored"), "{out}");
+        assert_eq!(rig.read(&rig.settings())["statusLine"], mine);
+        // The Python version's file is not ours to delete
+        assert!(rig.legacy().exists());
+    }
+
+    #[test]
+    fn uninstall_ignores_the_python_saved_line_when_the_current_one_is_not_ours() {
+        let rig = Rig::new();
+        rig.put_settings(&sample());
+        rig.put(&rig.legacy(), r#"{"type": "command", "command": "old.sh"}"#);
+        rig.uninstall();
+        assert_eq!(
+            rig.read(&rig.settings())["statusLine"],
+            sample()["statusLine"]
+        );
+    }
+
+    #[test]
+    fn uninstall_still_refuses_a_broken_saved_line_despite_a_python_one() {
+        let rig = Rig::new();
+        python_install(&rig);
+        rig.put(&rig.saved(), "{not json");
+        rig.put(&rig.legacy(), r#"{"type": "command", "command": "old.sh"}"#);
+        let before = fs::read(rig.settings()).expect("read");
+        assert_eq!(rig.uninstall().0, 1);
+        assert_eq!(fs::read(rig.settings()).expect("read"), before);
     }
 
     #[test]
