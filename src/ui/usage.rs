@@ -7,8 +7,10 @@ use chrono::{DateTime, Days as ChronoDays, Local, NaiveDate, NaiveTime, TimeZone
 use serde::Deserialize;
 
 use crate::claude::history::HistorySession;
+use crate::claude::spend::ModelSpend;
 use crate::core::journal::{
-    day_costs, journal_dir, model_costs, window_totals, DayReader, Days, SessionTotals, ENDED,
+    day_costs, journal_dir, session_model_costs, window_totals, DayReader, Days, SessionTotals,
+    ENDED,
 };
 use crate::core::state::{Status, NEEDS_YOU};
 
@@ -71,6 +73,9 @@ pub struct Reader {
     journals: BTreeMap<NaiveDate, DayReader>,
     key: Option<Key>,
     totals: Totals,
+    /// Splits each session's spend between its models; without it, a session's spend goes to
+    /// the model its status line names.
+    split: Option<ModelSpend>,
 }
 
 impl Reader {
@@ -85,6 +90,13 @@ impl Reader {
             dir: Some(dir),
             ..Self::default()
         }
+    }
+
+    /// Splits each session's spend by model with `split`, which reads its transcripts; only the
+    /// landing page shows the spend by model, so only it pays for the reading.
+    pub fn split_models(mut self, split: ModelSpend) -> Self {
+        self.split = Some(split);
+        self
     }
 
     /// Returns the cost, lines and sessions of today and of the last 7 days.
@@ -128,7 +140,18 @@ impl Reader {
             history_gen,
         };
         if self.key.as_ref() != Some(&key) {
-            self.totals = sum_up(&events_of(&self.journals), history, first, today);
+            let split = &mut self.split;
+            let mut estimate = |id: &str, cwd: &str| match split {
+                Some(s) => s.estimate(id, cwd),
+                None => HashMap::new(),
+            };
+            self.totals = sum_up(
+                &events_of(&self.journals),
+                history,
+                first,
+                today,
+                &mut estimate,
+            );
             self.key = Some(key);
         }
         &self.totals
@@ -180,8 +203,20 @@ fn local_date<Tz: TimeZone>(t: f64, tz: &Tz) -> Option<NaiveDate> {
     Some(utc.with_timezone(tz).date_naive())
 }
 
+/// What a session's models cost, estimated from its id and folder: `{model: dollars}`.
+type Estimate<'a> = dyn FnMut(&str, &str) -> HashMap<String, f64> + 'a;
+
 /// Adds up the window from `first` on: the week's costs, lines and sessions.
-fn sum_up(events: &Days, history: &[HistorySession], first: NaiveDate, today: NaiveDate) -> Totals {
+///
+/// A session's spend goes to its models in the proportions `estimate` gives; with no estimate,
+/// to the model of each event that raised it.
+fn sum_up(
+    events: &Days,
+    history: &[HistorySession],
+    first: NaiveDate,
+    today: NaiveDate,
+    estimate: &mut Estimate<'_>,
+) -> Totals {
     let week = window_totals(events, first);
     let cwds: HashMap<&str, &str> = history
         .iter()
@@ -209,7 +244,27 @@ fn sum_up(events: &Days, history: &[HistorySession], first: NaiveDate, today: Na
             None => projects.push((name.to_owned(), t.cost)),
         }
     }
-    let mut models: Vec<(String, f64)> = model_costs(events, first).into_iter().collect();
+    let mut by_model: HashMap<String, f64> = HashMap::new();
+    for (sid, reported) in session_model_costs(events, first) {
+        let total: f64 = reported.values().sum();
+        let weights = match cwds.get(sid.as_str()).filter(|c| !c.is_empty()) {
+            Some(cwd) if total > 0.0 => estimate(&sid, cwd),
+            _ => HashMap::new(),
+        };
+        let weight: f64 = weights.values().sum();
+        let shares = if weight > 0.0 {
+            weights
+                .into_iter()
+                .map(|(m, w)| (m, total * w / weight))
+                .collect()
+        } else {
+            reported
+        };
+        for (model, dollars) in shares {
+            *by_model.entry(model).or_default() += dollars;
+        }
+    }
+    let mut models: Vec<(String, f64)> = by_model.into_iter().collect();
     // The map has no order of its own: equal costs fall back to the names
     models.sort_by(|a, b| a.0.cmp(&b.0));
     let days: Vec<(NaiveDate, f64)> = day_costs(events)
@@ -358,7 +413,7 @@ pub fn day_summary(
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
-    use std::fs::OpenOptions;
+    use std::fs::{self, OpenOptions};
     use std::io::Write;
     use std::path::Path;
 
@@ -366,6 +421,8 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::claude::history::HistorySession;
+    use crate::claude::spend::ModelSpend;
+    use crate::claude::transcript::transcript_path_in;
     use crate::core::journal::{Days, JournalEvent, SessionTotals};
     use crate::ui::usage::{day_summary, working_hours_in, Day, Reader, Totals, MAX_OPEN};
 
@@ -483,6 +540,51 @@ mod tests {
             t.by_model,
             vec![("opus".to_string(), 2.0), ("unknown".to_string(), 1.0)]
         );
+    }
+
+    #[test]
+    fn a_sessions_spend_splits_between_the_models_of_its_transcripts() {
+        let dir = TempDir::new().unwrap();
+        let config = TempDir::new().unwrap();
+        let mut e = usage(now(), "a", 10.0, 0, 0);
+        e.model = Some("Opus 5.5".into());
+        log(dir.path(), 0, &e);
+        // Its subagents ran on Sonnet, which by tokens and price made 40% of what it spent
+        let main = transcript_path_in(config.path(), "a", "/w/api");
+        let reply = |id: &str, model: &str, output: u64| {
+            let usage = serde_json::json!({ "output_tokens": output });
+            serde_json::json!({"message": {"id": id, "model": model, "usage": usage}}).to_string()
+        };
+        fs::create_dir_all(main.parent().unwrap()).unwrap();
+        fs::write(&main, reply("m1", "claude-opus-5-5", 1_500_000) + "\n").unwrap();
+        let sub = main.with_extension("").join("subagents/agent-x.jsonl");
+        fs::create_dir_all(sub.parent().unwrap()).unwrap();
+        fs::write(&sub, reply("m2", "claude-sonnet-5-5", 2_000_000) + "\n").unwrap();
+        let history = [session("a", "/w/api")];
+        let mut r = reader(&dir).split_models(ModelSpend::in_dir(config.path().to_path_buf()));
+        let t = r.totals_in(&history, 0, now(), &tz()).clone();
+        // Opus $30 and Sonnet $20 by price split the reported $10 into 6 and 4
+        assert_eq!(
+            t.by_model,
+            vec![
+                ("Opus 5.5".to_string(), 6.0),
+                ("Sonnet 5.5".to_string(), 4.0)
+            ]
+        );
+        assert_eq!(t.today, 10.0);
+    }
+
+    #[test]
+    fn a_session_without_transcripts_keeps_its_reported_model() {
+        let dir = TempDir::new().unwrap();
+        let config = TempDir::new().unwrap();
+        let mut e = usage(now(), "a", 2.0, 0, 0);
+        e.model = Some("Opus 5.5".into());
+        log(dir.path(), 0, &e);
+        let history = [session("a", "/w/api")];
+        let mut r = reader(&dir).split_models(ModelSpend::in_dir(config.path().to_path_buf()));
+        let t = r.totals_in(&history, 0, now(), &tz()).clone();
+        assert_eq!(t.by_model, vec![("Opus 5.5".to_string(), 2.0)]);
     }
 
     #[test]
