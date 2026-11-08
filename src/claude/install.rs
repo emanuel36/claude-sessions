@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{json, Value};
 
 use crate::claude::statusline;
-use crate::paths::{self, Lookup};
+use crate::core::paths::{self, Lookup};
 use crate::shell::quote;
 
 /// The hook events we register for.

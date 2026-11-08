@@ -6,9 +6,9 @@ use std::path::{Path, PathBuf};
 
 use crate::claude::history::HISTORY;
 use crate::claude::hook::QUIET_SECONDS;
-use crate::journal::journal_dir;
-use crate::paths::{self, LIMITS_FILE};
-use crate::state::{Record, INTERRUPTIBLE};
+use crate::core::journal::journal_dir;
+use crate::core::paths::{self, LIMITS_FILE};
+use crate::core::state::{Record, INTERRUPTIBLE};
 use crate::ui::pane::LogOnce;
 use crate::ui::runtime::Runtime;
 
@@ -252,7 +252,7 @@ impl Watches {
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use crate::state::{Record, Status};
+    use crate::core::state::{Record, Status};
     use crate::ui::watch::{Dirs, Stale};
 
     const NOW: f64 = 1_700_000_000.0;

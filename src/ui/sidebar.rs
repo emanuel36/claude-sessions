@@ -11,7 +11,7 @@ use ratatui::text::{Line, Span};
 use serde::Deserialize;
 
 use crate::claude::statusline::Quota;
-use crate::state::{self, Record, Status, NEEDS_YOU, TIMED};
+use crate::core::state::{self, Record, Status, NEEDS_YOU, TIMED};
 use crate::term::tmux::{self, Pane};
 use crate::ui::line::{cell_len, ljust, pad_right, push, rjust, truncate, width_of};
 use crate::ui::usage::{Day, Totals};
@@ -767,7 +767,7 @@ mod tests {
     use ratatui::text::Line;
 
     use crate::claude::statusline::Quota;
-    use crate::state::{Mux, Record, Status, Usage};
+    use crate::core::state::{Mux, Record, Status, Usage};
     use crate::term::tmux::Pane;
     use crate::ui::line::{cell_len, plain, row_text};
     use crate::ui::sidebar::{

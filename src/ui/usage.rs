@@ -7,10 +7,10 @@ use chrono::{DateTime, Days as ChronoDays, Local, NaiveDate, NaiveTime, TimeZone
 use serde::Deserialize;
 
 use crate::claude::history::HistorySession;
-use crate::journal::{
+use crate::core::journal::{
     day_costs, journal_dir, model_costs, window_totals, DayReader, Days, SessionTotals, ENDED,
 };
-use crate::state::{Status, NEEDS_YOU};
+use crate::core::state::{Status, NEEDS_YOU};
 
 /// Days of spend the sidebar shows, today included.
 pub const WEEK_DAYS: u64 = 7;
@@ -312,7 +312,7 @@ fn midnight_of<Tz: TimeZone>(day: NaiveDate, tz: &Tz) -> Option<f64> {
 /// Adds up one day of the journal.
 ///
 /// `events` holds each day's events, including the days before. `now` ends a wait still going.
-/// `totals` is [`crate::journal::window_totals`] of the events from `today` on, if already
+/// `totals` is [`crate::core::journal::window_totals`] of the events from `today` on, if already
 /// known.
 pub fn day_summary(
     events: &Days,
@@ -370,7 +370,7 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::claude::history::HistorySession;
-    use crate::journal::{Days, JournalEvent, SessionTotals};
+    use crate::core::journal::{Days, JournalEvent, SessionTotals};
     use crate::ui::usage::{day_summary, working_hours_in, Day, Reader, Totals, MAX_OPEN};
 
     fn tz() -> FixedOffset {

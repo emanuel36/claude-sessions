@@ -21,11 +21,11 @@ use rustix::process::{kill_process_group, Pid, Signal};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::journal::{self, JournalEvent};
-use crate::paths::{self, LIMITS_FILE};
+use crate::core::journal::{self, JournalEvent};
+use crate::core::paths::{self, LIMITS_FILE};
+use crate::core::state::Usage;
+use crate::core::store::{self, Sink};
 use crate::process;
-use crate::state::Usage;
-use crate::store::{self, Sink};
 
 /// The account's usage windows, as the status line input names them.
 pub const WINDOWS: [&str; 2] = ["five_hour", "seven_day"];
@@ -358,10 +358,10 @@ mod tests {
         load_limits_in, parse, parse_limits, print_statusline_with, record_usage_in,
         save_limits_in, saved_command_in, saved_statusline_path, Quota,
     };
-    use crate::journal::JournalEvent;
-    use crate::paths::{state_dir, LIMITS_FILE};
-    use crate::state::{new_record, Record, Status, Usage};
-    use crate::store::{read_in, write_in};
+    use crate::core::journal::JournalEvent;
+    use crate::core::paths::{state_dir, LIMITS_FILE};
+    use crate::core::state::{new_record, Record, Status, Usage};
+    use crate::core::store::{read_in, write_in};
 
     /// The status line input example from the Claude Code docs, trimmed to what usage reads.
     fn full() -> Value {

@@ -515,7 +515,7 @@ mod tests {
     use crossterm::Command;
     use tempfile::TempDir;
 
-    use crate::paths::write_atomic;
+    use crate::core::paths::write_atomic;
     use crate::ui::runtime::{
         read_input, signal, unix_now, MouseClicks, Msg, Runtime, Schedule, Signal, Wake, Watcher,
     };

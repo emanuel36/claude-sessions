@@ -12,12 +12,12 @@ use std::path::Path;
 use anyhow::{bail, Context, Result};
 
 use crate::claude::transcript::{title_of, was_interrupted};
-use crate::journal;
-use crate::paths;
-use crate::state::{
+use crate::core::journal;
+use crate::core::paths;
+use crate::core::state::{
     apply_event, mark_interrupted, mark_seen, sort_key, Event, Record, Status, INTERRUPTIBLE,
 };
-use crate::store::{self, Sink};
+use crate::core::store::{self, Sink};
 use crate::term::tmux::{self, Cli, Runner};
 
 /// Events after which the window takes the session's folder name.
@@ -282,9 +282,9 @@ mod tests {
         Bind, Binder, Seams,
     };
     use crate::claude::install::HOOK_TIMEOUT;
-    use crate::journal::JournalEvent;
-    use crate::state::{new_record, Event, Mux, Pending, Record, Status, Waiting};
-    use crate::store::{process_start, read_in, write_in};
+    use crate::core::journal::JournalEvent;
+    use crate::core::state::{new_record, Event, Mux, Pending, Record, Status, Waiting};
+    use crate::core::store::{process_start, read_in, write_in};
     use crate::term::tmux::{Runner, TIMEOUT};
 
     fn no_journal(_: &JournalEvent) {}

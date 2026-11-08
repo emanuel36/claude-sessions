@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use chrono::{DateTime, Local, NaiveDate};
 use serde::{Deserialize, Serialize};
 
-use crate::paths;
+use crate::core::paths;
 
 /// Day files older than this many days are deleted.
 pub const KEEP_DAYS: u64 = 7;
@@ -30,7 +30,7 @@ pub struct JournalEvent {
     /// The session the event belongs to.
     #[serde(default)]
     pub id: String,
-    /// A [`crate::state::Status`] name, or [`ENDED`].
+    /// A [`crate::core::state::Status`] name, or [`ENDED`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
     /// The session's running cost in dollars.
@@ -351,7 +351,7 @@ mod tests {
     use chrono::{Days as ChronoDays, Local, NaiveDate, TimeZone};
     use tempfile::TempDir;
 
-    use crate::journal::{
+    use crate::core::journal::{
         append_in, day_costs, day_of, day_path, model_costs, window_totals, DayReader, Days,
         JournalEvent, SessionTotals, ENDED,
     };

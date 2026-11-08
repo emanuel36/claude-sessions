@@ -9,7 +9,7 @@ use std::time::Duration;
 use anyhow::bail;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::paths;
+use crate::core::paths;
 use crate::term::tmux::Runner;
 use crate::ui::picker;
 use crate::ui::runtime::{signal, unix_now, Msg, Runtime, Schedule, Screen, Signal, Wake};

@@ -15,7 +15,7 @@ use crate::claude::history::HistoryReader;
 use crate::claude::hook;
 use crate::claude::statusline::load_limits;
 use crate::claude::transcript::Titles;
-use crate::state::Record;
+use crate::core::state::Record;
 use crate::term::tmux::{Cli, Runner};
 use crate::ui::folders::Scan;
 use crate::ui::landing;
@@ -302,7 +302,7 @@ mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     use crate::claude::statusline::Quota;
-    use crate::state::Record;
+    use crate::core::state::Record;
     use crate::term::tmux::Runner;
     use crate::ui::landing_app::{labels, open_sessions, Landing};
     use crate::ui::pane::{App, LogOnce, Step, Visible};

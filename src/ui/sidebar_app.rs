@@ -14,7 +14,7 @@ use ratatui::widgets::Paragraph;
 use crate::claude::history::HistoryReader;
 use crate::claude::hook::{self, QUIET_SECONDS};
 use crate::claude::statusline::load_limits;
-use crate::state::{self, Record, Status, TIMED};
+use crate::core::state::{self, Record, Status, TIMED};
 use crate::term::tmux::{self, Cli, Pane, Runner};
 use crate::ui::pane::{self, own_socket, own_window, App, LogOnce, Step, Visible, WINDOW_PAUSE};
 use crate::ui::runtime::{signal, unix_now, Msg, Runtime, Schedule, Screen, Signal};
@@ -326,7 +326,7 @@ mod tests {
     };
 
     use crate::claude::statusline::Quota;
-    use crate::state::{Record, Status};
+    use crate::core::state::{Record, Status};
     use crate::term::tmux::Runner;
     use crate::ui::pane::{App, Step, Visible};
     use crate::ui::runtime::{Msg, Runtime};

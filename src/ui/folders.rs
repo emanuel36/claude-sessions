@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use crate::claude::history::HistorySession;
 use crate::claude::transcript::{transcript_path_in, Titles};
-use crate::paths;
+use crate::core::paths;
 use crate::ui::picker::{Folder, Session};
 
 /// A session worth listing: its id, title, folder and last use.

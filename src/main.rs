@@ -6,7 +6,7 @@ use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use cst::claude::{hook, install, statusline};
-use cst::paths;
+use cst::core::paths;
 use cst::term::tmux::{self, Cli};
 use cst::term::{launcher, layout};
 use cst::ui::pane::own_socket;

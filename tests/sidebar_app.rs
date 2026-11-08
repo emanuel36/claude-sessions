@@ -7,9 +7,9 @@ use std::ops::Deref;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use cst::paths::write_atomic;
-use cst::state::{Mux, Record, Status};
-use cst::store::process_start;
+use cst::core::paths::write_atomic;
+use cst::core::state::{Mux, Record, Status};
+use cst::core::store::process_start;
 use support::TmuxApp;
 
 /// How long the sidebar gets to start and draw its first frame.

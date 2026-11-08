@@ -5,7 +5,7 @@ mod support;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use cst::state::{new_record, Mux, Record, Status};
+use cst::core::state::{new_record, Mux, Record, Status};
 use cst::term::tmux::{
     add_sidebar_running, close_window, fit_sidebars, name_window, pane_in_view, panes,
     settle_if_viewed, Cli, Pane, Runner, SIDEBAR_WIDTH,

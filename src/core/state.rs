@@ -415,7 +415,7 @@ pub fn sort_key(r: &Record) -> (u8, f64) {
 mod tests {
     use proptest::prelude::*;
 
-    use crate::state::{
+    use crate::core::state::{
         apply_event, mark_interrupted, mark_seen, new_record, project, since, sort_key,
         BackgroundTask, Event, Pending, Record, Status, Waiting, INTERRUPTIBLE, NEEDS_YOU, TIMED,
     };

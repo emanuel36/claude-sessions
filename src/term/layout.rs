@@ -5,7 +5,7 @@
 //! leaves it, and [`LAYOUT`] when windows or panes change.
 
 use crate::claude::hook;
-use crate::state::Record;
+use crate::core::state::Record;
 use crate::term::tmux::{self, Cli, Pane, Runner};
 use crate::ui::sidebar;
 
@@ -120,7 +120,7 @@ fn send(pane: &str, key: &str, t: &dyn Runner) {
 mod tests {
     use std::cell::RefCell;
 
-    use crate::state::{new_record, Mux, Record, Status};
+    use crate::core::state::{new_record, Mux, Record, Status};
     use crate::term::layout::{layout, show, step, HIDDEN, LAST_WINDOW, LAYOUT, SHOWN};
     use crate::term::tmux::Runner;
 

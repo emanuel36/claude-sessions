@@ -8,7 +8,7 @@ use std::path::Path;
 use ratatui::text::{Line, Span};
 use serde::Deserialize;
 
-use crate::paths;
+use crate::core::paths;
 use crate::shell;
 use crate::ui::line::{cell_len, ljust, pad_right, plain, push, rjust, styled, truncate, width_of};
 use crate::ui::words::{self, BLUE, CLAUDE, CURRENT, FAINT, GREEN, INK, RULE, SOFT, STRONG};

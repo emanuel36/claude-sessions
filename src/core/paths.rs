@@ -204,7 +204,7 @@ mod tests {
 
     use tempfile::TempDir;
 
-    use crate::paths::{
+    use crate::core::paths::{
         config_dir_with, log_error_in, runtime_dir_with, state_dir_with, write_atomic, ERROR_LOG,
         LIMITS_FILE, LOG_BYTES,
     };

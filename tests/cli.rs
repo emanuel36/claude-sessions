@@ -2,9 +2,9 @@
 
 mod support;
 
-use cst::paths::write_atomic;
-use cst::state::{Mux, Record, Status};
-use cst::store::process_start;
+use cst::core::paths::write_atomic;
+use cst::core::state::{Mux, Record, Status};
+use cst::core::store::process_start;
 use support::{command, cst, env, start, PrivateTmux};
 
 #[test]

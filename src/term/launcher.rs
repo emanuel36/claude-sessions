@@ -10,7 +10,7 @@ use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use crate::paths;
+use crate::core::paths;
 use crate::term::tmux::SOCKET;
 
 /// The tmux session that holds every Claude Code session's window.

@@ -14,9 +14,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use rustix::fs::{flock, FlockOperation};
 
-use crate::journal::{self, JournalEvent};
-use crate::paths::{self, LIMITS_FILE};
-use crate::state::{self, Record};
+use crate::core::journal::{self, JournalEvent};
+use crate::core::paths::{self, LIMITS_FILE};
+use crate::core::state::{self, Record};
 
 /// A lock file nobody holds, whose session has no record, is deleted once this old.
 pub const STALE_LOCK_SECONDS: f64 = 60.0;
@@ -298,10 +298,10 @@ mod tests {
 
     use tempfile::TempDir;
 
-    use crate::journal::{JournalEvent, ENDED};
-    use crate::paths::LIMITS_FILE;
-    use crate::state::{new_record, Pending, Record, Status, Waiting};
-    use crate::store::{
+    use crate::core::journal::{JournalEvent, ENDED};
+    use crate::core::paths::LIMITS_FILE;
+    use crate::core::state::{new_record, Pending, Record, Status, Waiting};
+    use crate::core::store::{
         is_alive, is_session_id, load_all_in, lock_in, parse_start, process_start, read_in,
         remove_in, remove_replaced_in, write_in, STALE_LOCK_SECONDS,
     };

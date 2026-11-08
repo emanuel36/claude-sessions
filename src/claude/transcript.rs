@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use crate::paths;
+use crate::core::paths;
 
 /// The title is looked for in this many bytes at the end of a transcript.
 pub const TITLE_TAIL_BYTES: u64 = 512 * 1024;

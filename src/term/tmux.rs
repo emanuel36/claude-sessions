@@ -10,8 +10,8 @@ use std::time::Duration;
 
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+use crate::core::state::{self, Mux, Record, Status};
 use crate::process::run_capped;
-use crate::state::{self, Mux, Record, Status};
 
 /// A hook makes up to 7 tmux calls; together they must stay under its 10 s timeout.
 pub const TIMEOUT: Duration = Duration::from_secs(1);
@@ -502,7 +502,7 @@ pub fn fit_sidebars(t: &dyn Runner) {
 
 #[cfg(test)]
 mod tests {
-    use crate::state::{new_record, Mux, Record, Status};
+    use crate::core::state::{new_record, Mux, Record, Status};
     use crate::term::tmux::{
         add_sidebar_running, attaches, close_window_with, detect, detect_with, fit_sidebars,
         is_headless, name_window, next_session_window, pane_in_view, panes, settle_if_viewed,
