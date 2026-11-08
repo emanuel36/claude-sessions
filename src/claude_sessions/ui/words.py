@@ -41,6 +41,14 @@ FPS = 8
 AMBER, RED = 70, 85
 
 
+def line(*parts):
+    """A line of `(text, style name)` parts."""
+    out = Text()
+    for text, style in parts:
+        out.append(text, style=STYLES[style])
+    return out
+
+
 def span(seconds):
     """Says a length of time the way the sidebar shows it.
 

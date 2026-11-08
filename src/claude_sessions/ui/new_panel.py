@@ -89,28 +89,21 @@ def rows(folders, query, expanded, is_dir, scroll=None):
     return out
 
 
-def _line(*parts):
-    out = Text()
-    for text, style in parts:
-        out.append(text, style=STYLES[style])
-    return out
-
-
 def _rule(width):
-    return _line((" " + "─" * (width - 1), "rule"))
+    return words.line((" " + "─" * (width - 1), "rule"))
 
 
 def folder_lines(folder, expanded, now, width=WIDTH):
     """A folder's two lines: name and last use, then its sessions and the week's spend."""
     arrow = " ▾ " if folder.path in expanded else " ▸ "
     age = f"{words.age(folder.last, now)} ago"
-    first = _line((arrow, "soft"))
+    first = words.line((arrow, "soft"))
     first.append(words.fit(folder.name, width - 4 - len(age)), style=STYLES["strong"])
     first.append(" " * (width - first.cell_len - len(age)))
     first.append(age, style=STYLES["soft"])
     sessions = f"{folder.count} session{'s' * (folder.count != 1)}"
     spend = f" · {words.money(folder.spend)} 7d" if folder.spend else ""
-    return [first, _line(("   " + sessions + spend, "soft"))]
+    return [first, words.line(("   " + sessions + spend, "soft"))]
 
 
 def session_line(row, now, width=WIDTH):
@@ -119,7 +112,7 @@ def session_line(row, now, width=WIDTH):
     # The closing branch only under the folder's very last session: more may scroll into view
     last = s is row.folder.sessions[-1]
     branch = "└ " if last else f"{MORE} " if row.end else "├ "
-    line = _line(("     ", "ink"), (branch, "faint"))
+    line = words.line(("     ", "ink"), (branch, "faint"))
     tail = words.age(s.last, now).ljust(AGE_WIDTH) + words.money(s.cost).rjust(SPEND_WIDTH)
     title = width - line.cell_len - len(tail) - 1
     line.append(words.fit(s.title, title).ljust(title + 1), style=STYLES["ink"])
@@ -132,7 +125,9 @@ def row_lines(shown, expanded, now, width=WIDTH):
     lines, owners = [], []
     for i, row in enumerate(shown):
         if row.kind == "path":
-            drawn = [_line(("   + ", "green"), (words.fit(f"open {row.path}", width - 5), "ink"))]
+            drawn = [
+                words.line(("   + ", "green"), (words.fit(f"open {row.path}", width - 5), "ink"))
+            ]
         elif row.kind == "session":
             drawn = [session_line(row, now, width)]
         else:
@@ -157,7 +152,7 @@ def list_lines(shown, cursor, expanded, now, room, width=WIDTH):
         width: Columns available.
     """
     if not shown:
-        return [_line(("   nothing matches", "faint"))]
+        return [words.line(("   nothing matches", "faint"))]
     lines, owners = row_lines(shown, expanded, now, width)
     picked = [n for n, owner in enumerate(owners) if owner == cursor]
     # Scrolls just enough to keep every line of the selected row in view
@@ -170,7 +165,7 @@ def list_lines(shown, cursor, expanded, now, room, width=WIDTH):
         # A session line's branch already marks its folder's own more below
         if n == end - 1 < len(lines) - 1 and line.plain[5:6] != MORE:
             # Its first column is always blank: room for the mark that more lies below
-            line = _line((MORE, "faint")) + line[1:]
+            line = words.line((MORE, "faint")) + line[1:]
         if n in picked:
             line.pad_right(width - line.cell_len)
             line.stylize(words.CURRENT)
@@ -196,7 +191,7 @@ def keys_line(keys, width):
 
 def screen(shown, cursor, query, expanded, now, height):
     """The Alt+n panel as `height` lines: the search line, the list and the keys."""
-    prompt = _line((" ❯ ", "blue"), (query, "ink"), ("▌", "blue"))
+    prompt = words.line((" ❯ ", "blue"), (query, "ink"), ("▌", "blue"))
     lines = [prompt, Text(), *list_lines(shown, cursor, expanded, now, height - 4)]
     while len(lines) < height - 1:
         lines.append(Text())
