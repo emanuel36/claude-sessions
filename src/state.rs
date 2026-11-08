@@ -38,6 +38,19 @@ pub const TIMED: [Status; 3] = [Status::Permission, Status::Input, Status::Shell
 pub const INTERRUPTIBLE: [Status; 3] = [Status::Working, Status::Permission, Status::Input];
 
 impl Status {
+    /// The name this status has on disk and in the journal.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Status::Permission => "permission",
+            Status::Input => "input",
+            Status::Done => "done",
+            Status::Working => "working",
+            Status::Shell => "shell",
+            Status::Idle => "idle",
+            Status::Unknown => "unknown",
+        }
+    }
+
     fn rank(self) -> u8 {
         match self {
             Status::Permission => 0,
@@ -408,6 +421,25 @@ mod tests {
     };
 
     const NOW: f64 = 1000.0;
+
+    #[test]
+    fn status_names_match_their_serialized_form() {
+        let all = [
+            Status::Permission,
+            Status::Input,
+            Status::Done,
+            Status::Working,
+            Status::Shell,
+            Status::Idle,
+        ];
+        for status in all {
+            assert_eq!(
+                serde_json::to_string(&status).unwrap(),
+                format!("\"{}\"", status.as_str())
+            );
+        }
+        assert_eq!(Status::Unknown.as_str(), "unknown");
+    }
 
     fn event(name: &str) -> Event {
         Event {
