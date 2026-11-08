@@ -1,8 +1,8 @@
 """Where a session runs in tmux, and how to tell tmux about its changes."""
 
+import collections
 import os
 import subprocess
-from dataclasses import dataclass
 
 from claude_sessions.core import state
 from claude_sessions.term.launcher import SOCKET
@@ -103,7 +103,7 @@ def _children(pid):
         return []
 
 
-@dataclass
+# Plain classes, not dataclasses: the hook loads this module, and dataclasses take long to load
 class Window:
     """A tmux window running Claude; teammates share it.
 
@@ -111,9 +111,8 @@ class Window:
     the window's first Claude pane, whose model, branch and cost the window shows.
     """
 
-    window_id: str
-    lead: dict
-    leader: dict | None = None
+    def __init__(self, window_id, lead, leader=None):
+        self.window_id, self.lead, self.leader = window_id, lead, leader
 
     @property
     def head(self):
@@ -121,16 +120,10 @@ class Window:
         return self.leader or self.lead
 
 
-@dataclass
-class Pane:
-    """A pane of this tmux server, and the window it is in."""
-
-    pane_id: str
-    window_id: str
-    index: int
-    window_index: int
-    sidebar: bool
-    window_name: str
+# A pane of this tmux server, and the window it is in
+Pane = collections.namedtuple(
+    "Pane", ("pane_id", "window_id", "index", "window_index", "sidebar", "window_name")
+)
 
 
 def panes():

@@ -13,7 +13,6 @@ cs install                                   register cs in Claude Code's settin
 cs uninstall                                 take it out again
 """
 
-import argparse
 import json
 import os
 import sys
@@ -107,6 +106,20 @@ def cmd_uninstall(_args):
 
 
 def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    # Claude Code runs these on every event and status update: they skip loading the parser
+    if argv == ["hook"]:
+        return cmd_hook(None)
+    if argv == ["statusline"]:
+        return cmd_statusline(None)
+    args = parser().parse_args(argv)
+    return args.func(args)
+
+
+def parser():
+    """The parser of every `cs` command."""
+    import argparse
+
     parser = argparse.ArgumentParser(
         prog="cs", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -135,5 +148,4 @@ def main(argv=None):
     p_close.set_defaults(func=cmd_close)
     sub.add_parser("install").set_defaults(func=cmd_install)
     sub.add_parser("uninstall").set_defaults(func=cmd_uninstall)
-    args = parser.parse_args(argv)
-    return args.func(args)
+    return parser

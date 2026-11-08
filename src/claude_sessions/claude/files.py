@@ -6,7 +6,6 @@ They live under CLAUDE_CONFIG_DIR, ~/.claude by default (see `paths.config_dir`)
 import json
 import os
 import re
-from dataclasses import dataclass
 
 from claude_sessions.core import paths
 
@@ -28,14 +27,14 @@ PROMPT_CHARS = 200
 MARK_BYTES = 64
 
 
-@dataclass
+# A plain class, not a dataclass: the hook loads this module, and dataclasses take long to load
 class HistorySession:
     """A session from Claude Code's prompt history."""
 
-    id: str
-    cwd: str
-    last: float = 0.0
-    first_prompt: str = ""
+    __slots__ = ("id", "cwd", "last", "first_prompt")
+
+    def __init__(self, id, cwd, last=0.0, first_prompt=""):  # noqa: A002 - the history's name
+        self.id, self.cwd, self.last, self.first_prompt = id, cwd, last, first_prompt
 
 
 def history_path():

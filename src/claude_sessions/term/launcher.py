@@ -4,7 +4,6 @@ cst            attach to the `claude` tmux session in this terminal, creating it
 cst --ghostty  open it in a new Ghostty window that leaves Alt+↑↓ to tmux
 """
 
-import importlib.resources
 import os
 import subprocess
 import sys
@@ -33,6 +32,9 @@ def main(argv=None):
     if argv[:1] == ["--ghostty"]:
         cmd = ghostty_command(os.path.join(here, "cst"))
         os.execvp(cmd[0], cmd)
+    # Imported here: the hook loads this module for SOCKET and must not pay for it
+    import importlib.resources
+
     # tmux runs the hook's `cs`, which lives beside this script
     os.environ["PATH"] = here + os.pathsep + os.environ.get("PATH", "")
     conf = importlib.resources.files("claude_sessions.term") / "data" / "tmux.conf"
