@@ -3,7 +3,7 @@
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::{Child, Command, Output, Stdio};
 
 use tempfile::TempDir;
 
@@ -44,20 +44,45 @@ pub fn env() -> TestEnv {
     env
 }
 
-/// Runs the `cst` binary with `args` and `stdin`, with the three env vars pointed at `env`.
-pub fn cst(env: &TestEnv, args: &[&str], stdin: &[u8]) -> Output {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_cst"))
-        .args(args)
+/// Variables that say where Claude Code or tmux runs `cst`; the tests may run inside either, and
+/// `cst` must never reach the real `tmux -L claude` from a test.
+const AMBIENT: [&str; 6] = [
+    "TMUX",
+    "TMUX_PANE",
+    "CLAUDE_PID",
+    "CLAUDE_JOB_DIR",
+    "CLAUDE_CODE_SESSION_KIND",
+    "CLAUDE_CODE_ENTRYPOINT",
+];
+
+/// A `cst` command with `args`, the three env vars pointed at `env`, and no tmux or Claude Code
+/// variables; stdio is piped.
+pub fn command(env: &TestEnv, args: &[&str]) -> Command {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_cst"));
+    cmd.args(args)
         .env("CST_RUNTIME_DIR", env.runtime_dir())
         .env("CST_STATE_DIR", env.state_dir())
         .env("CLAUDE_CONFIG_DIR", env.claude_dir())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn cst");
+        .stderr(Stdio::piped());
+    for name in AMBIENT {
+        cmd.env_remove(name);
+    }
+    cmd
+}
+
+/// Starts `cmd` and feeds it `stdin`.
+pub fn start(mut cmd: Command, stdin: &[u8]) -> Child {
+    let mut child = cmd.spawn().expect("spawn cst");
     // The child may exit without reading stdin, so a broken pipe is not an error.
     let _ = child.stdin.take().expect("stdin is piped").write_all(stdin);
+    child
+}
+
+/// Runs the `cst` binary with `args` and `stdin`, with the three env vars pointed at `env`.
+pub fn cst(env: &TestEnv, args: &[&str], stdin: &[u8]) -> Output {
+    let child = start(command(env, args), stdin);
     child.wait_with_output().expect("wait for cst")
 }
 

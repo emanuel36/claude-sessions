@@ -1,6 +1,13 @@
 //! The `cst` binary: dispatches the command line to the library.
 
+use std::collections::HashMap;
+use std::io::Read;
 use std::process::ExitCode;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use cst::claude::hook;
+use cst::paths;
+use cst::term::tmux::Cli;
 
 const USAGE: &str = "\
 Usage: cst [OPTIONS] [COMMAND]
@@ -15,12 +22,42 @@ Options:
   --help      Print this help
 ";
 
+/// Applies the hook event on stdin; logs a failure and exits 0, so no event breaks a session.
+fn run_hook() -> ExitCode {
+    let mut input = Vec::new();
+    let read = std::io::stdin().lock().read_to_end(&mut input);
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0.0, |d| d.as_secs_f64());
+    // `vars()` panics on non-UTF-8 values, so convert lossily instead.
+    let env: HashMap<String, String> = std::env::vars_os()
+        .map(|(k, v)| {
+            (
+                k.to_string_lossy().into_owned(),
+                v.to_string_lossy().into_owned(),
+            )
+        })
+        .collect();
+    let result = match read {
+        Ok(_) => hook::run(&input, &env, now, &Cli::default()),
+        Err(e) => Err(anyhow::Error::new(e).context("cannot read stdin")),
+    };
+    if let Err(e) = result {
+        paths::log_error(&format_args!("hook: {e:#}"));
+    }
+    ExitCode::SUCCESS
+}
+
 fn main() -> ExitCode {
     // `args()` panics on non-UTF-8 input, so convert lossily instead.
     let args: Vec<String> = std::env::args_os()
         .skip(1)
         .map(|a| a.to_string_lossy().into_owned())
         .collect();
+    // The hook runs on every Claude Code event: nothing but the subcommand name is parsed.
+    if args.first().map(String::as_str) == Some("hook") {
+        return run_hook();
+    }
     match args
         .iter()
         .map(String::as_str)

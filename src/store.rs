@@ -24,7 +24,7 @@ pub const STALE_LOCK_SECONDS: f64 = 60.0;
 const RECORD_SUFFIX: &str = ".json";
 
 /// Where the store reports status changes; the journal outside of tests.
-type Sink<'a> = &'a dyn Fn(&JournalEvent);
+pub(crate) type Sink<'a> = &'a dyn Fn(&JournalEvent);
 
 /// An exclusive lock on one session's record, released when dropped.
 #[derive(Debug)]
@@ -165,7 +165,7 @@ fn record_path(dir: &Path, id: &str) -> io::Result<PathBuf> {
     Ok(dir.join(format!("{id}{RECORD_SUFFIX}")))
 }
 
-fn lock_in(dir: &Path, id: &str) -> io::Result<Lock> {
+pub(crate) fn lock_in(dir: &Path, id: &str) -> io::Result<Lock> {
     let mut path = record_path(dir, id)?.into_os_string();
     path.push(".lock");
     let file = OpenOptions::new()
@@ -182,12 +182,12 @@ fn lock_in(dir: &Path, id: &str) -> io::Result<Lock> {
     }
 }
 
-fn read_in(dir: &Path, id: &str) -> Option<Record> {
+pub(crate) fn read_in(dir: &Path, id: &str) -> Option<Record> {
     let bytes = fs::read(record_path(dir, id).ok()?).ok()?;
     serde_json::from_slice(&bytes).ok()
 }
 
-fn write_in(dir: &Path, r: &Record, journal: Sink<'_>) -> io::Result<()> {
+pub(crate) fn write_in(dir: &Path, r: &Record, journal: Sink<'_>) -> io::Result<()> {
     let path = record_path(dir, &r.id)?;
     let before = read_in(dir, &r.id);
     let data = serde_json::to_vec(r).map_err(io::Error::other)?;
@@ -204,7 +204,7 @@ fn write_in(dir: &Path, r: &Record, journal: Sink<'_>) -> io::Result<()> {
     Ok(())
 }
 
-fn remove_in(dir: &Path, id: &str, keep_lock: bool, journal: Sink<'_>) {
+pub(crate) fn remove_in(dir: &Path, id: &str, keep_lock: bool, journal: Sink<'_>) {
     let Ok(path) = record_path(dir, id) else {
         return;
     };
@@ -230,7 +230,7 @@ fn remove_in(dir: &Path, id: &str, keep_lock: bool, journal: Sink<'_>) {
     }
 }
 
-fn remove_replaced_in(dir: &Path, r: &Record, journal: Sink<'_>) {
+pub(crate) fn remove_replaced_in(dir: &Path, r: &Record, journal: Sink<'_>) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };
@@ -254,7 +254,7 @@ fn remove_replaced_in(dir: &Path, r: &Record, journal: Sink<'_>) {
     }
 }
 
-fn load_all_in(dir: &Path, now: f64, journal: Sink<'_>) -> Vec<Record> {
+pub(crate) fn load_all_in(dir: &Path, now: f64, journal: Sink<'_>) -> Vec<Record> {
     let Ok(entries) = fs::read_dir(dir) else {
         return Vec::new();
     };
