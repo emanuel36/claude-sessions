@@ -106,9 +106,10 @@ def load_entries(records):
 
     A window with no live session (the landing page) is left out.
     """
-    heads = {w.window_id: w for w in tmux.windows_of(records)}
+    listed = tmux.panes()
+    heads = {w.window_id: w for w in tmux.windows_of(records, listed)}
     entries = []
-    for window_id, _, name in tmux.window_entries():
+    for window_id, _, name in tmux.window_entries(listed):
         window = heads.get(window_id)
         if window is None:
             continue

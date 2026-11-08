@@ -17,6 +17,18 @@ BACKGROUND = "bg"
 HEADLESS = {"sdk-cli", "sdk-ts", "sdk-py"}
 # `claude attach` takes a session's id or its first 8 characters
 MIN_ID_PREFIX = 8
+# Every pane of the server and its window, in one listing; the window's name comes last, as
+# it may hold a tab
+PANES_FORMAT = "\t".join(
+    (
+        "#{pane_id}",
+        "#{window_id}",
+        "#{pane_index}",
+        "#{window_index}",
+        "#{@cs-sidebar}",
+        "#{window_name}",
+    )
+)
 # Columns of the sidebar pane; tmux's border makes it 30. Not imported from the UI: the hook
 # path must not load rich
 SIDEBAR_WIDTH = 29
@@ -109,6 +121,28 @@ class Window:
         return self.leader or self.lead
 
 
+@dataclass
+class Pane:
+    """A pane of this tmux server, and the window it is in."""
+
+    pane_id: str
+    window_id: str
+    index: int
+    window_index: int
+    sidebar: bool
+    window_name: str
+
+
+def panes():
+    """Returns the panes of the tmux server this process runs in."""
+    out = []
+    for line in run("list-panes", "-a", "-F", PANES_FORMAT).splitlines():
+        f = line.split("\t", 5)
+        if len(f) == 6 and f[2].isdigit() and f[3].isdigit():
+            out.append(Pane(f[0], f[1], int(f[2]), int(f[3]), bool(f[4]), f[5]))
+    return out
+
+
 def run(*args):
     """Runs a tmux command and returns its output, '' if it fails; never raises.
 
@@ -163,9 +197,9 @@ def next_session_window(window_id):
 
     Session windows are those with a sidebar; None when the closing one is the last of them.
     """
-    panes = run("list-panes", "-a", "-F", "#{window_id} #{@cs-sidebar}").splitlines()
-    with_sidebar = {line.split()[0] for line in panes if len(line.split()) == 2}
-    order = [w for w, _, _ in window_entries() if w in with_sidebar or w == window_id]
+    listed = panes()
+    with_sidebar = {p.window_id for p in listed if p.sidebar}
+    order = [w for w, _, _ in window_entries(listed) if w in with_sidebar or w == window_id]
     if window_id not in order:
         return None
     i = order.index(window_id)
@@ -195,16 +229,9 @@ def add_sidebar(window_id, command="cs sidebar"):
 
 def fit_sidebars():
     """Resizes every sidebar pane back to its width, after a split or a terminal resize."""
-    panes = table("list-panes", "-a", "-F", "#{pane_id}\t#{@cs-sidebar}")
-    for pane, flag in panes.items():
-        if flag:
-            run("resize-pane", "-t", pane, "-x", str(SIDEBAR_WIDTH))
-
-
-def table(*args):
-    """Runs a tmux listing whose format is two tab-separated fields, as a dict."""
-    pairs = (line.split("\t", 1) for line in run(*args).splitlines())
-    return dict(pair for pair in pairs if len(pair) == 2)
+    for pane in panes():
+        if pane.sidebar:
+            run("resize-pane", "-t", pane.pane_id, "-x", str(SIDEBAR_WIDTH))
 
 
 def server_socket():
@@ -217,22 +244,22 @@ def on_server(record, socket):
     return bool(socket) and (record.get("mux") or {}).get("socket") == socket
 
 
-def windows_of(records):
-    """Groups live session records into the windows of this tmux server, most urgent first."""
+def windows_of(records, listed=None):
+    """Groups live session records into the windows of this tmux server, most urgent first.
+
+    Args:
+        records: The live records, most urgent first.
+        listed: The server's panes from `panes`, if already listed.
+    """
     socket = server_socket()
-    panes = {}
-    fmt = "#{pane_id}\t#{window_id}\t#{pane_index}"
-    for line in run("list-panes", "-a", "-F", fmt).splitlines():
-        fields = line.split("\t")
-        if len(fields) == 3 and fields[2].isdigit():
-            panes[fields[0]] = (fields[1], int(fields[2]))
+    where = {p.pane_id: p for p in (panes() if listed is None else listed)}
     windows, leaders = {}, {}
     # Records arrive most urgent first, so the first one in a window leads it
     for r in records:
-        found = panes.get((r.get("mux") or {}).get("pane"))
+        found = where.get((r.get("mux") or {}).get("pane"))
         if not on_server(r, socket) or found is None:
             continue
-        window_id, index = found
+        window_id, index = found.window_id, found.index
         if window_id not in windows:
             windows[window_id] = Window(window_id, r)
         # The leader is the session in the window's first pane
@@ -243,15 +270,16 @@ def windows_of(records):
     return sorted(windows.values(), key=lambda w: state.sort_key(w.lead))
 
 
-def window_entries():
-    """Returns `(window_id, index, name)` of this server's windows, by index."""
-    rows = []
-    for line in run(
-        "list-windows", "-a", "-F", "#{window_id}\t#{window_index}\t#{window_name}"
-    ).splitlines():
-        window_id, index, name = line.split("\t", 2)
-        rows.append((window_id, int(index), name))
-    return sorted(rows, key=lambda row: row[1])
+def window_entries(listed=None):
+    """Returns `(window_id, index, name)` of this server's windows, by index.
+
+    Args:
+        listed: The server's panes from `panes`, if already listed.
+    """
+    windows = {}
+    for p in panes() if listed is None else listed:
+        windows.setdefault(p.window_id, (p.window_id, p.window_index, p.window_name))
+    return sorted(windows.values(), key=lambda row: row[1])
 
 
 def tmux_pane_in_view(where):

@@ -179,9 +179,12 @@ def test_load_orders_by_window_index_and_skips_windows_without_sessions(monkeypa
         "mux": {"pane": "%4"},
     }
     monkeypatch.setattr(sidebar_app.hook, "live_sessions", lambda now: [record])
-    monkeypatch.setattr(sidebar_app.tmux, "windows_of", lambda r: [tmux.Window("@4", record)])
+    monkeypatch.setattr(sidebar_app.tmux, "panes", lambda: [])
     monkeypatch.setattr(
-        sidebar_app.tmux, "window_entries", lambda: [("@1", 1, "api"), ("@4", 2, "web")]
+        sidebar_app.tmux, "windows_of", lambda r, listed: [tmux.Window("@4", record)]
+    )
+    monkeypatch.setattr(
+        sidebar_app.tmux, "window_entries", lambda listed: [("@1", 1, "api"), ("@4", 2, "web")]
     )
     monkeypatch.setattr(sidebar_app.statusline, "load_limits", lambda now: {"x": 1})
     monkeypatch.setattr(sidebar_app.files, "load_history", lambda: [])
@@ -193,7 +196,7 @@ def test_load_orders_by_window_index_and_skips_windows_without_sessions(monkeypa
 
 
 def test_window_entries_lists_windows_by_index(monkeypatch):
-    out = "@4\t2\tweb\n@1\t1\tapi"
+    out = "%5\t@4\t1\t2\t1\tweb\n%6\t@4\t2\t2\t\tweb\n%1\t@1\t1\t1\t\tapi"
     monkeypatch.setattr(tmux, "run", lambda *args: out)
     assert tmux.window_entries() == [("@1", 1, "api"), ("@4", 2, "web")]
 
@@ -213,8 +216,8 @@ def test_load_shows_the_most_urgent_status_with_the_first_panes_details(monkeypa
     mate = record("mate", state.PERMISSION, "Sonnet 4", 9.0, "%3")
     monkeypatch.setenv("TMUX", "/s/claude,1,0")
     monkeypatch.setattr(sidebar_app.hook, "live_sessions", lambda now: [mate, leader])
-    monkeypatch.setattr(sidebar_app.tmux, "run", lambda *args: "%2\t@1\t2\n%3\t@1\t3\n%1\t@1\t1")
-    monkeypatch.setattr(sidebar_app.tmux, "window_entries", lambda: [("@1", 1, "web")])
+    out = "%2\t@1\t2\t1\t\tweb\n%3\t@1\t3\t1\t\tweb\n%1\t@1\t1\t1\t1\tweb"
+    monkeypatch.setattr(sidebar_app.tmux, "run", lambda *args: out)
     monkeypatch.setattr(sidebar_app.statusline, "load_limits", lambda now: {})
     monkeypatch.setattr(sidebar_app.files, "load_history", lambda: [])
 
@@ -237,8 +240,7 @@ def test_load_lists_headless_runs_until_they_finish(monkeypatch):
     del old["started_at"]
     old["status_since"] = NOW - 60
     monkeypatch.setattr(sidebar_app.hook, "live_sessions", lambda now: [run, done, old, waiting])
-    monkeypatch.setattr(sidebar_app.tmux, "windows_of", lambda r: [])
-    monkeypatch.setattr(sidebar_app.tmux, "window_entries", lambda: [])
+    monkeypatch.setattr(sidebar_app.tmux, "panes", lambda: [])
     monkeypatch.setattr(sidebar_app.statusline, "load_limits", lambda now: {})
     monkeypatch.setattr(sidebar_app.files, "load_history", lambda: [])
     runs = sidebar_app.load(NOW)[2]

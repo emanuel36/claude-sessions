@@ -13,6 +13,11 @@ from claude_sessions.term import tmux
 TMUX = {"TMUX": "/tmp/ttmux-1000/claude,123,0", "TMUX_PANE": "%3"}
 
 
+def listing(*panes):
+    """What `list-panes -a -F PANES_FORMAT` prints: pane, window, its indices, flag and name."""
+    return "\n".join("\t".join(map(str, pane)) for pane in panes)
+
+
 def test_detect():
     assert tmux.detect({}) == {}
     assert tmux.detect(TMUX) == {"socket": "/tmp/ttmux-1000/claude", "pane": "%3"}
@@ -80,7 +85,12 @@ def test_run_returns_empty_when_tmux_fails(monkeypatch):
 
 def test_windows_of_keeps_this_server_and_the_most_urgent_per_window(monkeypatch):
     monkeypatch.setenv("TMUX", "/s/claude,1,0")
-    panes = "%1\t@1\t1\n%2\t@1\t2\n%3\t@2\t1\n%4\t@3\t1"
+    panes = listing(
+        ("%1", "@1", 1, 1, "", "a"),
+        ("%2", "@1", 2, 1, "", "a"),
+        ("%3", "@2", 1, 2, "", "b"),
+        ("%4", "@3", 1, 3, "", "c"),
+    )
     monkeypatch.setattr(tmux, "run", lambda *args: panes)
 
     def record(session_id, status, pane, socket="/s/claude"):
@@ -99,7 +109,13 @@ def test_windows_of_keeps_this_server_and_the_most_urgent_per_window(monkeypatch
 def test_windows_of_picks_the_leader_by_its_pane_not_by_urgency(monkeypatch):
     monkeypatch.setenv("TMUX", "/s/claude,1,0")
     # The sidebar is pane 1; the first Claude pane is 2, a teammate's is 3
-    panes = "%9\t@1\t1\n%2\t@1\t2\n%3\t@1\t3\n%7\t@2\t4\n%6\t@2\t3"
+    panes = listing(
+        ("%9", "@1", 1, 1, 1, "a"),
+        ("%2", "@1", 2, 1, "", "a"),
+        ("%3", "@1", 3, 1, "", "a"),
+        ("%7", "@2", 4, 2, "", "b"),
+        ("%6", "@2", 3, 2, "", "b"),
+    )
 
     def record(session_id, status, pane):
         return {"id": session_id, "status": status, "mux": {"socket": "/s/claude", "pane": pane}}
@@ -266,9 +282,13 @@ def fake_windows(monkeypatch, active):
     def run(*args):
         calls.append(args)
         if args[:2] == ("list-panes", "-a"):
-            return "@1 \n@2 1\n@2 \n@3 1\n@3 "
-        if args[0] == "list-windows":
-            return "@1\t1\tsessions\n@2\t2\tapi\n@3\t3\tweb"
+            return listing(
+                ("%1", "@1", 1, 1, "", "sessions"),
+                ("%2", "@2", 1, 2, 1, "api"),
+                ("%3", "@2", 2, 2, "", "api"),
+                ("%4", "@3", 1, 3, 1, "web"),
+                ("%5", "@3", 2, 3, "", "web"),
+            )
         if args[0] == "display-message":
             return active
         return ""
@@ -288,9 +308,8 @@ def test_closing_the_last_session_or_a_hidden_one_selects_nothing(monkeypatch):
     calls = fake_windows(monkeypatch, active="0")
     tmux.close_window("@2")
     assert not any(c[0] == "select-window" for c in calls)
-    monkeypatch.setattr(
-        tmux, "run", lambda *a: "@1\t1\tsessions\n@2\t2\tapi" if a[0] == "list-windows" else "@2 1"
-    )
+    two = listing(("%1", "@1", 1, 1, "", "sessions"), ("%2", "@2", 1, 2, 1, "api"))
+    monkeypatch.setattr(tmux, "run", lambda *a: two)
     assert tmux.next_session_window("@2") is None
 
 
@@ -337,3 +356,9 @@ def test_teammate_split_keeps_the_sidebar_width(in_server):
     assert sidebar_width(in_server, 1) == 50
     tmux.fit_sidebars()
     assert sidebar_width(in_server, 1) == tmux.SIDEBAR_WIDTH
+
+
+def test_panes_skip_lines_tmux_did_not_format_and_keep_tabs_in_names(monkeypatch):
+    out = "warning\n" + listing(("%2", "@1", 2, 1, 1, "a\tb"), ("%3", "@2", "x", 2, "", "c"))
+    monkeypatch.setattr(tmux, "run", lambda *args: out)
+    assert tmux.panes() == [tmux.Pane("%2", "@1", 2, 1, True, "a\tb")]
