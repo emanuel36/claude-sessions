@@ -592,24 +592,6 @@ fn lines_lines(day: &Day, totals: &Totals, content: usize) -> Vec<Line<'static>>
     lines
 }
 
-/// Python's `x // y` on floats: the floor of the exact quotient.
-fn floor_div(x: f64, y: f64) -> f64 {
-    let rem = x % y;
-    let mut div = (x - rem) / y;
-    if rem != 0.0 && ((y < 0.0) != (rem < 0.0)) {
-        div -= 1.0;
-    }
-    if div == 0.0 {
-        return 0.0_f64.copysign(x / y);
-    }
-    let floor = div.floor();
-    if div - floor > 0.5 {
-        floor + 1.0
-    } else {
-        floor
-    }
-}
-
 /// A cell per hour of the day, darker the longer sessions worked in it, ruled under it.
 ///
 /// Args:
@@ -628,7 +610,7 @@ fn hours_lines(hours: &[f64]) -> Vec<Line<'static>> {
             continue;
         }
         // Rounded up, so any work shows
-        let level = -floor_div(-seconds * darkest, top);
+        let level = -words::floor_div(-seconds * darkest, top);
         push(&mut line, HEAT[level.clamp(0.0, darkest) as usize], CLAUDE);
     }
     let mut ruler = elbow(false, Style::new());

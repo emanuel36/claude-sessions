@@ -63,9 +63,22 @@ pub const MASCOT: Style = CLAUDE;
 /// The background of the current session's row.
 pub const CURRENT: Style = Style::new().bg(Color::Indexed(235));
 
-/// Python's `x // y` for a positive `y`, which floors a float quotient exactly.
-fn floor_div(x: f64, y: f64) -> i64 {
-    ((x - x % y) / y).floor() as i64
+/// Python's `x // y` on floats: the floor of the exact quotient, as CPython computes it.
+pub(crate) fn floor_div(x: f64, y: f64) -> f64 {
+    let rem = x % y;
+    let mut div = (x - rem) / y;
+    if rem != 0.0 && ((y < 0.0) != (rem < 0.0)) {
+        div -= 1.0;
+    }
+    if div == 0.0 {
+        return 0.0_f64.copysign(x / y);
+    }
+    let floor = div.floor();
+    if div - floor > 0.5 {
+        floor + 1.0
+    } else {
+        floor
+    }
 }
 
 /// Says a length of time the way the sidebar shows it.
@@ -76,7 +89,7 @@ pub fn span(seconds: Option<f64>) -> String {
     let Some(seconds) = seconds else {
         return String::new();
     };
-    let minutes = floor_div(seconds, 60.0);
+    let minutes = floor_div(seconds, 60.0) as i64;
     if minutes < 60 {
         format!("{minutes}m")
     } else {
@@ -90,8 +103,8 @@ pub fn remaining(seconds: f64) -> String {
     if seconds < 86400.0 {
         return span(Some(seconds));
     }
-    let days = floor_div(seconds, 86400.0);
-    let hours = floor_div(seconds % 86400.0, 3600.0);
+    let days = floor_div(seconds, 86400.0) as i64;
+    let hours = floor_div(seconds % 86400.0, 3600.0) as i64;
     if hours > 0 {
         format!("{days}d{hours}h")
     } else {
@@ -119,9 +132,9 @@ pub fn waiting_label(seconds: f64) -> String {
     if seconds < 60.0 {
         String::new()
     } else if seconds < 3600.0 {
-        format!("{}m", floor_div(seconds, 60.0))
+        format!("{}m", floor_div(seconds, 60.0) as i64)
     } else {
-        format!("{}h", floor_div(seconds, 3600.0))
+        format!("{}h", floor_div(seconds, 3600.0) as i64)
     }
 }
 
@@ -185,13 +198,13 @@ pub fn bar(pct: f64, cells: usize) -> Vec<Span<'static>> {
 pub fn age(timestamp: f64, now: f64) -> String {
     let seconds = (now - timestamp).max(0.0);
     if seconds < 3600.0 {
-        format!("{}m", floor_div(seconds, 60.0).max(1))
+        format!("{}m", (floor_div(seconds, 60.0) as i64).max(1))
     } else if seconds < 86400.0 {
-        format!("{}h", floor_div(seconds, 3600.0))
+        format!("{}h", floor_div(seconds, 3600.0) as i64)
     } else if seconds < 100.0 * 86400.0 {
-        format!("{}d", floor_div(seconds, 86400.0))
+        format!("{}d", floor_div(seconds, 86400.0) as i64)
     } else {
-        format!("{}w", floor_div(seconds, 7.0 * 86400.0))
+        format!("{}w", floor_div(seconds, 7.0 * 86400.0) as i64)
     }
 }
 
@@ -217,8 +230,8 @@ mod tests {
 
     use crate::ui::line::cells;
     use crate::ui::words::{
-        age, bar, bar_style, fit, money, next_tick, remaining, span, thousands, waiting_label,
-        CLAUDE, CURRENT, ERROR, MASCOT, STRONG, SUBTLE, WARNING,
+        age, bar, bar_style, fit, floor_div, money, next_tick, remaining, span, thousands,
+        waiting_label, CLAUDE, CURRENT, ERROR, MASCOT, STRONG, SUBTLE, WARNING,
     };
 
     fn near(a: f64, b: f64, eps: f64) -> bool {
@@ -255,6 +268,16 @@ mod tests {
         assert_eq!(full[0].content, "▄▄▄▄");
         assert_eq!(full[0].style, ERROR);
         assert!(bar(50.0, 0).is_empty());
+    }
+
+    #[test]
+    fn floor_div_floors_negative_quotients_like_python() {
+        // -1.0 // 60.0 == -1.0 and -7.5 // 2.0 == -4.0 in Python
+        assert_eq!(floor_div(-1.0, 60.0), -1.0);
+        assert_eq!(floor_div(-120.0, 60.0), -2.0);
+        assert_eq!(floor_div(-7.5, 2.0), -4.0);
+        assert_eq!(floor_div(7.5, 2.0), 3.0);
+        assert_eq!(floor_div(3599.9, 60.0), 59.0);
     }
 
     #[test]
