@@ -125,13 +125,29 @@ impl PrivateTmux {
     }
 
     /// Runs `tmux -L <socket> <args>` and returns its stdout.
+    ///
+    /// # Panics
+    ///
+    /// When tmux fails, with its exit status and stderr: a failed call must not pass for an
+    /// empty answer. [`PrivateTmux::try_run`] is for calls that may fail.
     pub fn run(&self, args: &[&str]) -> String {
-        let out = Command::new("tmux")
+        let out = self.try_run(args);
+        assert!(
+            out.status.success(),
+            "tmux {args:?} failed ({}): {}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    }
+
+    /// Runs `tmux -L <socket> <args>` and returns all it did, failed or not.
+    pub fn try_run(&self, args: &[&str]) -> Output {
+        Command::new("tmux")
             .args(["-L", &self.socket])
             .args(args)
             .output()
-            .expect("run tmux");
-        String::from_utf8_lossy(&out.stdout).into_owned()
+            .expect("run tmux")
     }
 }
 
@@ -246,17 +262,26 @@ impl TmuxApp {
 
     /// Fails with `what`, the panes, the error log and the screen.
     pub fn fail(&self, what: &str) -> ! {
-        let panes = self.tmux.run(&[
+        // Read with try_run: a failing tmux must not hide `what`
+        let text = |args: &[&str]| {
+            let out = self.tmux.try_run(args);
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            )
+        };
+        let panes = text(&[
             "list-panes",
             "-a",
             "-F",
             "#{pane_id} #{pane_pid} dead=#{pane_dead} status=#{pane_dead_status}",
         ]);
         let log = fs::read_to_string(self.env.state_dir().join("errors.log")).unwrap_or_default();
+        let screen = text(&["capture-pane", "-p", "-t", &self.pane]);
         panic!(
-            "{what} in {}\npanes:\n{panes}\nerrors:\n{log}\nscreen:\n{}",
-            self.pane,
-            self.screen()
+            "{what} in {}\npanes:\n{panes}\nerrors:\n{log}\nscreen:\n{screen}",
+            self.pane
         );
     }
 
@@ -359,6 +384,24 @@ pub fn publish(dir: &Path, tag: &str, asset: &[u8], checksum: Option<&str>) {
         format!("{sum}  {name}\n"),
     )
     .expect("write the checksum");
+}
+
+/// Writes an executable `script` at `path`.
+///
+/// A file this process writes can fail to run with ETXTBSY: another test thread may fork while
+/// it is open for writing, and the child holds it until it execs. So `install`, a process of its
+/// own, writes the program; this process only writes the source next to it.
+pub fn write_program(path: &Path, script: &str) {
+    let source = path.with_extension("source");
+    fs::write(&source, script).expect("write the program's source");
+    let status = Command::new("install")
+        .args(["-m", "755"])
+        .arg(&source)
+        .arg(path)
+        .status()
+        .expect("run install");
+    assert!(status.success(), "install {}", path.display());
+    fs::remove_file(&source).expect("remove the program's source");
 }
 
 /// Runs `cmd`, whose program was just written, retrying while a fork in another test thread

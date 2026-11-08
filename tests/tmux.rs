@@ -37,7 +37,7 @@ fn lines(tmux: &PrivateTmux, args: &[&str]) -> Vec<String> {
 }
 
 fn first_window(tmux: &PrivateTmux) -> String {
-    tmux.run(&["display-message", "-p", "-t", "t", "#{window_id}"])
+    tmux.run(&["display-message", "-p", "-t", "t:", "#{window_id}"])
         .trim()
         .to_owned()
 }
@@ -71,7 +71,7 @@ fn attach(tmux: &PrivateTmux) -> Child {
         .expect("spawn script");
     let deadline = Instant::now() + Duration::from_secs(5);
     while tmux
-        .run(&["display-message", "-p", "-t", "t", "#{session_attached}"])
+        .run(&["display-message", "-p", "-t", "t:", "#{session_attached}"])
         .trim()
         != "1"
     {
@@ -107,7 +107,7 @@ fn runner_returns_empty_when_the_server_is_gone() {
     assert_eq!(gone.run(&["list-windows"]), "");
     let Some((tmux, cli)) = server() else { return };
     assert_eq!(
-        cli.run(&["display-message", "-p", "-t", "t", "#{session_name}"]),
+        cli.run(&["display-message", "-p", "-t", "t:", "#{session_name}"]),
         "t"
     );
     tmux.run(&["kill-server"]);

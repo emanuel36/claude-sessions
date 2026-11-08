@@ -211,7 +211,7 @@ fn click_selects_that_window() {
     loop {
         let current = side
             .tmux
-            .run(&["display-message", "-p", "-t", "t", "#{window_name}"]);
+            .run(&["display-message", "-p", "-t", "t:", "#{window_name}"]);
         if current.trim() == "beta" {
             break;
         }

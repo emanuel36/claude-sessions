@@ -4,13 +4,13 @@ mod support;
 
 use std::ffi::OsString;
 use std::fs;
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 use cst::term::launcher::{
     ghostty_command, search_path, write_conf, LaunchError, Server, CONF, LANDING, SESSION,
 };
-use support::{env, PrivateTmux, TestEnv};
+use support::{env, write_program, PrivateTmux, TestEnv};
 
 /// The folder of the built `cst`, which the server's hooks and windows must run.
 fn bin_dir() -> PathBuf {
@@ -142,8 +142,7 @@ fn failed_new_session_says_so() {
     let env = env();
     // A tmux that fails every command: no session, and none can be made
     let fake = env.path().join("tmux");
-    fs::write(&fake, "#!/bin/sh\nexit 1\n").expect("write fake tmux");
-    fs::set_permissions(&fake, fs::Permissions::from_mode(0o755)).expect("chmod");
+    write_program(&fake, "#!/bin/sh\nexit 1\n");
     let server = Server {
         program: fake.into(),
         ..server(&tmux, &env)

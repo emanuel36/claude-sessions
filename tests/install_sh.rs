@@ -7,13 +7,12 @@
 mod support;
 
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use cst::claude::install::{is_ours, EVENTS};
 use serde_json::Value;
-use support::{asset_name, publish, release_binary, sha256_hex};
+use support::{asset_name, publish, release_binary, sha256_hex, write_program};
 use tempfile::TempDir;
 
 /// What the fake `uv tool list` prints when the Python version is installed.
@@ -66,9 +65,7 @@ impl Rig {
     }
 
     fn write_fake(&self, name: &str, script: &str) {
-        let path = self.fakes().join(name);
-        fs::write(&path, script).expect("write fake");
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).expect("chmod");
+        write_program(&self.fakes().join(name), script);
     }
 
     /// A `tmux` that prints `version` and has a `-L claude` server running or not; it logs its

@@ -4,7 +4,6 @@ mod support;
 
 use std::fs;
 use std::io::Write;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::thread;
@@ -15,7 +14,7 @@ use cst::core::state::{Mux, Record, Status};
 use cst::core::store::process_start;
 use cst::term::launcher::search_path;
 use cst::term::tmux::SIDEBAR_WIDTH;
-use support::{env, PrivateTmux, TestEnv};
+use support::{env, write_program, PrivateTmux, TestEnv};
 
 const CONF: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/tmux.conf");
 /// What `cat -v` echoes for the keys tmux sends: F10 layout, F11 hidden, F12 shown.
@@ -161,6 +160,8 @@ impl Server {
             self.format(pane, "#{pane_current_command}") == "cat"
         });
         assert!(started, "cat -v never started in {pane}");
+        // On a loaded host a hook of the setup can still be on its way: let it land, then clear
+        self.settle();
         self.run(&["clear-history", "-t", pane]);
         self.run(&["send-keys", "-R", "-t", pane]);
     }
@@ -173,7 +174,12 @@ impl Server {
     fn panes(&self) -> String {
         let format = "#{window_id} #{pane_id} sidebar=#{@cs-sidebar} #{pane_current_command} \
                       width=#{pane_width}";
-        self.run(&["list-panes", "-a", "-F", format])
+        let out = self.tmux.try_run(&["list-panes", "-a", "-F", format]);
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        )
     }
 
     fn error_log(&self) -> String {
@@ -323,12 +329,10 @@ fn new_window_hook_passes_its_window_id_to_cst_layout() {
     let dir = tempfile::TempDir::new().expect("temp dir");
     let log = dir.path().join("log");
     let fake = dir.path().join("cst");
-    fs::write(
+    write_program(
         &fake,
-        format!("#!/bin/sh\necho \"$@\" >> '{}'\n", log.display()),
-    )
-    .expect("write fake cst");
-    fs::set_permissions(&fake, fs::Permissions::from_mode(0o755)).expect("chmod");
+        &format!("#!/bin/sh\necho \"$@\" >> '{}'\n", log.display()),
+    );
     let Some(server) = Server::with_first_on_path(dir.path()) else {
         return;
     };
@@ -355,7 +359,7 @@ impl Client {
             .stderr(Stdio::null())
             .spawn()
             .expect("attach a control client");
-        let attached = within(WAIT, || server.format("t", "#{session_attached}") == "1");
+        let attached = within(WAIT, || server.format("t:", "#{session_attached}") == "1");
         assert!(attached, "the client never attached");
         Client(child)
     }
@@ -438,7 +442,7 @@ fn closes_when_claude_ends(end: impl Fn(&Server, &str)) {
         server.error_log()
     );
     // The window on screen went: the session next to it is shown, not the landing page
-    assert_eq!(server.format("t", "#{window_id}"), after);
+    assert_eq!(server.format("t:", "#{window_id}"), after);
 }
 
 #[test]

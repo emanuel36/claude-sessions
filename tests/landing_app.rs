@@ -3,12 +3,11 @@
 mod support;
 
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
 
-use support::{write_history, TmuxApp};
+use support::{write_history, write_program, TmuxApp};
 
 /// How long the page gets to start and draw its first frame.
 const START: Duration = Duration::from_secs(5);
@@ -30,8 +29,7 @@ impl Landing {
             fs::create_dir(dir).expect("create dir");
         }
         let claude = bin.join("claude");
-        fs::write(&claude, "#!/bin/sh\nexec sleep 600\n").expect("write claude");
-        fs::set_permissions(&claude, fs::Permissions::from_mode(0o755)).expect("chmod claude");
+        write_program(&claude, "#!/bin/sh\nexec sleep 600\n");
         let path = format!(
             "{}:{}",
             bin.display(),

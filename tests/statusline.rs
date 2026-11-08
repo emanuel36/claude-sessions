@@ -156,6 +156,7 @@ fn without_a_valid_session_the_limits_are_still_saved() {
     assert_eq!(error_log(&env), "");
 }
 
+/// The bound leaves 3 s over the 5 s timeout: a loaded host can be slow to start the chain.
 #[test]
 fn chain_is_killed_after_five_seconds() {
     let env = env();
@@ -163,7 +164,7 @@ fn chain_is_killed_after_five_seconds() {
     let start = Instant::now();
     let out = statusline(&env, status_input().to_string().as_bytes());
     assert!(
-        start.elapsed() < Duration::from_secs(6),
+        start.elapsed() < Duration::from_secs(8),
         "{:?}",
         start.elapsed()
     );

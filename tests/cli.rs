@@ -70,7 +70,7 @@ fn step_and_close_act_on_the_server_they_run_in() {
         cmd.env("TMUX", format!("{},1,0", tmux.socket_path().display()));
         start(cmd, b"").wait_with_output().expect("wait for cst")
     };
-    let current = || tmux.run(&["display-message", "-p", "-t", "t", "#{window_id}"]);
+    let current = || tmux.run(&["display-message", "-p", "-t", "t:", "#{window_id}"]);
     assert_eq!(in_server(&["step", "down", &other]).status.code(), Some(0));
     assert_eq!(current().trim(), session);
     assert_eq!(in_server(&["close", &other]).status.code(), Some(0));
