@@ -11,6 +11,9 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use rustix::event::{poll, PollFd, PollFlags, Timespec};
+use rustix::fd::OwnedFd;
+use rustix::process::{pidfd_open, Pid, PidfdFlags};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::state::{self, Mux, Record, Status};
@@ -81,7 +84,18 @@ impl Runner for Cli {
 /// Runs a command for at most `timeout` and returns its stdout minus one trailing newline.
 ///
 /// Returns `""` when the command cannot start or does not finish in time; it is killed then.
-fn run_capped(mut cmd: Command, timeout: Duration) -> String {
+fn run_capped(cmd: Command, timeout: Duration) -> String {
+    run_capped_with(cmd, timeout, &spawn_thread)
+}
+
+/// Starts the job that reads a child's output on a thread of its own.
+type Spawner<'a> = &'a dyn Fn(Box<dyn FnOnce() + Send>) -> std::io::Result<()>;
+
+fn spawn_thread(job: Box<dyn FnOnce() + Send>) -> std::io::Result<()> {
+    thread::Builder::new().spawn(job).map(drop)
+}
+
+fn run_capped_with(mut cmd: Command, timeout: Duration, spawn: Spawner<'_>) -> String {
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
@@ -90,18 +104,22 @@ fn run_capped(mut cmd: Command, timeout: Duration) -> String {
     };
     let deadline = Instant::now() + timeout;
     let Some(mut stdout) = child.stdout.take() else {
-        let _ = child.kill();
-        let _ = child.wait();
+        give_up(&mut child);
         return String::new();
     };
     // A reader thread keeps a full pipe from stalling the child; it is left to end by itself
     // when the child is killed.
     let (tx, rx) = mpsc::channel();
-    thread::spawn(move || {
+    let reader = Box::new(move || {
         let mut buf = Vec::new();
         let _ = stdout.read_to_end(&mut buf);
         let _ = tx.send(buf);
     });
+    // `thread::spawn` panics when the system is out of threads; a hook must not
+    if spawn(reader).is_err() {
+        give_up(&mut child);
+        return String::new();
+    }
     let out = rx.recv_timeout(timeout);
     let exited = out.is_ok() && wait_until(&mut child, deadline);
     match out {
@@ -110,23 +128,61 @@ fn run_capped(mut cmd: Command, timeout: Duration) -> String {
             text.strip_suffix('\n').unwrap_or(&text).to_owned()
         }
         _ => {
-            let _ = child.kill();
-            let _ = child.wait();
+            give_up(&mut child);
             String::new()
         }
     }
 }
 
+/// Kills a child and waits for it, so it leaves no zombie behind.
+fn give_up(child: &mut std::process::Child) {
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
 /// Waits for the child to exit until `deadline`; false if it is still running.
 fn wait_until(child: &mut std::process::Child, deadline: Instant) -> bool {
+    wait_until_with(child, deadline, &mut || thread::sleep(POLL))
+}
+
+fn wait_until_with(
+    child: &mut std::process::Child,
+    deadline: Instant,
+    sleep: &mut dyn FnMut(),
+) -> bool {
+    // A pidfd becomes readable when the child exits, so the wait needs no polling. The child is
+    // not reaped yet, so its pid cannot belong to anyone else.
+    let pidfd = child_pidfd(child);
     loop {
         match child.try_wait() {
             Ok(Some(_)) => return true,
             Err(_) => return false,
-            Ok(None) if Instant::now() >= deadline => return false,
-            Ok(None) => thread::sleep(POLL),
+            Ok(None) => {}
+        }
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return false;
+        }
+        match &pidfd {
+            Some(fd) if block_on(fd, left) => {}
+            _ => sleep(),
         }
     }
+}
+
+fn child_pidfd(child: &std::process::Child) -> Option<OwnedFd> {
+    let pid = Pid::from_raw(i32::try_from(child.id()).ok()?)?;
+    pidfd_open(pid, PidfdFlags::empty()).ok()
+}
+
+/// Blocks until the process behind `fd` exits or `left` has passed; false if poll failed.
+fn block_on(fd: &OwnedFd, left: Duration) -> bool {
+    let timeout = Timespec {
+        tv_sec: i64::try_from(left.as_secs()).unwrap_or(i64::MAX),
+        tv_nsec: i64::from(left.subsec_nanos()),
+    };
+    let mut fds = [PollFd::new(fd, PollFlags::IN)];
+    poll(&mut fds, Some(&timeout)).is_ok()
 }
 
 /// Reads other processes' command lines and children; a seam for tests.
@@ -565,9 +621,9 @@ mod tests {
     use crate::state::{new_record, Mux, Record, Status};
     use crate::term::tmux::{
         add_sidebar_running, attaches, close_window_with, detect, detect_with, fit_sidebars,
-        is_headless, name_window, next_session_window, pane_in_view, panes, run_capped,
-        settle_if_viewed, window_entries, window_name, windows_of, Cli, Pane, Procs, Runner,
-        Window, SIDEBAR_WIDTH, WINDOW_NAME_LEN,
+        give_up, is_headless, name_window, next_session_window, pane_in_view, panes, run_capped,
+        run_capped_with, settle_if_viewed, wait_until, wait_until_with, window_entries,
+        window_name, windows_of, Cli, Pane, Procs, Runner, Window, SIDEBAR_WIDTH, WINDOW_NAME_LEN,
     };
 
     type Reply = Box<dyn Fn(&[&str]) -> String>;
@@ -838,6 +894,58 @@ mod tests {
         slow.arg("5");
         let start = Instant::now();
         assert_eq!(run_capped(slow, Duration::from_millis(100)), "");
+        assert!(start.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn run_capped_gives_up_at_once_when_the_reader_thread_cannot_start() {
+        let mut cmd = Command::new("sleep");
+        cmd.arg("30");
+        let refuse = |_job: Box<dyn FnOnce() + Send>| Err(std::io::Error::other("no threads"));
+        let start = Instant::now();
+        assert_eq!(run_capped_with(cmd, Duration::from_secs(5), &refuse), "");
+        assert!(start.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn a_child_is_killed_and_reaped_when_given_up_on() {
+        let mut cmd = Command::new("sleep");
+        cmd.arg("30");
+        let mut child = cmd.spawn().expect("spawn sleep");
+        give_up(&mut child);
+        // `try_wait` only reports a status for a child that was waited for
+        assert!(matches!(child.try_wait(), Ok(Some(status)) if !status.success()));
+    }
+
+    #[test]
+    fn wait_until_does_not_poll_for_a_child_that_exits_soon() {
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "sleep 0.05"]);
+        let mut child = cmd.spawn().expect("spawn sh");
+        let mut sleeps = 0;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        assert!(wait_until_with(&mut child, deadline, &mut || sleeps += 1));
+        assert_eq!(sleeps, 0);
+    }
+
+    #[test]
+    fn wait_until_stops_at_the_deadline_for_a_child_that_lingers() {
+        let mut cmd = Command::new("sleep");
+        cmd.arg("30");
+        let mut child = cmd.spawn().expect("spawn sleep");
+        let start = Instant::now();
+        let deadline = start + Duration::from_millis(100);
+        assert!(!wait_until(&mut child, deadline));
+        assert!(start.elapsed() < Duration::from_secs(2));
+        give_up(&mut child);
+    }
+
+    #[test]
+    fn run_capped_does_not_hang_on_a_child_that_closes_stdout_and_lingers() {
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "exec 1>&-; sleep 30"]);
+        let start = Instant::now();
+        assert_eq!(run_capped(cmd, Duration::from_millis(200)), "");
         assert!(start.elapsed() < Duration::from_secs(2));
     }
 

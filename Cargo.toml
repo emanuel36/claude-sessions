@@ -21,7 +21,7 @@ chrono = { version = "0.4", default-features = false, features = ["serde", "cloc
 crossterm = "0.28"
 inotify = { version = "0.11", default-features = false }
 ratatui = "0.29"
-rustix = { version = "1", features = ["fs", "process"] }
+rustix = { version = "1", features = ["event", "fs", "process"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 sha2 = "0.10"
