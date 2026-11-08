@@ -33,6 +33,10 @@ proptest = "1"
 tempfile = "3"
 uuid = { version = "1", features = ["v4"] }
 
+# Tests hash whole binaries; unoptimised SHA-256 takes seconds on them
+[profile.dev.package.sha2]
+opt-level = 3
+
 [profile.release]
 lto = true
 codegen-units = 1

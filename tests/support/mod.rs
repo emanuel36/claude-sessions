@@ -63,7 +63,12 @@ const AMBIENT: [&str; 6] = [
 /// A `cst` command with `args`, the three env vars pointed at `env`, and no tmux or Claude Code
 /// variables; stdio is piped.
 pub fn command(env: &TestEnv, args: &[&str]) -> Command {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_cst"));
+    command_of(Path::new(env!("CARGO_BIN_EXE_cst")), env, args)
+}
+
+/// Like [`command`], for the `cst` executable at `program`.
+pub fn command_of(program: &Path, env: &TestEnv, args: &[&str]) -> Command {
+    let mut cmd = Command::new(program);
     cmd.args(args)
         .env("CST_RUNTIME_DIR", env.runtime_dir())
         .env("CST_STATE_DIR", env.state_dir())
@@ -309,4 +314,64 @@ impl Drop for PrivateTmux {
             .output();
         let _ = std::fs::remove_file(self.socket_path());
     }
+}
+
+/// The release asset for this machine: `cst-<arch>-unknown-linux-musl`, with the arch named as
+/// `install.sh` names it from `uname -m`.
+pub fn asset_name() -> String {
+    let out = Command::new("uname").arg("-m").output().expect("run uname");
+    let arch = match String::from_utf8_lossy(&out.stdout).trim() {
+        "aarch64" | "arm64" => "aarch64".to_owned(),
+        other => other.to_owned(),
+    };
+    format!("cst-{arch}-unknown-linux-musl")
+}
+
+/// The test binary with `marker` appended: it still runs, but differs from it byte for byte.
+pub fn release_binary(marker: &str) -> Vec<u8> {
+    let mut bytes = fs::read(env!("CARGO_BIN_EXE_cst")).expect("read the test binary");
+    bytes.extend_from_slice(marker.as_bytes());
+    bytes
+}
+
+/// The SHA-256 of `bytes`, in lowercase hex.
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// Publishes a release in `dir` laid out as `CST_RELEASE_BASE=file://<dir>` reads it:
+/// `latest/tag`, and `download/<tag>/` holding the asset and its `.sha256` in `sha256sum`
+/// format. `checksum` replaces the asset's true SHA-256.
+pub fn publish(dir: &Path, tag: &str, asset: &[u8], checksum: Option<&str>) {
+    let name = asset_name();
+    let download = dir.join("download").join(tag);
+    fs::create_dir_all(&download).expect("create the release dir");
+    fs::create_dir_all(dir.join("latest")).expect("create the latest dir");
+    fs::write(dir.join("latest/tag"), format!("{tag}\n")).expect("write the tag");
+    fs::write(download.join(&name), asset).expect("write the asset");
+    let sum = checksum.map_or_else(|| sha256_hex(asset), str::to_owned);
+    fs::write(
+        download.join(format!("{name}.sha256")),
+        format!("{sum}  {name}\n"),
+    )
+    .expect("write the checksum");
+}
+
+/// Runs `cmd`, whose program was just written, retrying while a fork in another test thread
+/// still holds it open for writing (ETXTBSY).
+pub fn output_retrying(cmd: &mut Command) -> Output {
+    const TEXT_FILE_BUSY: i32 = 26;
+    for _ in 0..50 {
+        match cmd.output() {
+            Err(e) if e.raw_os_error() == Some(TEXT_FILE_BUSY) => {
+                thread::sleep(Duration::from_millis(20));
+            }
+            result => return result.expect("run the command"),
+        }
+    }
+    panic!("the program stayed busy");
 }

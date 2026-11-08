@@ -11,6 +11,7 @@ use cst::term::tmux::{self, Cli};
 use cst::term::{launcher, layout};
 use cst::ui::pane::own_socket;
 use cst::ui::{landing_app, panel_app, sidebar_app};
+use cst::update;
 
 const USAGE: &str = "\
 Usage: cst [OPTIONS] [COMMAND]
@@ -136,6 +137,7 @@ fn main() -> ExitCode {
         // Hidden: users get it through `install.sh` and `cst update`
         ["install"] => run_install(),
         ["uninstall"] => exit_code(install::uninstall()),
+        ["update"] => exit_code(update::update()),
         // Hidden: tmux runs them, in each session window's side pane, in the first window and
         // in the Alt+n popup
         ["sidebar"] => run_screen("sidebar", sidebar_app::main_sidebar),
