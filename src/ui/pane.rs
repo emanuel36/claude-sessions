@@ -88,6 +88,9 @@ pub enum Sight {
 ///
 /// tmux says so with F12 and F11. A pane believed hidden that gets a key the user typed, a
 /// click, a resize or a layout change is on screen all the same: tmux's word was lost.
+///
+/// A resize is such a proof because tmux (3.1 on; tmux.conf requires 3.3) resizes a window
+/// only when it is current or becomes current, never while it is out of sight.
 pub fn sight(msg: &Msg, visible: bool) -> Sight {
     match msg {
         Msg::Key(key) => match signal(key) {
@@ -98,6 +101,45 @@ pub fn sight(msg: &Msg, visible: bool) -> Sight {
         },
         Msg::Mouse(_) | Msg::Resize if !visible => Sight::Shown,
         Msg::Mouse(_) | Msg::Resize | Msg::Changed(_) => Sight::Same,
+    }
+}
+
+/// A pane tmux shows and hides: the sidebar and the landing page.
+pub trait Visible {
+    /// Whether the pane believes itself on screen.
+    fn visible(&self) -> bool;
+    /// Comes on screen: everything is read again before the next draw.
+    fn show(&mut self);
+    /// Leaves the screen: no watches, no timer, nothing read until shown again.
+    fn hide(&mut self, runtime: &mut Runtime);
+}
+
+/// Takes a message for a pane tmux shows and hides; `take` handles it once the pane is known
+/// to be on screen.
+///
+/// The pane is shown or hidden as the message tells ([`sight`]). A hidden pane does no work:
+/// the message that hid it, and any that comes while hidden (such as changes queued before
+/// its watches went), is dropped. A pane just shown draws at once, whatever `take` returns.
+pub fn gated<A: Visible>(
+    app: &mut A,
+    msg: Msg,
+    runtime: &mut Runtime,
+    take: impl FnOnce(&mut A, Msg, &mut Runtime) -> Step,
+) -> Step {
+    match sight(&msg, app.visible()) {
+        Sight::Shown => {
+            app.show();
+            match take(app, msg, runtime) {
+                Step::Quit => Step::Quit,
+                Step::Wait | Step::Draw => Step::Draw,
+            }
+        }
+        Sight::Hidden => {
+            app.hide(runtime);
+            Step::Wait
+        }
+        Sight::Same if app.visible() => take(app, msg, runtime),
+        Sight::Same => Step::Wait,
     }
 }
 
@@ -423,6 +465,11 @@ impl Watches {
     pub fn clear(&mut self, runtime: &mut Runtime) {
         runtime.unwatch_all();
         self.watching.clear();
+    }
+
+    /// Whether nothing is watched.
+    pub fn is_empty(&self) -> bool {
+        self.watching.is_empty()
     }
 }
 

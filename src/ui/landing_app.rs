@@ -19,7 +19,7 @@ use crate::state::Record;
 use crate::term::tmux::{Cli, Runner};
 use crate::ui::folders::Scan;
 use crate::ui::landing;
-use crate::ui::pane::{self, open, picker_key, sight, App, LogOnce, Sight, Stale, Step, Watches};
+use crate::ui::pane::{self, open, picker_key, App, LogOnce, Stale, Step, Visible, Watches};
 use crate::ui::picker::{self, Folder, Picker};
 use crate::ui::runtime::{signal, unix_now, Msg, Runtime, Schedule, Screen, Signal};
 use crate::ui::sidebar::Stats;
@@ -111,17 +111,34 @@ impl Landing {
         }
     }
 
-    /// On screen: everything is read again before the next draw.
-    fn show(&mut self) {
-        self.schedule.visible = true;
-        self.stale = Stale::ALL;
-    }
-
-    /// Off screen: no watches, no timer, nothing read until shown again.
-    fn hide(&mut self, runtime: &mut Runtime) {
-        self.schedule.visible = false;
-        self.schedule.dirty = false;
-        self.watches.clear(runtime);
+    /// Takes a message while on screen.
+    fn take(&mut self, msg: Msg, now: f64) -> Step {
+        match msg {
+            Msg::Key(key) => match signal(&key) {
+                // A window closed or opened: the open sessions may have changed
+                Some(Signal::Layout) => {
+                    self.stale.records = true;
+                    Step::Draw
+                }
+                Some(_) => Step::Wait,
+                None if self.key(&key) => Step::Draw,
+                None => Step::Wait,
+            },
+            Msg::Mouse(_) => Step::Wait,
+            Msg::Resize => {
+                self.schedule.dirty = true;
+                Step::Wait
+            }
+            Msg::Changed(path) => {
+                // No transcript is watched: the page shows no session's status
+                let touched = self.watches.changed(&path, &[], now);
+                if touched.any() {
+                    self.stale.add(touched);
+                    self.schedule.dirty = true;
+                }
+                Step::Wait
+            }
+        }
     }
 
     /// Takes a key the user typed; returns whether the page may have changed.
@@ -229,56 +246,32 @@ impl Landing {
     }
 }
 
+impl Visible for Landing {
+    fn visible(&self) -> bool {
+        self.schedule.visible
+    }
+
+    /// On screen: everything is read again before the next draw.
+    fn show(&mut self) {
+        self.schedule.visible = true;
+        self.stale = Stale::ALL;
+    }
+
+    /// Off screen: no watches, no timer, nothing read until shown again.
+    fn hide(&mut self, runtime: &mut Runtime) {
+        self.schedule.visible = false;
+        self.schedule.dirty = false;
+        self.watches.clear(runtime);
+    }
+}
+
 impl App for Landing {
     fn schedule(&self) -> &Schedule {
         &self.schedule
     }
 
     fn handle(&mut self, msg: Msg, now: f64, runtime: &mut Runtime) -> Step {
-        let shown = match sight(&msg, self.schedule.visible) {
-            Sight::Shown => {
-                self.show();
-                Step::Draw
-            }
-            Sight::Hidden => {
-                self.hide(runtime);
-                return Step::Wait;
-            }
-            // Hidden: events queued before the watches went are dropped
-            Sight::Same if !self.schedule.visible => return Step::Wait,
-            Sight::Same => Step::Wait,
-        };
-        let step = match msg {
-            Msg::Key(key) => match signal(&key) {
-                // A window closed or opened: the open sessions may have changed
-                Some(Signal::Layout) => {
-                    self.stale.records = true;
-                    Step::Draw
-                }
-                Some(_) => Step::Wait,
-                None if self.key(&key) => Step::Draw,
-                None => Step::Wait,
-            },
-            Msg::Mouse(_) => Step::Wait,
-            Msg::Resize => {
-                self.schedule.dirty = true;
-                Step::Wait
-            }
-            Msg::Changed(path) => {
-                // No transcript is watched: the page shows no session's status
-                let touched = self.watches.changed(&path, &[], now);
-                if touched.any() {
-                    self.stale.add(touched);
-                    self.schedule.dirty = true;
-                }
-                Step::Wait
-            }
-        };
-        if shown == Step::Draw {
-            shown
-        } else {
-            step
-        }
+        pane::gated(self, msg, runtime, |page, msg, _| page.take(msg, now))
     }
 
     fn update(&mut self, now: f64, runtime: &mut Runtime, screen: &mut Screen) {
@@ -311,7 +304,7 @@ mod tests {
     use crate::state::Record;
     use crate::term::tmux::Runner;
     use crate::ui::landing_app::{labels, open_sessions, Landing};
-    use crate::ui::pane::{App, Step};
+    use crate::ui::pane::{App, LogOnce, Step, Visible};
     use crate::ui::picker::{Folder, Picker, Session};
     use crate::ui::runtime::{Msg, Runtime};
     use crate::ui::sidebar::Stats;
@@ -470,6 +463,21 @@ mod tests {
         assert_eq!(page.handle(Msg::Key(key), NOW, &mut runtime), Step::Draw);
         assert!(page.schedule.visible);
         assert_eq!(page.picker.cursor, 1);
+    }
+
+    #[test]
+    fn a_page_sent_away_reads_nothing_and_never_wakes() {
+        let (mut page, calls, mut runtime) = page();
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut log = LogOnce::new("landing");
+        assert!(page.watches.watch(&mut runtime, dir.path(), &mut log));
+        page.schedule.labels = vec![0.0];
+        page.schedule.dirty = true;
+        let f11 = KeyEvent::new(KeyCode::F(11), KeyModifiers::NONE);
+        assert_eq!(page.handle(Msg::Key(f11), NOW, &mut runtime), Step::Wait);
+        assert_eq!(page.schedule.next_wake(NOW), None);
+        assert!(page.watches.is_empty());
+        assert_eq!(calls.all(), Vec::<Vec<String>>::new());
     }
 
     #[test]

@@ -17,7 +17,7 @@ use crate::claude::statusline::load_limits;
 use crate::state::{self, Record, Status, TIMED};
 use crate::term::tmux::{self, Cli, Pane, Runner};
 use crate::ui::pane::{
-    self, interruptible, own_socket, own_window, sight, App, LogOnce, Sight, Stale, Step, Watches,
+    self, interruptible, own_socket, own_window, App, LogOnce, Stale, Step, Visible, Watches,
     WINDOW_PAUSE,
 };
 use crate::ui::runtime::{signal, unix_now, Msg, Runtime, Schedule, Screen, Signal};
@@ -160,17 +160,36 @@ impl Sidebar {
         }
     }
 
-    /// On screen: everything is read again, panes included, before the next draw.
-    fn show(&mut self) {
-        self.schedule.visible = true;
-        self.stale = Stale::ALL;
-    }
-
-    /// Off screen: no watches, no timer, nothing read until shown again.
-    fn hide(&mut self, runtime: &mut Runtime) {
-        self.schedule.visible = false;
-        self.schedule.dirty = false;
-        self.watches.clear(runtime);
+    /// Takes a message while on screen.
+    fn take(&mut self, msg: Msg, now: f64) -> Step {
+        match msg {
+            Msg::Key(key) => match signal(&key) {
+                Some(Signal::Layout) => {
+                    self.stale.panes = true;
+                    Step::Draw
+                }
+                // Ctrl+C, Ctrl+Q and every other key do nothing
+                _ => Step::Wait,
+            },
+            Msg::Mouse(mouse) => {
+                if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+                    self.click(mouse.row);
+                }
+                Step::Wait
+            }
+            Msg::Resize => {
+                self.schedule.dirty = true;
+                Step::Wait
+            }
+            Msg::Changed(path) => {
+                let touched = self.watches.changed(&path, &self.records, now);
+                if touched.any() {
+                    self.stale.add(touched);
+                    self.schedule.dirty = true;
+                }
+                Step::Wait
+            }
+        }
     }
 
     /// Goes to the window of the entry on row `y`.
@@ -245,58 +264,32 @@ impl Sidebar {
     }
 }
 
+impl Visible for Sidebar {
+    fn visible(&self) -> bool {
+        self.schedule.visible
+    }
+
+    /// On screen: everything is read again, panes included, before the next draw.
+    fn show(&mut self) {
+        self.schedule.visible = true;
+        self.stale = Stale::ALL;
+    }
+
+    /// Off screen: no watches, no timer, nothing read until shown again.
+    fn hide(&mut self, runtime: &mut Runtime) {
+        self.schedule.visible = false;
+        self.schedule.dirty = false;
+        self.watches.clear(runtime);
+    }
+}
+
 impl App for Sidebar {
     fn schedule(&self) -> &Schedule {
         &self.schedule
     }
 
     fn handle(&mut self, msg: Msg, now: f64, runtime: &mut Runtime) -> Step {
-        let shown = match sight(&msg, self.schedule.visible) {
-            Sight::Shown => {
-                self.show();
-                Step::Draw
-            }
-            Sight::Hidden => {
-                self.hide(runtime);
-                return Step::Wait;
-            }
-            // Hidden: events queued before the watches went are dropped
-            Sight::Same if !self.schedule.visible => return Step::Wait,
-            Sight::Same => Step::Wait,
-        };
-        let step = match msg {
-            Msg::Key(key) => match signal(&key) {
-                Some(Signal::Layout) => {
-                    self.stale.panes = true;
-                    Step::Draw
-                }
-                // Ctrl+C, Ctrl+Q and every other key do nothing
-                _ => Step::Wait,
-            },
-            Msg::Mouse(mouse) => {
-                if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
-                    self.click(mouse.row);
-                }
-                Step::Wait
-            }
-            Msg::Resize => {
-                self.schedule.dirty = true;
-                Step::Wait
-            }
-            Msg::Changed(path) => {
-                let touched = self.watches.changed(&path, &self.records, now);
-                if touched.any() {
-                    self.stale.add(touched);
-                    self.schedule.dirty = true;
-                }
-                Step::Wait
-            }
-        };
-        if shown == Step::Draw {
-            shown
-        } else {
-            step
-        }
+        pane::gated(self, msg, runtime, |side, msg, _| side.take(msg, now))
     }
 
     fn update(&mut self, now: f64, runtime: &mut Runtime, screen: &mut Screen) {
@@ -337,7 +330,7 @@ mod tests {
     use crate::claude::statusline::Quota;
     use crate::state::{Record, Status};
     use crate::term::tmux::Runner;
-    use crate::ui::pane::{App, Stale, Step};
+    use crate::ui::pane::{App, Stale, Step, Visible};
     use crate::ui::runtime::{Msg, Runtime};
     use crate::ui::sidebar::{Entry, Run, Stats};
     use crate::ui::sidebar_app::{
