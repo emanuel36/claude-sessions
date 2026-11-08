@@ -150,6 +150,23 @@ fn update_says_up_to_date() {
 }
 
 #[test]
+fn update_does_not_downgrade_to_an_older_release() {
+    let rig = Rig::new();
+    publish(&rig.release(), "v1.0.0", &release_binary("older"), None);
+
+    let out = rig.update();
+
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert_eq!(
+        text(&out.stdout),
+        "already newer than the latest release (v1.0.0)\n"
+    );
+    assert!(fs::read(rig.installed()).expect("read") == test_binary());
+    assert_eq!(rig.bin_dir(), vec!["cst"]);
+    assert!(!rig.settings().exists());
+}
+
+#[test]
 fn update_fails_cleanly_without_a_release() {
     let rig = Rig::new();
 

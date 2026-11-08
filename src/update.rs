@@ -6,6 +6,7 @@
 //! own path now names a deleted file. Open panes keep the old binary until `cst` runs again,
 //! which restarts the sidebars and the landing page with the new one.
 
+use std::cmp::Ordering;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
@@ -35,8 +36,29 @@ fn valid_tag(tag: &str) -> bool {
 }
 
 /// Whether the release `tag` (`v2.0.0`, or `2.0.0`) is `version`.
-pub fn is_current(tag: &str, version: &str) -> bool {
+fn is_current(tag: &str, version: &str) -> bool {
     tag.strip_prefix('v').unwrap_or(tag) == version
+}
+
+/// Parses `MAJOR.MINOR.PATCH`, with an optional leading `v`.
+fn parse_version(text: &str) -> Option<(u64, u64, u64)> {
+    let mut parts = text.strip_prefix('v').unwrap_or(text).split('.');
+    let mut next = || parts.next()?.parse().ok();
+    let version = (next()?, next()?, next()?);
+    parts.next().is_none().then_some(version)
+}
+
+/// Orders the release `tag` (`v2.0.0`, or `2.0.0`) against `version`, the running build.
+///
+/// Both are compared as numbers, so `v1.10.0` is newer than `1.9.0`. When either is not
+/// `MAJOR.MINOR.PATCH`, the tag counts as newer unless it is the same release, so an
+/// unfamiliar tag is still installed, as it was before versions were compared.
+pub fn compare_release(tag: &str, version: &str) -> Ordering {
+    match (parse_version(tag), parse_version(version)) {
+        (Some(tag), Some(version)) => tag.cmp(&version),
+        _ if is_current(tag, version) => Ordering::Equal,
+        _ => Ordering::Greater,
+    }
 }
 
 /// The SHA-256 that `sums`, in `sha256sum` format (`<hex>  <name>`), gives for the file `name`.
@@ -77,9 +99,16 @@ fn run() -> anyhow::Result<()> {
         .unwrap_or_else(|| DEFAULT_BASE.to_owned());
     let base = base.trim_end_matches('/');
     let tag = latest_tag(base)?;
-    if is_current(&tag, crate::VERSION) {
-        println!("already up to date ({})", crate::VERSION);
-        return Ok(());
+    match compare_release(&tag, crate::VERSION) {
+        Ordering::Equal => {
+            println!("already up to date ({})", crate::VERSION);
+            return Ok(());
+        }
+        Ordering::Less => {
+            println!("already newer than the latest release ({tag})");
+            return Ok(());
+        }
+        Ordering::Greater => {}
     }
     let name = asset_name();
     let url = format!("{base}/download/{tag}/{name}");
@@ -186,12 +215,52 @@ fn replace(exe: &Path, bytes: &[u8]) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::cmp::Ordering;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
 
     use tempfile::TempDir;
 
-    use crate::update::{asset_name, checksum_for, is_current, replace, sha256_hex, tag_from_url};
+    use crate::update::{
+        asset_name, checksum_for, compare_release, is_current, replace, sha256_hex, tag_from_url,
+    };
+
+    #[test]
+    fn a_newer_release_is_greater() {
+        for (tag, version) in [
+            ("v2.0.1", "2.0.0"),
+            ("2.1.0", "2.0.9"),
+            ("v1.10.0", "1.9.0"),
+        ] {
+            assert_eq!(compare_release(tag, version), Ordering::Greater, "{tag}");
+        }
+    }
+
+    #[test]
+    fn the_same_release_is_equal_with_or_without_v() {
+        assert_eq!(compare_release("v2.0.0", "2.0.0"), Ordering::Equal);
+        assert_eq!(compare_release("2.0.0", "2.0.0"), Ordering::Equal);
+    }
+
+    #[test]
+    fn an_older_release_is_less() {
+        for (tag, version) in [
+            ("v1.9.9", "2.0.0"),
+            ("v2.0.0", "2.0.1"),
+            ("v1.9.0", "1.10.0"),
+        ] {
+            assert_eq!(compare_release(tag, version), Ordering::Less, "{tag}");
+        }
+    }
+
+    #[test]
+    fn a_tag_that_is_not_a_version_falls_back_to_equality() {
+        assert_eq!(compare_release("nightly", "2.0.0"), Ordering::Greater);
+        assert_eq!(compare_release("v2.0", "2.0.0"), Ordering::Greater);
+        assert_eq!(compare_release("v2.0.0-rc1", "2.0.0"), Ordering::Greater);
+        // Equal text is the same release however it parses
+        assert_eq!(compare_release("v2.0.0-rc1", "2.0.0-rc1"), Ordering::Equal);
+    }
 
     #[test]
     fn the_tag_is_taken_from_the_release_url() {
