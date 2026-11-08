@@ -248,6 +248,11 @@ impl HistoryReader {
         &self.sessions
     }
 
+    /// Returns what the last [`HistoryReader::load`] returned, without looking at the file.
+    pub fn sessions(&self) -> &[HistorySession] {
+        &self.sessions
+    }
+
     /// Counts the readings that changed the sessions [`HistoryReader::load`] returned, so a
     /// caller can skip the work it does with them when the number is the same.
     pub fn generation(&self) -> u64 {
@@ -448,6 +453,17 @@ mod tests {
             entry("b", "/w/api", 20, "hi"),
         ]);
         assert_eq!(ids(reader.load()), ["b", "a"]);
+    }
+
+    #[test]
+    fn sessions_are_what_the_last_load_returned() {
+        let env = Env::new();
+        let mut reader = env.reader(false);
+        env.write(&[entry("a", "/w/api", 10, "hi")]);
+        reader.load();
+        // Read on without looking at the file again
+        env.write(&[]);
+        assert_eq!(ids(reader.sessions()), ["a"]);
     }
 
     #[test]

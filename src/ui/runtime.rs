@@ -11,7 +11,7 @@ use std::fmt;
 use std::io::{self, Stdout};
 use std::panic;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, MutexGuard, Once, PoisonError};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -32,7 +32,8 @@ pub enum Msg {
     /// The terminal changed size.
     Resize,
     /// An entry of a watched directory was created, written, renamed into it or deleted: its
-    /// full path. The directory itself when the kernel's event queue overflowed.
+    /// full path. The directory itself when the kernel's event queue overflowed, or when the
+    /// directory was deleted and its watch is gone (watch it again once it is back).
     Changed(PathBuf),
 }
 
@@ -58,7 +59,7 @@ pub fn signal(key: &KeyEvent) -> Option<Signal> {
 }
 
 /// The current time as seconds since the Unix epoch.
-fn unix_now() -> f64 {
+pub(crate) fn unix_now() -> f64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0.0, |d| d.as_secs_f64())
@@ -98,11 +99,14 @@ impl Watched {
             // Events were lost: every watched directory may have changed
             self.by_path.keys().cloned().for_each(push);
         } else if event.mask.contains(EventMask::IGNORED) {
-            // The kernel dropped the watch (directory removed, or `unwatch_all`)
+            // The kernel dropped a watch `unwatch_all` did not remove, as it does when the
+            // directory is deleted: the pane learns of it to watch the directory again
+            // (`unwatch_all` already forgot its watches, so they are not found here)
             if let Some(path) = self.by_wd.remove(&event.wd) {
                 if self.by_path.get(&path) == Some(&event.wd) {
                     self.by_path.remove(&path);
                 }
+                push(path);
             }
         } else if let Some(dir) = self.by_wd.get(&event.wd) {
             push(
@@ -276,16 +280,40 @@ impl Runtime {
     ///
     /// Returns `None` when the deadline passes first, or when both threads have stopped.
     pub fn next(&self, deadline: Option<f64>) -> Option<Msg> {
-        match deadline {
-            None => self.rx.recv().ok(),
+        match self.wait(deadline) {
+            Wake::Msg(msg) => Some(msg),
+            Wake::Timeout | Wake::Closed => None,
+        }
+    }
+
+    /// Like [`Runtime::next`], telling a deadline that passed from threads that stopped.
+    pub fn wait(&self, deadline: Option<f64>) -> Wake {
+        let received = match deadline {
+            None => self.rx.recv().map_err(|_| RecvTimeoutError::Disconnected),
             Some(at) => {
                 let wait = (at - unix_now()).max(0.0);
                 // Too far away to represent: as good as forever
                 let wait = Duration::try_from_secs_f64(wait).unwrap_or(Duration::MAX);
-                self.rx.recv_timeout(wait).ok()
+                self.rx.recv_timeout(wait)
             }
+        };
+        match received {
+            Ok(msg) => Wake::Msg(msg),
+            Err(RecvTimeoutError::Timeout) => Wake::Timeout,
+            Err(RecvTimeoutError::Disconnected) => Wake::Closed,
         }
     }
+}
+
+/// What a wait on the pane's event sources ended with.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Wake {
+    /// A message arrived.
+    Msg(Msg),
+    /// The deadline passed first.
+    Timeout,
+    /// Both threads stopped: nothing will ever arrive.
+    Closed,
 }
 
 /// Spinner frames per second while a session works.
@@ -450,13 +478,17 @@ fn install_panic_hook() {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
 
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use crossterm::Command;
     use tempfile::TempDir;
 
     use crate::paths::write_atomic;
-    use crate::ui::runtime::{signal, unix_now, MouseClicks, Msg, Runtime, Schedule, Signal};
+    use crate::ui::runtime::{
+        signal, unix_now, MouseClicks, Msg, Runtime, Schedule, Signal, Wake, Watcher,
+    };
 
     fn visible() -> Schedule {
         Schedule {
@@ -576,6 +608,23 @@ mod tests {
     }
 
     #[test]
+    fn wait_tells_a_timeout_from_a_closed_channel() {
+        let runtime = Runtime::headless().unwrap();
+        assert_eq!(runtime.wait(Some(unix_now() - 5.0)), Wake::Timeout);
+        // Nothing feeds this channel any more: a wait with a far deadline ends at once
+        let (tx, rx) = mpsc::channel();
+        drop(tx);
+        let closed = Runtime {
+            rx,
+            watcher: Watcher::start(mpsc::channel().0).unwrap(),
+        };
+        let started = Instant::now();
+        assert_eq!(closed.wait(Some(unix_now() + 5.0)), Wake::Closed);
+        assert_eq!(closed.wait(None), Wake::Closed);
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
     fn past_deadline_returns_at_once() {
         let runtime = Runtime::headless().unwrap();
         assert_eq!(runtime.next(Some(unix_now() - 5.0)), None);
@@ -611,6 +660,35 @@ mod tests {
         runtime.unwatch_all();
         fs::write(dir.path().join("a"), b"x").unwrap();
         assert_eq!(runtime.next(Some(unix_now() + 0.2)), None);
+    }
+
+    #[test]
+    fn removed_directory_reports_itself_and_can_be_watched_again() {
+        let dir = TempDir::new().unwrap();
+        let watched = dir.path().join("records");
+        fs::create_dir(&watched).unwrap();
+        let mut runtime = Runtime::headless().unwrap();
+        runtime.watch(&watched).unwrap();
+        fs::remove_dir(&watched).unwrap();
+
+        let deadline = unix_now() + 1.0;
+        let mut seen = false;
+        while let Some(msg) = runtime.next(Some(deadline)) {
+            if msg == Msg::Changed(watched.clone()) {
+                seen = true;
+                break;
+            }
+        }
+        assert!(seen, "no Changed({}) within 1 s", watched.display());
+
+        fs::create_dir(&watched).unwrap();
+        runtime.watch(&watched).unwrap();
+        let target = watched.join("a");
+        fs::write(&target, b"x").unwrap();
+        assert_eq!(
+            runtime.next(Some(unix_now() + 1.0)),
+            Some(Msg::Changed(target))
+        );
     }
 
     #[test]

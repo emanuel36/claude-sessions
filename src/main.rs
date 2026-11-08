@@ -8,6 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use cst::claude::{hook, install, statusline};
 use cst::paths;
 use cst::term::tmux::Cli;
+use cst::ui::sidebar_app;
 
 const USAGE: &str = "\
 Usage: cst [OPTIONS] [COMMAND]
@@ -74,6 +75,18 @@ fn run_install() -> ExitCode {
     }
 }
 
+/// Runs the sidebar of the tmux window this process runs in.
+fn run_sidebar() -> ExitCode {
+    match sidebar_app::main_sidebar() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            paths::log_error(&format_args!("sidebar: {e:#}"));
+            eprintln!("cst sidebar: {e:#}");
+            ExitCode::from(1)
+        }
+    }
+}
+
 fn exit_code(code: i32) -> ExitCode {
     ExitCode::from(u8::try_from(code).unwrap_or(1))
 }
@@ -101,6 +114,8 @@ fn main() -> ExitCode {
         // Hidden: users get it through `install.sh` and `cst update`
         ["install"] => run_install(),
         ["uninstall"] => exit_code(install::uninstall()),
+        // Hidden: tmux runs it in each session window's side pane
+        ["sidebar"] => run_sidebar(),
         ["--version"] => {
             println!("cst {}", cst::VERSION);
             ExitCode::SUCCESS
