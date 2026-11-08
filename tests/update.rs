@@ -95,7 +95,8 @@ fn update_replaces_the_binary_after_verifying() {
 
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     assert!(
-        text(&out.stdout).ends_with("updated to v9.9.9; quit and reopen cst\n"),
+        text(&out.stdout)
+            .ends_with("updated to v9.9.9; run cst again to use it, your sessions keep running\n"),
         "{}",
         text(&out.stdout)
     );

@@ -11,7 +11,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::core::paths;
-use crate::term::tmux::SOCKET;
+use crate::term::tmux::{SIDEBAR_COMMAND, SOCKET};
+use crate::update;
 
 /// The tmux session that holds every Claude Code session's window.
 pub const SESSION: &str = "claude";
@@ -22,6 +23,8 @@ pub const LANDING: &str = "cst landing";
 pub const CONF: &str = include_str!("../../assets/tmux.conf");
 /// The configuration's file name in the state directory.
 const CONF_NAME: &str = "tmux.conf";
+/// The server option that holds the [`conf_stamp`] of the `cst` that configured the server.
+const STAMP: &str = "@cs-conf";
 
 /// Why the `claude` session could not be opened.
 #[derive(Debug)]
@@ -72,7 +75,8 @@ impl Server {
     }
 
     /// Creates the `claude` session, unless the server already has it, with the landing page as
-    /// its first window.
+    /// its first window. A server that another version of `cst` configured is brought up to
+    /// this one, and keeps its sessions.
     ///
     /// # Errors
     ///
@@ -106,7 +110,65 @@ impl Server {
             "1",
         ]);
         status(mark)?;
+        self.update_running()
+    }
+
+    /// Brings a server that another version of `cst` configured up to this one, without ending
+    /// it: loads this configuration, so hooks and keys run this `cst`, and restarts the sidebars
+    /// and the landing page with it. Claude's panes keep running. A server this version
+    /// configured is left as it is.
+    fn update_running(&self) -> Result<(), LaunchError> {
+        let stamp = self.output(&["show-options", "-sqv", STAMP])?;
+        if stamp.trim_end() == conf_stamp() {
+            return Ok(());
+        }
+        // As a server this `cst` starts gets them: hooks find this `cst` first
+        for (name, value) in &self.env {
+            let mut set = self.tmux();
+            set.args(["set-environment", "-g"]).arg(name).arg(value);
+            status(set)?;
+        }
+        let mut source = self.tmux();
+        // An older tmux reports the keys it does not know, as when it starts with the file; the
+        // terminal is about to show tmux, so this would only be left behind on detach
+        source
+            .arg("source-file")
+            .arg(&self.conf)
+            .stderr(Stdio::null());
+        status(source)?;
+        let panes = self.output(&[
+            "list-panes",
+            "-a",
+            "-F",
+            "#{pane_id}\t#{@cs-sidebar}\t#{@cs-landing}\t#{pane_start_command}",
+        ])?;
+        for line in panes.lines() {
+            let (pane, command) = match line.split('\t').collect::<Vec<_>>()[..] {
+                [pane, "1", _, _] => (pane, SIDEBAR_COMMAND),
+                // Only a pane started as the landing page (`cst landing`, or 1.x's `cs landing`):
+                // with that window closed, a session's window is first, and marked all the same
+                [pane, _, "1", started] if started.trim_matches('"').ends_with(" landing") => {
+                    (pane, LANDING)
+                }
+                _ => continue,
+            };
+            let mut respawn = self.tmux();
+            respawn.args(["respawn-pane", "-k", "-t", pane, command]);
+            status(respawn)?;
+        }
         Ok(())
+    }
+
+    /// Runs a tmux command to its end and returns what it printed.
+    fn output(&self, args: &[&str]) -> Result<String, LaunchError> {
+        let out = self
+            .tmux()
+            .args(args)
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+            .map_err(|_| LaunchError::NoTmux)?;
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     }
 
     /// The command that attaches this terminal to the `claude` session.
@@ -149,18 +211,34 @@ pub fn search_path(dir: &Path, path: Option<&OsStr>) -> OsString {
     joined
 }
 
-/// Writes [`CONF`] to `dir/tmux.conf`, creating `dir`, unless the file already holds it.
+/// Names this version and its configuration: the crate version and a short hash of [`CONF`].
+pub fn conf_stamp() -> String {
+    let hash = update::sha256_hex(CONF.as_bytes());
+    format!("{} {}", env!("CARGO_PKG_VERSION"), &hash[..12])
+}
+
+/// The configuration as written: [`CONF`], then the line that stamps the server with
+/// [`conf_stamp`], so a later `cst` can tell which version configured a running server.
+pub fn conf_text() -> String {
+    format!(
+        "{CONF}\n# The version that configured this server\nset -s {STAMP} '{}'\n",
+        conf_stamp()
+    )
+}
+
+/// Writes [`conf_text`] to `dir/tmux.conf`, creating `dir`, unless the file already holds it.
 ///
 /// # Errors
 ///
 /// Returns the error of creating the folder or writing the file.
 pub fn write_conf(dir: &Path) -> io::Result<PathBuf> {
     let path = dir.join(CONF_NAME);
-    if std::fs::read(&path).is_ok_and(|bytes| bytes == CONF.as_bytes()) {
+    let text = conf_text();
+    if std::fs::read(&path).is_ok_and(|bytes| bytes == text.as_bytes()) {
         return Ok(path);
     }
     std::fs::create_dir_all(dir)?;
-    paths::write_atomic(&path, CONF.as_bytes(), None)?;
+    paths::write_atomic(&path, text.as_bytes(), None)?;
     Ok(path)
 }
 

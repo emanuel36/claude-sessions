@@ -84,11 +84,13 @@ The [install script](https://github.com/emanuel36/claude-sessions/blob/main/inst
 
 Then open it with `cst`, or `cst --ghostty` for a new Ghostty window.
 
-- **Update:** run `cst update`, then quit `cst` and open it again.
+- **Update:** run `cst update`, then run `cst` again. The open sidebars and the landing page
+  switch to the new version; your sessions keep running.
 - **Uninstall:** run `cst uninstall`, which restores your settings, then delete
   `~/.local/bin/cst`.
 - **Coming from 1.x:** the hooks and your own status line carry over; the cost history of the
-  Python version is not read, so the day's and week's statistics start afresh.
+  Python version is not read, so the day's and week's statistics start afresh. Sessions still
+  open from 1.x keep running; run `cst` to switch them to the new version.
 
 ## Troubleshooting
 
@@ -97,7 +99,7 @@ Then open it with `cst`, or `cst --ghostty` for a new Ghostty window.
 | A session never changes colour | It is not in a `cst` window, or the hooks are missing: run `cst update` |
 | Cost is empty | The status line has not reported yet, or another tool replaced it |
 | Quota is missing | Claude Code reports it only to subscribers, after the first response |
-| The sidebar is blank or out of date after an update | Open windows still run the old version: quit `cst` and open it again |
+| The sidebar is blank or out of date after an update | Open windows still run the old version: run `cst` again |
 | Anything else | Failures are written to `~/.local/state/cst/errors.log` |
 
 ## How it is organised

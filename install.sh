@@ -115,9 +115,11 @@ main() {
         *":$bin:"*) ;;
         *) say "$bin is not on your PATH: add it in your shell's startup file." ;;
     esac
-    # A cst left open from before keeps running its old panes; it is not ours to close
+    # A cst left open from before keeps running its old panes until `cst` runs again, which
+    # brings them up to this version; ending the server is not ours to do
     if tmux -L claude has-session 2>/dev/null; then
-        say "cst is still open from before: quit and reopen cst to use this version."
+        say "cst is open from before: run cst again to use this version;" \
+            "your sessions keep running."
     fi
     say "Done. Open your sessions with: cst"
 }

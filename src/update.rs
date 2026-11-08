@@ -3,7 +3,8 @@
 //! The release is found and downloaded with `curl`, checked against its published SHA-256 and
 //! renamed over the binary, so a failure at any step leaves the old one as it was. The new
 //! binary then registers itself with `<new> install`: the running process cannot do it, as its
-//! own path now names a deleted file. Open panes keep the old binary until `cst` is reopened.
+//! own path now names a deleted file. Open panes keep the old binary until `cst` runs again,
+//! which restarts the sidebars and the landing page with the new one.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
@@ -102,7 +103,7 @@ fn run() -> anyhow::Result<()> {
     if !status.success() {
         bail!("{tag} is installed, but {} install failed", exe.display());
     }
-    println!("updated to {tag}; quit and reopen cst");
+    println!("updated to {tag}; run cst again to use it, your sessions keep running");
     Ok(())
 }
 

@@ -173,7 +173,7 @@ fn install_sh_downloads_verifies_and_registers() {
     let stdout = text(&out.stdout);
     assert!(stdout.contains("v9.9.9"), "{stdout}");
     assert!(stdout.contains("is not on your PATH"), "{stdout}");
-    assert!(!stdout.contains("quit and reopen"), "{stdout}");
+    assert!(!stdout.contains("run cst again"), "{stdout}");
     assert!(!rig.log("uv.log").contains("uninstall"));
 }
 
@@ -329,7 +329,7 @@ fn install_sh_removes_the_python_version() {
 }
 
 #[test]
-fn install_sh_says_to_reopen_a_running_cst_and_leaves_it_running() {
+fn install_sh_says_to_run_cst_again_and_leaves_it_running() {
     let rig = Rig::new();
     rig.fake_tmux("tmux 3.4", true);
     publish(&rig.release(), "v9.9.9", &release_binary("x"), None);
@@ -338,7 +338,10 @@ fn install_sh_says_to_reopen_a_running_cst_and_leaves_it_running() {
 
     assert_exit(&out, 0);
     let stdout = text(&out.stdout);
-    assert!(stdout.contains("quit and reopen cst"), "{stdout}");
+    assert!(
+        stdout.contains("run cst again to use this version; your sessions keep running"),
+        "{stdout}"
+    );
     let calls = rig.log("tmux.log");
     assert!(calls.contains("-L claude has-session"), "{calls}");
     assert!(!calls.contains("kill"), "{calls}");
