@@ -160,3 +160,31 @@ def test_day_costs_counts_each_days_growth():
         d2: [{"id": "a", "cost": 4.0}, {"id": "b", "cost": 0.5}],
     }
     assert journal.day_costs(events) == {d0: 1.0, d1: 2.0, d2: 1.5}
+
+
+def test_model_costs_give_each_rise_to_its_event_model():
+    day = datetime.date(2026, 11, 3)
+    before = day - datetime.timedelta(days=1)
+    events = {
+        before: [{"t": 1, "id": "a", "cost": 2.0, "model": "Opus"}],
+        day: [
+            {"t": 2, "id": "a", "cost": 5.0, "model": "Opus"},
+            {"t": 3, "id": "a", "cost": 6.0, "model": "Sonnet"},
+            {"t": 4, "id": "b", "cost": 1.5},
+            {"t": 5, "id": "a", "status": "done"},
+        ],
+    }
+    # Only what rose inside the window, by the model of the event that shows it
+    assert journal.model_costs(events, day) == {"Opus": 3.0, "Sonnet": 1.0, "unknown": 1.5}
+
+
+def test_model_costs_count_from_the_last_cost_before_the_window():
+    day = datetime.date(2026, 11, 3)
+    before = day - datetime.timedelta(days=1)
+    # The session restarted its running total the day before
+    events = {
+        before: [{"t": 1, "id": "a", "cost": 10.0}, {"t": 2, "id": "a", "cost": 1.0}],
+        day: [{"t": 3, "id": "a", "cost": 3.0, "model": "Opus"}],
+    }
+    assert journal.model_costs(events, day) == {"Opus": 2.0}
+    assert journal.window_totals(events, day)["a"]["cost"] == 2.0

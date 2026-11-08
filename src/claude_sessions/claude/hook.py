@@ -10,7 +10,8 @@ from claude_sessions.core import state, store
 from claude_sessions.term import tmux
 
 # Events after which the window takes the session's folder name
-NAMING_EVENTS = {"SessionStart", "UserPromptSubmit"}
+# Claude Code writes a session's title during its first turn: Stop picks it up
+NAMING_EVENTS = {"SessionStart", "UserPromptSubmit", "Stop"}
 # How a session starts when it takes the place of another in the same Claude process
 REPLACING = {"clear", "resume"}
 # Esc fires no hook, so these statuses can outlive an interrupted turn or a rejected prompt
@@ -51,10 +52,13 @@ def handle_event(event, env, now):
         # A run without a terminal (a start hook's `claude -p`) is listed apart from the sessions
         record["headless"] = tmux.is_headless(env)
         record = tmux.settle_if_viewed(record, now)
+        if event.get("hook_event_name") in NAMING_EVENTS:
+            # A title found once stays, even after it scrolls out of the transcript's tail
+            record["title"] = files.title_of(record.get("transcript")) or record.get("title", "")
         store.write(record)
         # Told under the lock, so overlapping hooks reach tmux in the order they hit the disk
         if event.get("hook_event_name") in NAMING_EVENTS:
-            tmux.name_window(record)
+            tmux.name_window(record, record["title"])
     if event.get("hook_event_name") == "SessionStart" and event.get("source") in REPLACING:
         store.remove_replaced(record)
 

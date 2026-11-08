@@ -8,14 +8,16 @@ from dataclasses import dataclass, field
 from claude_sessions.core import journal, state
 
 WEEK_DAYS = 7
+HOUR = datetime.timedelta(hours=1)
+# The longest a span still open at `now` counts: a session killed mid-turn writes no event
+# to end it
+MAX_OPEN = 2 * 3600
 
 
 @dataclass
 class Day:
     """What today's journal adds up to."""
 
-    # Events in each hour of the day, 24 entries; a rough measure of when Claude worked
-    hours: list[int] = field(default_factory=lambda: [0] * 24)
     added: int = 0
     removed: int = 0
     sessions: int = 0
@@ -30,6 +32,7 @@ class Totals:
     today: float = 0.0
     week: float = 0.0
     by_project: list[tuple[str, float]] = field(default_factory=list)
+    by_model: list[tuple[str, float]] = field(default_factory=list)
     added: int = 0
     removed: int = 0
     sessions: int = 0
@@ -73,7 +76,8 @@ class Reader:
             # From the same per-day sums as the chart, so the today line and today's column agree
             today=daily[-1][1],
             week=sum(t["cost"] for t in week.values()),
-            by_project=sorted(projects.items(), key=lambda item: -item[1]),
+            by_project=_ranked(projects),
+            by_model=_ranked(journal.model_costs(events, days[1])),
             added=sum(t["added"] for t in week.values()),
             removed=sum(t["removed"] for t in week.values()),
             sessions=sum(1 for t in week.values() if any(t.values())),
@@ -82,6 +86,17 @@ class Reader:
         )
         self.cached = (inputs, result)
         return result
+
+    def hours(self, now):
+        """Returns the seconds sessions worked in each hour of today, midnight first.
+
+        Reads what `totals` read last, so call it after `totals` in the same tick.
+
+        Args:
+            now: Current time as a Unix timestamp.
+        """
+        events = {d: r.events for d, r in self.journals.items()}
+        return working_hours(events, datetime.date.fromtimestamp(now), now)
 
     def day(self, now):
         """Returns today's activity, lines, sessions and waiting.
@@ -98,6 +113,51 @@ class Reader:
         return day_summary(events, today, now)
 
 
+def _ranked(costs):
+    """`(name, dollars)` pairs, most expensive first."""
+    return sorted(costs.items(), key=lambda item: -item[1])
+
+
+def working_hours(events, first_day, now):
+    """Adds up, by hour of the day, the time sessions spent working from `first_day` on.
+
+    A session works from a `working` event to its next status event; work that began the day
+    before counts from midnight. One still working counts up to `now`, `MAX_OPEN` at most.
+
+    Args:
+        events: The events of each day, by `datetime.date`.
+        first_day: The first day to count.
+        now: Current time as a Unix timestamp.
+
+    Returns:
+        24 sums of seconds, midnight first.
+    """
+    hours = [0.0] * 24
+    started = {}
+    spans = []
+    midnight = time.mktime(first_day.timetuple())
+    for day in sorted(d for d in events if d >= first_day - datetime.timedelta(days=1)):
+        for event in events[day]:
+            sid, status = event.get("id"), event.get("status")
+            if status is None:
+                continue
+            if sid in started:
+                spans.append((started.pop(sid), event["t"]))
+            if status == state.WORKING:
+                started[sid] = event["t"]
+    spans += [(t, min(now, t + MAX_OPEN)) for t in started.values()]
+    for start, end in spans:
+        start = max(start, midnight)
+        while start < end:
+            # The end of the hour `start` falls in, in local time
+            t = datetime.datetime.fromtimestamp(start)
+            edge = (t.replace(minute=0, second=0, microsecond=0) + HOUR).timestamp()
+            stop = min(end, edge)
+            hours[t.hour] += stop - start
+            start = stop
+    return hours
+
+
 def day_summary(events, today, now):
     """Adds up one day of the journal.
 
@@ -109,7 +169,6 @@ def day_summary(events, today, now):
     day = Day()
     seen, last = set(), {}
     for event in events.get(today, []):
-        day.hours[time.localtime(event["t"]).tm_hour] += 1
         sid, status = event.get("id"), event.get("status")
         if status != journal.ENDED:
             seen.add(sid)

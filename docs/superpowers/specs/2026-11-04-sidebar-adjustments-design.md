@@ -56,3 +56,19 @@ Decisions of 2026-11-04, taken from previews the owner picked from. Code follows
   show a failure over the pane), which redraws at once (a 1 s check
   remains as a fallback). The folder scan (titles, folders that exist) is kept until the
   history changes.
+
+## Round 4 (owner's choices of 2026-11-05)
+- **Sidebar in Claude Code's own look** (option A, "transcript"): each session is a `⏺` line
+  (bullet in the status colour, name, waiting time) and a `⎿` line (what it waits on, cost, API
+  time, model). A working session's bullet is Claude Code's spinner. No group headings, no
+  tints: sessions are ordered by urgency (needs you, running, then finished and idle together,
+  so looking at a finished session does not move it), a blank line between them, and the current one has a
+  lighter background. Colours are Claude Code's dark-theme ones; the mascot is Claude orange.
+  Statistics follow the same pattern: `⏺ Today`, `⏺ Usage`, `⏺ Spend 7d` (one block per day).
+- **Mascot level with Claude Code's banner:** a blank line above it.
+- **Session titles as names:** the hook names a window after the session's title (`/rename`,
+  else Claude's own), the folder until there is one. A name given with Alt+r still wins.
+- **Navigation:** Alt+Up/Down follow the sidebar's order (`cs step`), not the window order.
+- **Folder sessions:** an open folder shows 5 sessions; moving past the last one shown scrolls
+  to older ones.
+- **No tab bar:** considered and dropped; the sidebar stays the only list of sessions.

@@ -180,6 +180,41 @@ def spend_by_session(day_events, first_day):
     return {sid: t["cost"] for sid, t in window_totals(day_events, first_day).items()}
 
 
+# The model of cost events written before the journal recorded one
+UNKNOWN_MODEL = "unknown"
+
+
+def model_costs(day_events, first_day):
+    """The cost all sessions added from `first_day` on, by the model each event names.
+
+    Costs are running totals, counted as `window_totals` counts them: from a session's last
+    cost before the window, each new high goes to the model of the event that reaches it.
+
+    Args:
+        day_events: The events of each day, by `datetime.date`.
+        first_day: The first day of the window.
+
+    Returns:
+        `{model: dollars}` for the models with a cost in the window.
+    """
+    before, high, totals = {}, {}, {}
+    for day in sorted(day_events):
+        for event in day_events[day]:
+            cost = event.get("cost")
+            if not isinstance(cost, int | float):
+                continue
+            sid = event.get("id")
+            if day < first_day:
+                before[sid] = cost
+                continue
+            top = high.get(sid, before.get(sid, 0.0))
+            if cost > top:
+                model = event.get("model") or UNKNOWN_MODEL
+                totals[model] = totals.get(model, 0.0) + cost - top
+                high[sid] = cost
+    return totals
+
+
 def day_costs(day_events):
     """The cost all sessions added on each day.
 

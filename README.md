@@ -22,11 +22,15 @@ and today's spend.
 `cst` opens on it, and you come back to it when you close the last session. Alt+↑ / Alt+↓
 step over it.
 
-- **Folders:** on the left, as wide as the terminal allows so session titles show whole: the
-  folders you ran Claude in, last used first, each with its number of sessions and its spend
-  over 7 days. → opens a folder's last 3 sessions and ← closes them.
-- **Statistics:** on the right, as in the sidebar: today's spend, activity and waiting, your
-  5-hour and 7-day quota, and the last 7 days' spend.
+- **Folders:** on the left: the folders you ran Claude in, last used first, each with when it
+  was last used, its number of sessions and its spend over 7 days. → opens a folder's
+  sessions, 5 at a time and newest first, and ← closes them; moving past the last one shown
+  scrolls to older ones. A ▼ on the last line shows the list goes on below.
+- **Statistics:** right after the folders, the two centred together: today's spend, sessions,
+  waiting and the hours your sessions worked; the lines changed today and over 7 days; your
+  5-hour and 7-day quota with the time left until each resets; the spend of each of the last
+  7 days; and the 4 folders that cost most. A small or short terminal shows the sidebar's
+  statistics.
 
 | Keys | Does |
 |---|---|
@@ -41,18 +45,22 @@ step over it.
 It sits on the left of every session, always 30 columns wide, and never takes the keyboard:
 what you type goes to Claude.
 
-- **Grouped by what you must do:** sessions sit under `NEEDS YOU`, `RUNNING`, `DONE` and
-  `IDLE`, each with its own colour. Inside a group they keep the order they were opened in.
-- **Two lines per session:** the name and waiting time, then what it waits on, the cost, the
-  time Claude spent answering and the model. Both lines take the status's colour as a
-  background, and a working session's breathes. A thin rule separates sessions of a group,
-  and the current one is a little lighter.
+- **Looks like Claude Code:** each session reads like a step of a Claude Code transcript, in
+  Claude Code's own colours: a `⏺` line, then a `⎿` line with the details.
+- **Most urgent first:** sessions that need you, then running ones, then the rest. Within
+  each, they keep the order they were opened in, so looking at a finished session never
+  moves it.
+- **Named after the session:** a session shows its title (the one Claude gives it, or the one
+  set with `/rename`), and its folder until it has one. A name given with Alt+r wins.
+- **Two lines per session:** the status's bullet, the name and the waiting time; then what it
+  waits on, the cost, the time Claude spent answering and the model. A working session's
+  bullet is Claude Code's spinner, and the current session has a lighter background.
 - **Background runs:** while an automatic Claude run is going, such as a start hook's daily
-  recap, it shows under the sessions with a magenta `↻`, its folder's name and how long it has
-  been running. It leaves the list when it ends and never takes over a session's tab.
-- **Statistics at the bottom:** TODAY (spend, activity by hour, lines changed, time waiting
-  on Claude and sessions), USAGE (5-hour and 7-day quota with when each resets) and SPEND 7D
-  (a column per day). TODAY steps aside when the sessions need its room.
+  recap, it shows under the sessions with its folder's name and how long it has been running.
+  It leaves the list when it ends and never takes over a session's tab.
+- **Statistics at the bottom:** Today (spend, lines changed, sessions and time waiting on
+  Claude), Usage (5-hour and 7-day quota with the time left until each resets) and Spend 7d
+  (a bar and the spend for each day). Today steps aside when the sessions need its room.
 - **Mouse:** click a session to go to it.
 
 ## Statuses
@@ -62,9 +70,9 @@ what you type goes to Claude.
 | Permission | red | Claude needs your approval to run something |
 | Question | amber | Claude asked you something, or has a plan to approve |
 | Finished | green | The turn ended and you have not looked yet |
-| Working | blue, breathing | Running tools, or waiting on background agents |
-| Shell | cyan | The turn ended and a shell command, such as a build, still runs in the background |
-| Idle | none | Seen, or interrupted with Esc |
+| Working | orange spinner | Running tools, or waiting on background agents |
+| Shell | lavender | The turn ended and a shell command, such as a build, still runs in the background |
+| Idle | grey | Seen, or interrupted with Esc |
 
 ## Keys
 
@@ -72,12 +80,12 @@ Every shortcut is Alt plus one key, from any session.
 
 | Keys | Does |
 |---|---|
-| Alt+↑ / Alt+↓ | Previous / next session, wrapping around, never the landing page |
-| Alt+n | New session: folders by last use, each opening its last 3 sessions |
+| Alt+↑ / Alt+↓ | Previous / next session in the sidebar's order, wrapping around |
+| Alt+n | New session: folders by last use, each opening its sessions |
 | Alt+c | Close the current session, after a confirmation |
 | Alt+r | Rename the current session |
 
-Alt+n opens a panel over the session with the landing page's folder list. → opens a folder's last 3 sessions and ← closes them; Enter on a folder starts a new
+Alt+n opens a panel over the session with the landing page's folder list. → opens a folder's sessions, 5 at a time, and ← closes them; Enter on a folder starts a new
 session there, Enter on a session resumes it. Typing searches, and a typed path that exists
 is offered first. Closing a session moves to the next one in the list.
 

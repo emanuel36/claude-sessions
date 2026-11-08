@@ -40,7 +40,7 @@ def test_hook_outside_tmux_writes_record():
 
 def test_a_headless_run_is_marked_and_takes_no_tab(monkeypatch):
     named = []
-    monkeypatch.setattr(hook.tmux, "name_window", named.append)
+    monkeypatch.setattr(hook.tmux, "name_window", lambda r, title="": named.append(r))
     env = {**ENV, "TMUX": "/tmp/t/claude,1,0", "TMUX_PANE": "%3"}
     event = {"session_id": "s1", "hook_event_name": "UserPromptSubmit", "cwd": "/tmp/daily-recap"}
     headless = {**env, "CLAUDE_CODE_ENTRYPOINT": "sdk-cli"}
@@ -123,7 +123,9 @@ def lock_is_held(session_id):
 
 def test_hook_names_the_window_while_it_holds_the_lock(monkeypatch):
     held = []
-    monkeypatch.setattr(hook.tmux, "name_window", lambda r: held.append(lock_is_held("s1")))
+    monkeypatch.setattr(
+        hook.tmux, "name_window", lambda r, title="": held.append(lock_is_held("s1"))
+    )
     hook.handle_event({"session_id": "s1", "hook_event_name": "UserPromptSubmit"}, ENV, 1.0)
     hook.handle_event({"session_id": "s1", "hook_event_name": "SessionEnd"}, ENV, 2.0)
     assert held == [True]
@@ -173,3 +175,25 @@ def test_recent_working_session_is_not_checked_for_interrupts(tmp_path):
 def test_the_tmux_calls_of_a_hook_fit_in_its_timeout():
     # A prompt: name_window makes 3 tmux calls and settle_if_viewed 1
     assert 4 * hook.tmux.TIMEOUT < install.HOOK_TIMEOUT
+
+
+def test_hook_names_the_window_after_the_sessions_title(monkeypatch, tmp_path):
+    transcript = tmp_path / "s1.jsonl"
+    transcript.write_text('{"type":"ai-title","aiTitle":"Fix the login bug"}\n')
+    named = []
+    monkeypatch.setattr(hook.tmux, "name_window", lambda r, title="": named.append(title))
+    event = {"session_id": "s1", "hook_event_name": "Stop", "transcript_path": str(transcript)}
+    hook.handle_event(event, ENV, 1.0)
+    assert named == ["Fix the login bug"]
+
+
+def test_hook_keeps_a_title_that_scrolled_out_of_the_transcripts_tail(monkeypatch, tmp_path):
+    transcript = tmp_path / "s1.jsonl"
+    transcript.write_text('{"type":"ai-title","aiTitle":"Fix the login bug"}\n')
+    named = []
+    monkeypatch.setattr(hook.tmux, "name_window", lambda r, title="": named.append(title))
+    event = {"session_id": "s1", "hook_event_name": "Stop", "transcript_path": str(transcript)}
+    hook.handle_event(event, ENV, 1.0)
+    transcript.write_text('{"type":"user"}\n')
+    hook.handle_event({**event, "hook_event_name": "UserPromptSubmit"}, ENV, 2.0)
+    assert named == ["Fix the login bug", "Fix the login bug"]

@@ -36,26 +36,7 @@ def load(now):
     """
     history = files.load_history()
     records = hook.live_sessions(now)
-    heads = {w.window_id: w for w in tmux.windows_of(records)}
-    entries = []
-    for window_id, _, name in tmux.window_entries():
-        window = heads.get(window_id)
-        if window is None:
-            continue
-        # The most urgent session sets the status; the first Claude pane's shows the details
-        record, lead = window.head, window.lead
-        u = record.get("usage") or {}
-        entries.append(
-            sidebar.Entry(
-                window_id,
-                name,
-                lead["status"],
-                state.since(lead),
-                u.get("cost"),
-                u.get("api_duration"),
-                u.get("model"),
-            )
-        )
+    entries = sidebar.load_entries(records)
     runs = sorted(
         (
             # Records written before runs kept their start fall back to their last change
@@ -117,7 +98,7 @@ class SidebarApp(App):
             # Hidden: only watch for the window coming back, to draw it at once when it does
             delay = HIDDEN_POLL
         else:
-            # The next frame while a session works, so its tint breathes; else the next second
+            # The next frame while a session works, so its spinner turns; else the next second
             busy = any(e.status == state.WORKING for e in self.entries)
             delay = words.next_tick(now, words.FPS if busy else 1)
         self.set_timer(delay, self.tick)
@@ -140,7 +121,7 @@ class SidebarApp(App):
             # Read again as soon as the window shows
             self.loaded_at = None
             return
-        # Between two readings only the working tint moves: redraw with the last data
+        # Between two readings only the spinner moves: redraw with the last data
         if int(now) == self.loaded_at:
             self.redraw(now)
             return

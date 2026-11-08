@@ -1,7 +1,6 @@
 """Words, numbers, bars and styles the sidebar and the landing page share."""
 
 import datetime
-import math
 import time
 import unicodedata
 
@@ -26,15 +25,22 @@ STYLES = {
     "soft": Style(color="color(244)"),
     "faint": Style(color="color(240)"),
     "rule": Style(color="color(238)"),
-    "mascot": Style(color="color(37)"),
     "strong": Style(color="bright_white", bold=True),
+    # Claude Code's own dark-theme colours, so the sidebar reads as part of it
+    "claude": Style(color="#d77757"),
+    "success": Style(color="#4eba65"),
+    "error": Style(color="#ff6b80"),
+    "warning": Style(color="#ffc107"),
+    "permission": Style(color="#b1b9f9"),
+    "inactive": Style(color="#999999"),
+    "subtle": Style(color="#505050"),
 }
+STYLES["mascot"] = STYLES["claude"]
 CURRENT = Style(bgcolor="color(235)")
 
 MASCOT = (" ▐▛███▜▌", "▝▜█████▛▘", "  ▘▘ ▝▝  ")
 
-# A working session's tint breathes once in PULSE seconds; the screen redraws FPS times a second
-PULSE = 1.4
+# While a session works the screen redraws FPS times a second, a spinner frame each time
 FPS = 8
 # Quota bars turn yellow, then red, from these percentages
 AMBER, RED = 70, 85
@@ -57,6 +63,15 @@ def span(seconds):
     return f"{minutes // 60}h{minutes % 60:02d}"
 
 
+def remaining(seconds):
+    """How long until a moment, in five cells at most: `40m`, `2h33` or `3d4h`."""
+    seconds = max(0.0, seconds)
+    if seconds < 86400:
+        return span(seconds)
+    days, hours = int(seconds // 86400), int(seconds % 86400 // 3600)
+    return f"{days}d{hours}h" if hours else f"{days}d"
+
+
 def next_tick(now, per_second=1):
     """Seconds until the next redraw: the next whole second, or the next frame when animating.
 
@@ -70,11 +85,6 @@ def next_tick(now, per_second=1):
     step = 1 / per_second
     delay = step - now % step
     return delay if delay >= MIN_TICK else delay + step
-
-
-def pulse(now):
-    """Where a breathing tint is at a moment: 0.0 at its dimmest, 1.0 at its brightest."""
-    return (1 - math.cos(2 * math.pi * now / PULSE)) / 2
 
 
 def waiting_label(seconds):
@@ -113,18 +123,18 @@ def fit(text, width):
 
 
 def bar_style(pct):
-    """The style of a quota bar's filled cells: blue, then yellow, then red as it fills."""
+    """The style of a quota bar's filled cells: Claude's orange, then yellow, then red."""
     if pct >= RED:
-        return STYLES["red"]
-    return STYLES["yellow"] if pct >= AMBER else STYLES["blue"]
+        return STYLES["error"]
+    return STYLES["warning"] if pct >= AMBER else STYLES["claude"]
 
 
 def bar(pct, cells, style=None):
-    """A share of 100 as a bar of `cells` cells: filled in `style`, empty in faint."""
+    """A share of 100 as a bar of `cells` half-height cells: filled in `style`, empty in faint."""
     filled = max(0, min(cells, round(pct * cells / 100)))
     out = Text()
-    out.append("█" * filled, style=style or bar_style(pct))
-    out.append("░" * (cells - filled), style=STYLES["faint"])
+    out.append("▄" * filled, style=style or bar_style(pct))
+    out.append("▄" * (cells - filled), style=STYLES["subtle"])
     return out
 
 

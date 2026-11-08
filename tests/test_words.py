@@ -8,13 +8,13 @@ NOW = time.mktime((2026, 11, 3, 14, 7, 0, 0, 0, -1))  # a Tuesday
 
 def test_bar_fills_by_rounding_and_colours_by_level():
     b = words.bar(58, 14)
-    assert b.plain == "████████░░░░░░"
-    assert b.spans[0].style == words.STYLES["blue"]
-    assert b.spans[1].style == words.STYLES["faint"]
-    assert words.bar_style(69) == words.STYLES["blue"]
-    assert words.bar_style(70) == words.STYLES["yellow"]
-    assert words.bar_style(85) == words.STYLES["red"]
-    assert words.bar(31, 16).plain == "█████░░░░░░░░░░░"
+    assert b.plain == "▄" * 14 and b.spans[0].end == 8
+    assert b.spans[0].style == words.STYLES["claude"]
+    assert b.spans[1].style == words.STYLES["subtle"]
+    assert words.bar_style(69) == words.STYLES["claude"]
+    assert words.bar_style(70) == words.STYLES["warning"]
+    assert words.bar_style(85) == words.STYLES["error"]
+    assert words.bar(31, 16).spans[0].end == 5
 
 
 def test_reset_at_today_or_weekday():
@@ -39,12 +39,6 @@ def test_moved_helpers():
     assert words.money(None) == ""
     assert words.waiting_label(30) == ""
     assert words.waiting_label(125) == "2m"
-
-
-def test_pulse_swings_between_dim_and_bright_each_period():
-    assert words.pulse(0.0) == 0.0
-    assert abs(words.pulse(words.PULSE / 2) - 1.0) < 1e-9
-    assert abs(words.pulse(words.PULSE) - words.pulse(0.0)) < 1e-9
 
 
 def test_next_tick_waits_for_the_next_second_but_never_almost_nothing():

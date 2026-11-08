@@ -9,7 +9,8 @@ from claude_sessions.term.launcher import SOCKET
 
 # A hook makes up to 7 tmux calls; together they must stay under its 10 s timeout
 TIMEOUT = 1
-WINDOW_NAME_LEN = 28
+# Long enough for a session's title; the sidebar fits it to its own width
+WINDOW_NAME_LEN = 60
 # What Claude Code calls a session that runs in its daemon (moved to the background)
 BACKGROUND = "bg"
 # How Claude Code names a run without a terminal (`claude -p`, the Agent SDK)
@@ -263,13 +264,13 @@ def tmux_pane_in_view(where):
     return tmux(where["socket"], "display-message", "-p", "-t", where["pane"], fmt) == "1"
 
 
-def window_name(record):
-    """Names a window after its session's project folder."""
-    name = state.project(record)
+def window_name(record, title=""):
+    """Names a window after its session's title, or its project folder until it has one."""
+    name = " ".join(title.split()) or state.project(record)
     return name if len(name) <= WINDOW_NAME_LEN else name[: WINDOW_NAME_LEN - 1] + "…"
 
 
-def name_window(record):
+def name_window(record, title=""):
     """Gives a tmux window its session's name, unless the user named the window.
 
     tmux names a window after its command ("claude") while automatic-rename is on; renaming
@@ -285,7 +286,7 @@ def name_window(record):
     if len(fields) != 3:
         return
     auto, previous, current = fields
-    wanted = window_name(record)
+    wanted = window_name(record, title)
     if (auto == "1" or current == previous) and current != wanted:
         tmux(where["socket"], "rename-window", "-t", where["pane"], wanted)
         tmux(where["socket"], "set-option", "-w", "-t", where["pane"], "@cs-auto-name", wanted)

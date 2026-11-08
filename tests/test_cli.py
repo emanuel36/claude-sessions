@@ -60,6 +60,21 @@ def test_close_command_closes_the_window(monkeypatch):
     assert calls == ["@3"]
 
 
+def test_step_goes_to_the_next_session_as_the_sidebar_lists_them(monkeypatch):
+    from claude_sessions.ui import sidebar
+
+    entries = [
+        sidebar.Entry("@2", "a", state.DONE, 0.0),
+        sidebar.Entry("@3", "b", state.PERMISSION, 0.0),
+    ]
+    calls = []
+    monkeypatch.setattr(cli.hook, "live_sessions", lambda now: [])
+    monkeypatch.setattr(sidebar, "load_entries", lambda records: entries)
+    monkeypatch.setattr(cli.tmux, "run", lambda *args: calls.append(args))
+    assert cli.main(["step", "down", "@3"]) == 0
+    assert calls == [("select-window", "-t", "@2")]
+
+
 def test_layout_adds_a_sidebar_to_a_window_or_fits_them_all(monkeypatch):
     calls = []
     monkeypatch.setattr(cli.tmux, "add_sidebar", lambda window: calls.append(("add", window)))

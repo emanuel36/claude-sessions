@@ -62,10 +62,11 @@ def test_attaches_matches_the_session_id_or_its_prefix():
     assert not tmux.attaches([], sid)
 
 
-def test_window_name_is_the_project_folder():
+def test_window_name_is_the_title_or_else_the_project_folder():
     assert tmux.window_name({"cwd": "/w/vehicle.k265"}) == "vehicle.k265"
     assert tmux.window_name({"cwd": "/w/notes/"}) == "notes"
-    long = tmux.window_name({"cwd": "/w/" + "x" * 40})
+    assert tmux.window_name({"cwd": "/w/api"}, "Fix the\nlogin  bug") == "Fix the login bug"
+    long = tmux.window_name({"cwd": "/w/" + "x" * 80})
     assert len(long) == tmux.WINDOW_NAME_LEN and long.endswith("…")
 
 
