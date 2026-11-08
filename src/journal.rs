@@ -170,7 +170,12 @@ impl DayReader {
         self.generation
     }
 
-    fn read_in(&mut self, dir: &Path, day: NaiveDate) -> &[JournalEvent] {
+    /// The events of the last read, without reading the file again.
+    pub fn events(&self) -> &[JournalEvent] {
+        &self.events
+    }
+
+    pub(crate) fn read_in(&mut self, dir: &Path, day: NaiveDate) -> &[JournalEvent] {
         match File::open(day_path(dir, day)) {
             // A file that cannot be read keeps what was read; the sidebar asks again each second,
             // so the error is not logged
@@ -215,7 +220,8 @@ impl DayReader {
 pub type Days<'a> = BTreeMap<NaiveDate, &'a [JournalEvent]>;
 
 /// What a session added over a window: cost in dollars and lines of code.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Deserialize)]
+#[serde(default)]
 pub struct SessionTotals {
     /// Dollars.
     pub cost: f64,
