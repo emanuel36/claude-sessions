@@ -76,7 +76,7 @@ def test_load_orders_folders_by_last_use_and_skips_gone_folders(monkeypatch, tmp
         files_session("4", str(tmp_path / "gone"), 900, "lost"),
         files_session("5", str(a), 50, ""),
     ]
-    monkeypatch.setattr(new_app.files, "load_history", lambda: history)
+    monkeypatch.setattr(new_app.files, "load_history", lambda stored=False: history)
     monkeypatch.setattr(new_app.hook, "live_sessions", lambda now: [])
     monkeypatch.setattr(new_app.folders._titles, "get", lambda sid, path: "")
     folders = new_app.load(1000.0)
@@ -99,7 +99,7 @@ def test_load_lists_a_folders_sessions_newest_first(monkeypatch, tmp_path):
     a = tmp_path / "a"
     a.mkdir()
     history = [files_session("1", str(a), 100, "old"), files_session("2", str(a), 300, "new")]
-    monkeypatch.setattr(new_app.files, "load_history", lambda: history)
+    monkeypatch.setattr(new_app.files, "load_history", lambda stored=False: history)
     monkeypatch.setattr(new_app.hook, "live_sessions", lambda now: [])
     monkeypatch.setattr(new_app.folders._titles, "get", lambda sid, path: "")
     (folder,) = new_app.load(1000.0)

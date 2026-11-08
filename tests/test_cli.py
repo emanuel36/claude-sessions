@@ -22,6 +22,14 @@ def test_cli_does_not_import_textual_or_rich():
     subprocess.run([sys.executable, "-c", code], check=True)
 
 
+def test_the_hook_loads_neither_the_parser_nor_the_launchers_resources():
+    code = (
+        "import sys; from claude_sessions import cli; cli.main(['hook']); "
+        "assert not {'argparse', 'importlib.resources'} & set(sys.modules), sys.modules.keys()"
+    )
+    subprocess.run([sys.executable, "-c", code], input=b"{}", check=True)
+
+
 def test_seen_marks_done_session_idle():
     pid = os.getpid()
     store.write(

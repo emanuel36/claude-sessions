@@ -14,8 +14,8 @@ def ago(days):
     return TODAY - datetime.timedelta(days=days)
 
 
-def session(sid="s", cwd="/w/api", days=()):
-    return HistorySession(sid, cwd, days=set(days))
+def session(sid="s", cwd="/w/api"):
+    return HistorySession(sid, cwd)
 
 
 def log(sid, days_ago, cost, added=0, removed=0):
@@ -30,7 +30,7 @@ def test_totals_today_week_projects_and_lines():
     log("a", 0, 4.0, 25, 4)
     history = [session("a", "/w/api"), session("b", "/w/web/")]
     t = usage.Reader().totals(history, NOW)
-    assert (t.today, t.week) == (2.0, 3.5)
+    assert t.today == 2.0
     assert t.by_project == [("api", 3.0), ("web", 0.5)]
     assert (t.added, t.removed, t.sessions) == (20, 3, 2)
     # One amount per day of the week, oldest first, today last
@@ -97,3 +97,20 @@ def test_working_hours_count_work_from_yesterday_from_midnight():
     hours = usage.working_hours(events, today, midnight + 6 * 3600)
     # A closed span counts whole, however long
     assert hours[:5] == [3600.0] * 5 and sum(hours) == 5 * 3600
+
+
+def test_the_day_reuses_the_lines_totals_added_up(monkeypatch):
+    log("a", 1, 1.0, 5)
+    log("a", 0, 2.0, 15)
+    reader, history = usage.Reader(), [session("a")]
+    reader.totals(history, NOW)
+    counted = []
+    real = journal.window_totals
+    monkeypatch.setattr(
+        journal, "window_totals", lambda *a, **k: counted.append(1) or real(*a, **k)
+    )
+    assert reader.day(NOW).added == 10
+    assert reader.day(NOW + 1).added == 10 and counted == []
+    log("a", 0, 3.0, 20)
+    reader.totals(history, NOW)
+    assert reader.day(NOW).added == 15

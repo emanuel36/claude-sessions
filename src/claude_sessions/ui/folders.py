@@ -5,7 +5,7 @@ import os
 from claude_sessions.claude import files
 from claude_sessions.ui import new_panel
 
-_titles = files.Titles()
+_titles = files.Titles(stored=True)
 _scanned = {"history": None, "found": []}
 
 
@@ -13,7 +13,8 @@ def _scan(history):
     """The sessions worth listing, with their title and folder, read once per history.
 
     Finding titles stats every transcript; the landing page asks every second, so the scan is
-    kept until `files.load_history` hands back a new list.
+    kept until `files.load_history` hands back a new list. The titles found go to disk, for
+    the next process to start from.
     """
     if _scanned["history"] is not history:
         found = []
@@ -22,6 +23,7 @@ def _scan(history):
             # Only commands were typed: nothing to come back to
             if title and os.path.isdir(s.cwd):
                 found.append((s, title, s.cwd.rstrip("/") or "/"))
+        _titles.save()
         _scanned.update(history=history, found=found)
     return _scanned["found"]
 

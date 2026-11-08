@@ -5,7 +5,7 @@ import time
 from rich.text import Text
 
 from claude_sessions.ui import new_panel, sidebar, words
-from claude_sessions.ui.words import MONTHS, STYLES, WEEKDAYS
+from claude_sessions.ui.words import MONTHS, WEEKDAYS
 
 # Between the list and the statistics, which take the sidebar's width on the right
 GAP = 4
@@ -20,13 +20,6 @@ FOOTER = (
 )
 
 
-def _line(*parts):
-    out = Text()
-    for text, style in parts:
-        out.append(text, style=STYLES[style])
-    return out
-
-
 def header(opened, now):
     """The mascot beside the name, today's date and how many sessions are open."""
     t = time.localtime(now)
@@ -34,17 +27,17 @@ def header(opened, now):
     count = f"{opened} session{'s' * (opened != 1)} open"
     mascot = [row.ljust(10) for row in words.MASCOT]
     return [
-        _line((" " + mascot[0], "mascot"), ("claude-sessions", "strong")),
-        _line((" " + mascot[1], "mascot"), (f"{date} · {count}", "soft")),
-        _line((" " + mascot[2], "mascot")),
+        words.line((" " + mascot[0], "mascot"), ("claude-sessions", "strong")),
+        words.line((" " + mascot[1], "mascot"), (f"{date} · {count}", "soft")),
+        words.line((" " + mascot[2], "mascot")),
     ]
 
 
 def search_line(query, searching):
     """The search line: what was typed, or how to start typing."""
     if searching or query:
-        return _line((" ❯ ", "blue"), (query, "ink"), ("▌" if searching else "", "blue"))
-    return _line((" ❯ ", "blue"), ("/ to search", "faint"))
+        return words.line((" ❯ ", "blue"), (query, "ink"), ("▌" if searching else "", "blue"))
+    return words.line((" ❯ ", "blue"), ("/ to search", "faint"))
 
 
 def screen(picker, searching, opened, stats, now, width, height):

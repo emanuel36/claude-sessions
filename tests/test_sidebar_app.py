@@ -2,7 +2,7 @@ import asyncio
 
 from claude_sessions.core import state
 from claude_sessions.term import tmux
-from claude_sessions.ui import sidebar, sidebar_app
+from claude_sessions.ui import sidebar, sidebar_app, window_app
 from claude_sessions.ui.sidebar import Entry
 
 NOW = 1_700_000_000.0
@@ -60,7 +60,7 @@ def test_click_selects_that_window(monkeypatch):
         app = make_app()
         async with app.run_test(size=(sidebar.WIDTH, 30)) as pilot:
             await pilot.pause()
-            await pilot.click("#column", offset=(5, 11))
+            await pilot.click("#text", offset=(5, 11))
             await pilot.pause()
 
     asyncio.run(go())
@@ -83,7 +83,7 @@ def test_last_pane_left_kills_its_window(monkeypatch):
 def test_failed_load_keeps_the_last_lines_and_logs_once(monkeypatch):
     stub_tmux(monkeypatch)
     logged, fail = [], []
-    monkeypatch.setattr(sidebar_app.paths, "log_error", lambda: logged.append(1))
+    monkeypatch.setattr(window_app.paths, "log_error", lambda: logged.append(1))
 
     def load(now):
         if fail:
@@ -106,7 +106,7 @@ def test_failed_load_keeps_the_last_lines_and_logs_once(monkeypatch):
 def test_failed_render_keeps_the_app_alive_and_logs_once(monkeypatch):
     stub_tmux(monkeypatch)
     logged = []
-    monkeypatch.setattr(sidebar_app.paths, "log_error", lambda: logged.append(1))
+    monkeypatch.setattr(window_app.paths, "log_error", lambda: logged.append(1))
 
     def boom(now):
         raise ValueError("bad entry")
@@ -127,7 +127,7 @@ def test_failed_render_keeps_the_app_alive_and_logs_once(monkeypatch):
 
 def test_failed_load_redraws_the_last_data_with_the_current_time(monkeypatch):
     stub_tmux(monkeypatch)
-    monkeypatch.setattr(sidebar_app.paths, "log_error", lambda: None)
+    monkeypatch.setattr(window_app.paths, "log_error", lambda: None)
     drawn, fail = [], []
 
     def load(now):
@@ -151,7 +151,7 @@ def test_failed_load_redraws_the_last_data_with_the_current_time(monkeypatch):
 def test_load_and_draw_errors_are_logged_separately(monkeypatch):
     stub_tmux(monkeypatch)
     logged = []
-    monkeypatch.setattr(sidebar_app.paths, "log_error", lambda: logged.append(1))
+    monkeypatch.setattr(window_app.paths, "log_error", lambda: logged.append(1))
 
     def boom(now):
         raise ValueError("x")
@@ -175,13 +175,16 @@ def test_load_orders_by_window_index_and_skips_windows_without_sessions(monkeypa
         "status_since": NOW - 5,
         "cwd": "/w/web",
         "started_at": NOW - 900,
-        "usage": {"model": "Opus 4", "context": 12.0, "cost": 1.5, "api_duration": 900.0},
+        "usage": {"model": "Opus 4", "cost": 1.5, "api_duration": 900.0},
         "mux": {"pane": "%4"},
     }
     monkeypatch.setattr(sidebar_app.hook, "live_sessions", lambda now: [record])
-    monkeypatch.setattr(sidebar_app.tmux, "windows_of", lambda r: [tmux.Window("@4", record)])
+    monkeypatch.setattr(sidebar_app.tmux, "panes", lambda: [])
     monkeypatch.setattr(
-        sidebar_app.tmux, "window_entries", lambda: [("@1", 1, "api"), ("@4", 2, "web")]
+        sidebar_app.tmux, "windows_of", lambda r, listed: [tmux.Window("@4", record)]
+    )
+    monkeypatch.setattr(
+        sidebar_app.tmux, "window_entries", lambda listed: [("@1", 1, "api"), ("@4", 2, "web")]
     )
     monkeypatch.setattr(sidebar_app.statusline, "load_limits", lambda now: {"x": 1})
     monkeypatch.setattr(sidebar_app.files, "load_history", lambda: [])
@@ -193,7 +196,7 @@ def test_load_orders_by_window_index_and_skips_windows_without_sessions(monkeypa
 
 
 def test_window_entries_lists_windows_by_index(monkeypatch):
-    out = "@4\t2\tweb\n@1\t1\tapi"
+    out = "%5\t@4\t1\t2\t1\tweb\n%6\t@4\t2\t2\t\tweb\n%1\t@1\t1\t1\t\tapi"
     monkeypatch.setattr(tmux, "run", lambda *args: out)
     assert tmux.window_entries() == [("@1", 1, "api"), ("@4", 2, "web")]
 
@@ -213,8 +216,8 @@ def test_load_shows_the_most_urgent_status_with_the_first_panes_details(monkeypa
     mate = record("mate", state.PERMISSION, "Sonnet 4", 9.0, "%3")
     monkeypatch.setenv("TMUX", "/s/claude,1,0")
     monkeypatch.setattr(sidebar_app.hook, "live_sessions", lambda now: [mate, leader])
-    monkeypatch.setattr(sidebar_app.tmux, "run", lambda *args: "%2\t@1\t2\n%3\t@1\t3\n%1\t@1\t1")
-    monkeypatch.setattr(sidebar_app.tmux, "window_entries", lambda: [("@1", 1, "web")])
+    out = "%2\t@1\t2\t1\t\tweb\n%3\t@1\t3\t1\t\tweb\n%1\t@1\t1\t1\t1\tweb"
+    monkeypatch.setattr(sidebar_app.tmux, "run", lambda *args: out)
     monkeypatch.setattr(sidebar_app.statusline, "load_limits", lambda now: {})
     monkeypatch.setattr(sidebar_app.files, "load_history", lambda: [])
 
@@ -237,8 +240,7 @@ def test_load_lists_headless_runs_until_they_finish(monkeypatch):
     del old["started_at"]
     old["status_since"] = NOW - 60
     monkeypatch.setattr(sidebar_app.hook, "live_sessions", lambda now: [run, done, old, waiting])
-    monkeypatch.setattr(sidebar_app.tmux, "windows_of", lambda r: [])
-    monkeypatch.setattr(sidebar_app.tmux, "window_entries", lambda: [])
+    monkeypatch.setattr(sidebar_app.tmux, "panes", lambda: [])
     monkeypatch.setattr(sidebar_app.statusline, "load_limits", lambda now: {})
     monkeypatch.setattr(sidebar_app.files, "load_history", lambda: [])
     runs = sidebar_app.load(NOW)[2]
@@ -251,6 +253,8 @@ def test_the_tmux_pane_is_as_wide_as_the_column():
 
 def test_f12_from_tmux_draws_at_once(monkeypatch):
     stub_tmux(monkeypatch)
+    # A still clock: a tick crossing into the next second would load once more on its own
+    monkeypatch.setattr(sidebar_app.time, "time", lambda: NOW)
     loads = []
 
     async def go():

@@ -3,19 +3,15 @@
 Runs as `cs sidebar` in a tmux pane; a click on a session goes to its window.
 """
 
-import os
 import time
 
-from rich.text import Text
-from textual.app import App, ComposeResult
-from textual.binding import Binding
 from textual.events import Click
-from textual.widgets import Static
 
 from claude_sessions.claude import files, hook, statusline
-from claude_sessions.core import paths, state
+from claude_sessions.core import state
 from claude_sessions.term import tmux
 from claude_sessions.ui import sidebar, usage, words
+from claude_sessions.ui.window_app import WindowApp
 
 _reader = usage.Reader()
 # How often a hidden sidebar checks whether its window is back on screen, in seconds; tmux
@@ -52,41 +48,14 @@ def load(now):
     return entries, stats, runs
 
 
-class SidebarApp(App):
+class SidebarApp(WindowApp):
     """The sidebar, redrawn every second."""
 
-    ENABLE_COMMAND_PALETTE = False
-    CSS = "Screen { background: transparent; } #column { width: 100%; height: 100%; }"
-    # The sidebar lives as long as its window: no key quits it
-    BINDINGS = [
-        Binding("ctrl+c", "nothing", show=False, priority=True),
-        Binding("ctrl+q", "nothing", show=False, priority=True),
-    ]
-
     def __init__(self, load=load, window_id=None):
-        super().__init__(ansi_color=True)
-        self.load = load
-        self.window_id = window_id
+        super().__init__(load, window_id)
         self.entries, self.stats, self.runs = [], sidebar.Stats({}, 0.0, []), []
         self.loaded_at = None
         self.visible = True
-        self.lines = []
-        # The last failed load that went to the error log; the same one is not logged again
-        self.load_error = None
-        self.draw_error = None
-
-    def compose(self) -> ComposeResult:
-        yield Static(id="column")
-
-    def on_mount(self):
-        if self.window_id is None:
-            self.window_id = tmux.run(
-                "display-message", "-p", "-t", os.environ["TMUX_PANE"], "#{window_id}"
-            )
-        self.tick()
-
-    def action_nothing(self):
-        pass
 
     def tick(self):
         # A tick that lands while the app shuts down finds its widgets gone
@@ -127,36 +96,17 @@ class SidebarApp(App):
             return
         self.loaded_at = int(now)
         # A failed load leaves the last data, redrawn with the current time
-        try:
-            self.entries, self.stats, self.runs = self.load(now)
-        except Exception as e:  # noqa: BLE001 - a file caught mid-change must not stop the sidebar
-            self.load_error = self.log_once(e, self.load_error)
+        loaded = self.read(now)
+        if loaded is not None:
+            self.entries, self.stats, self.runs = loaded
         self.redraw(now)
 
-    def redraw(self, now):
-        """Draws the column; a failed draw keeps the last screen."""
-        try:
-            self.draw(now)
-        except Exception as e:  # noqa: BLE001 - a bad entry must not stop the sidebar
-            self.draw_error = self.log_once(e, self.draw_error)
-
-    @staticmethod
-    def log_once(exc, last):
-        """Logs a failure unless it repeats the last one (once a second, it would fill the log).
-
-        Returns:
-            The failure's description, to be passed back as `last` next time.
-        """
-        error = f"{type(exc).__name__}: {exc}"
-        if error != last:
-            paths.log_error()
-        return error
-
     def draw(self, now):
-        self.lines = sidebar.column(
-            self.entries, self.window_id, self.stats, now, self.size.height, self.runs
+        self.show(
+            sidebar.column(
+                self.entries, self.window_id, self.stats, now, self.size.height, self.runs
+            )
         )
-        self.query_one("#column", Static).update(Text("\n").join(self.lines))
 
     def on_key(self, event):
         # tmux sends F12 when this window comes on screen: draw now, not at the next tick

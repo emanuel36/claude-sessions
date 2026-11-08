@@ -1,6 +1,6 @@
 import asyncio
 
-from claude_sessions.ui import folders, landing_app
+from claude_sessions.ui import folders, landing_app, window_app
 from claude_sessions.ui.new_panel import Folder, Session
 
 NOW = 1_700_000_000.0
@@ -79,7 +79,7 @@ def test_does_not_read_its_data_while_another_window_is_shown(monkeypatch):
 def test_failed_load_keeps_the_page_and_logs_once(monkeypatch):
     stub_tmux(monkeypatch)
     logged = []
-    monkeypatch.setattr(landing_app.paths, "log_error", lambda: logged.append(1))
+    monkeypatch.setattr(window_app.paths, "log_error", lambda: logged.append(1))
 
     def boom(now):
         raise ValueError("torn file")
@@ -102,7 +102,7 @@ def test_load_lists_folders_without_the_open_sessions(monkeypatch, tmp_path):
         landing_app.files.HistorySession("open", str(a), 5, "now"),
         landing_app.files.HistorySession("old", str(a), 4, "before"),
     ]
-    monkeypatch.setattr(landing_app.files, "load_history", lambda: history)
+    monkeypatch.setattr(landing_app.files, "load_history", lambda stored=False: history)
     monkeypatch.setattr(landing_app.hook, "live_sessions", lambda now: [{"id": "open"}])
     monkeypatch.setattr(landing_app.statusline, "load_limits", lambda now: {})
     monkeypatch.setattr(folders._titles, "get", lambda sid, path: "")

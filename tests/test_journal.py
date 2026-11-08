@@ -12,6 +12,10 @@ def noon():
     return time.mktime((*time.localtime()[:3], 12, 0, 0, 0, 0, -1))
 
 
+def read_day(day):
+    return journal.DayReader().read(day)
+
+
 def day_path(day):
     return os.path.join(journal.journal_dir(), f"{day.isoformat()}.jsonl")
 
@@ -22,7 +26,7 @@ def test_removing_a_session_logs_its_end(monkeypatch):
     store.write({**state.new_record("s1"), "status": state.PERMISSION, "status_since": start})
     store.remove("s1")
     store.remove("s1")
-    assert journal.read_day(datetime.date.fromtimestamp(start)) == [
+    assert read_day(datetime.date.fromtimestamp(start)) == [
         {"t": start, "id": "s1", "status": state.PERMISSION},
         {"t": start + 60, "id": "s1", "status": journal.ENDED},
     ]
@@ -35,14 +39,14 @@ def test_read_day_skips_torn_line():
     with open(day_path(day), "a") as f:
         f.write('{"t": 1.0, "id": "a", "sta\n[1, 2]\n')
     journal.append({"t": t + 1, "id": "a", "cost": 1.5})
-    assert journal.read_day(day) == [
+    assert read_day(day) == [
         {"t": t, "id": "a", "status": state.WORKING},
         {"t": t + 1, "id": "a", "cost": 1.5},
     ]
 
 
 def test_read_day_missing_dir_is_empty():
-    assert journal.read_day(datetime.date(2026, 11, 2)) == []
+    assert read_day(datetime.date(2026, 11, 2)) == []
 
 
 def test_store_write_logs_only_status_changes():
@@ -51,7 +55,7 @@ def test_store_write_logs_only_status_changes():
     store.write(record)
     store.write({**record, "updated_at": start + 10})
     store.write({**record, "status": state.DONE, "status_since": start + 20})
-    assert journal.read_day(datetime.date.fromtimestamp(start)) == [
+    assert read_day(datetime.date.fromtimestamp(start)) == [
         {"t": start, "id": "s1", "status": state.WORKING},
         {"t": start + 20, "id": "s1", "status": state.DONE},
     ]
@@ -128,13 +132,13 @@ def test_spend_counts_only_cost_added_in_the_window():
         day1: [{"t": 1.0, "id": "s", "cost": 3.0}],
         day2: [{"t": 2.0, "id": "s", "cost": 4.0}, {"t": 3.0, "id": "s", "cost": 5.0}],
     }
-    assert journal.spend_by_session(days, first_day=day2) == {"s": 2.0}
+    assert journal.window_totals(days, first_day=day2)["s"]["cost"] == 2.0
 
 
 def test_spend_of_a_session_born_in_the_window_is_its_highest_cost():
     day = datetime.date(2026, 1, 2)
     days = {day: [{"t": 1.0, "id": "s", "cost": 1.5}, {"t": 2.0, "id": "s", "status": "idle"}]}
-    assert journal.spend_by_session(days, first_day=day) == {"s": 1.5}
+    assert journal.window_totals(days, first_day=day)["s"]["cost"] == 1.5
 
 
 def test_window_totals_grow_from_before_the_window():

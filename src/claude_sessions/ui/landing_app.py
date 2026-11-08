@@ -4,19 +4,13 @@ Runs as `cs landing` in the first window, which stays for the life of the server
 last session brings the user back to it.
 """
 
-import os
 import time
 from dataclasses import dataclass, field
 
-from rich.text import Text
-from textual.app import App, ComposeResult
-from textual.binding import Binding
-from textual.widgets import Static
-
 from claude_sessions.claude import files, hook, statusline
-from claude_sessions.core import paths
 from claude_sessions.term import tmux
 from claude_sessions.ui import folders, landing, new_panel, sidebar, usage, words
+from claude_sessions.ui.window_app import WindowApp
 
 _reader = usage.Reader()
 # How often the hidden page checks whether it is back on screen, in seconds; tmux also wakes
@@ -39,7 +33,7 @@ def load(now):
     Args:
         now: Current time as a Unix timestamp.
     """
-    history = files.load_history()
+    history = files.load_history(stored=True)
     totals = _reader.totals(history, now)
     live = hook.live_sessions(now)
     limits = statusline.load_limits(now)
@@ -53,40 +47,15 @@ def load(now):
     )
 
 
-class LandingApp(App):
+class LandingApp(WindowApp):
     """The landing page, redrawn every second while it is on screen."""
 
-    ENABLE_COMMAND_PALETTE = False
-    CSS = "Screen { background: transparent; } #page { width: 100%; height: 100%; }"
-    BINDINGS = [
-        Binding("ctrl+c", "nothing", show=False, priority=True),
-        Binding("ctrl+q", "nothing", show=False, priority=True),
-    ]
-
     def __init__(self, load=load, window_id=None):
-        super().__init__(ansi_color=True)
-        self.load = load
-        self.window_id = window_id
+        super().__init__(load, window_id)
         self.page = Page()
         self.picker = new_panel.Picker()
         self.searching = False
         self.now = time.time()
-        # The last failed load that went to the error log; the same one is not logged again
-        self.load_error = None
-        self.draw_error = None
-
-    def compose(self) -> ComposeResult:
-        yield Static(id="page")
-
-    def on_mount(self):
-        if self.window_id is None:
-            self.window_id = tmux.run(
-                "display-message", "-p", "-t", os.environ["TMUX_PANE"], "#{window_id}"
-            )
-        self.tick()
-
-    def action_nothing(self):
-        pass
 
     def tick(self):
         if not self.is_running:
@@ -107,32 +76,12 @@ class LandingApp(App):
         if tmux.run("display-message", "-p", "-t", self.window_id, "#{window_active}") == "0":
             return False
         # A failed load leaves the last data, redrawn with the current time
-        try:
-            self.page = self.load(now)
-            self.picker.folders = self.page.folders
-        except Exception as e:  # noqa: BLE001 - a file caught mid-change must not stop the page
-            self.load_error = self.log_once(e, self.load_error)
+        page = self.read(now)
+        if page is not None:
+            self.page = page
+            self.picker.folders = page.folders
         self.redraw()
         return True
-
-    @staticmethod
-    def log_once(exc, last):
-        """Logs a failure unless it repeats the last one (once a second, it would fill the log).
-
-        Returns:
-            The failure's description, to be passed back as `last` next time.
-        """
-        error = f"{type(exc).__name__}: {exc}"
-        if error != last:
-            paths.log_error()
-        return error
-
-    def redraw(self):
-        """Draws the page; a failed draw keeps the last screen."""
-        try:
-            self.draw()
-        except Exception as e:  # noqa: BLE001 - a bad row must not stop the page
-            self.draw_error = self.log_once(e, self.draw_error)
 
     def draw(self):
         lines = landing.screen(
@@ -144,7 +93,7 @@ class LandingApp(App):
             self.size.width,
             self.size.height,
         )
-        self.query_one("#page", Static).update(Text("\n").join(lines))
+        self.show(lines)
 
     def on_key(self, event):
         event.stop()
