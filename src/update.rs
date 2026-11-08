@@ -164,9 +164,18 @@ fn fetch(url: &str) -> anyhow::Result<Vec<u8>> {
     curl(&["-fsSL"], url)
 }
 
+/// The arguments of a `curl` call: `options` and `url`, after limits on the time it may take
+/// to connect and to finish, so that a stalled server cannot hang the update.
+fn curl_args<'a>(options: &[&'a str], url: &'a str) -> Vec<&'a str> {
+    let mut args = vec!["--connect-timeout", "10", "--max-time", "300"];
+    args.extend_from_slice(options);
+    args.push(url);
+    args
+}
+
 /// Runs `curl <options> <url>` and returns its stdout.
 fn curl(options: &[&str], url: &str) -> anyhow::Result<Vec<u8>> {
-    let out = match Command::new("curl").args(options).arg(url).output() {
+    let out = match Command::new("curl").args(curl_args(options, url)).output() {
         Err(e) if e.kind() == io::ErrorKind::NotFound => bail!("curl is needed to update cst"),
         result => result.context("cannot run curl")?,
     };
@@ -222,8 +231,25 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::update::{
-        asset_name, checksum_for, compare_release, is_current, replace, sha256_hex, tag_from_url,
+        asset_name, checksum_for, compare_release, curl_args, is_current, replace, sha256_hex,
+        tag_from_url,
     };
+
+    #[test]
+    fn curl_gets_time_limits_and_keeps_its_options() {
+        let args = curl_args(&["-fsSL"], "https://example.test/x");
+        assert_eq!(
+            args,
+            [
+                "--connect-timeout",
+                "10",
+                "--max-time",
+                "300",
+                "-fsSL",
+                "https://example.test/x"
+            ]
+        );
+    }
 
     #[test]
     fn a_newer_release_is_greater() {

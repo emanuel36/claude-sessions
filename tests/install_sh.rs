@@ -83,6 +83,18 @@ impl Rig {
         );
     }
 
+    /// A `curl` that logs its arguments and runs the real one.
+    fn fake_curl(&self) {
+        let log = self.path("curl.log");
+        self.write_fake(
+            "curl",
+            &format!(
+                "#!/bin/sh\necho \"$*\" >> '{}'\nexec /usr/bin/curl \"$@\"\n",
+                log.display()
+            ),
+        );
+    }
+
     /// A `uv` whose `tool list` prints `listed`; it logs its arguments.
     fn fake_uv(&self, listed: &str) {
         let log = self.path("uv.log");
@@ -175,6 +187,26 @@ fn install_sh_downloads_verifies_and_registers() {
     assert!(stdout.contains("is not on your PATH"), "{stdout}");
     assert!(!stdout.contains("run cst again"), "{stdout}");
     assert!(!rig.log("uv.log").contains("uninstall"));
+}
+
+#[test]
+fn install_sh_gives_every_download_time_limits() {
+    let rig = Rig::new();
+    rig.fake_curl();
+    publish(&rig.release(), "v9.9.9", &release_binary("x"), None);
+
+    let out = rig.run(&[]);
+
+    assert_exit(&out, 0);
+    let log = rig.log("curl.log");
+    // The tag, the binary and its checksum
+    assert_eq!(log.lines().count(), 3, "{log}");
+    for call in log.lines() {
+        assert!(
+            call.contains("--connect-timeout 10 --max-time 300"),
+            "{call}"
+        );
+    }
 }
 
 #[test]

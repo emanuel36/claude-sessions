@@ -11,6 +11,9 @@ fail() {
     exit 1
 }
 
+# curl with limits on connecting and on the whole transfer, so a stalled server cannot hang us
+fetch() { curl --connect-timeout 10 --max-time 300 "$@"; }
+
 check_tmux() {
     command -v tmux >/dev/null 2>&1 || fail "tmux 3.3 or later is needed; install it first"
     # `tmux -V` prints e.g. "tmux 3.8", "tmux 3.3a", "tmux next-3.4" or, built from git,
@@ -33,10 +36,10 @@ arch() {
 
 latest_tag() {
     case "$base" in
-        file://*) curl -fsSL "$base/latest/tag" ;;
+        file://*) fetch -fsSL "$base/latest/tag" ;;
         # The latest release redirects to .../releases/tag/<tag>
         *)
-            curl -fsSLI -o /dev/null -w '%{url_effective}' "$base/latest" \
+            fetch -fsSLI -o /dev/null -w '%{url_effective}' "$base/latest" \
                 | sed -n 's|.*/tag/||p'
             ;;
     esac
@@ -51,8 +54,8 @@ download() {
     case "$tag" in "" | */* | *[[:space:]]*) fail "no release found at $base" ;; esac
     say "Downloading cst $tag..."
     url="$base/download/$tag/$asset"
-    curl -fsSL "$url" -o "$1/$asset" || fail "could not download $url"
-    curl -fsSL "$url.sha256" -o "$1/$asset.sha256" || fail "could not download $url.sha256"
+    fetch -fsSL "$url" -o "$1/$asset" || fail "could not download $url"
+    fetch -fsSL "$url.sha256" -o "$1/$asset.sha256" || fail "could not download $url.sha256"
     # Compared directly: `sha256sum -c` checks whichever file the line names
     want=$(cut -d' ' -f1 <"$1/$asset.sha256")
     have=$(sha256sum "$1/$asset" | cut -d' ' -f1)
