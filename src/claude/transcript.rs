@@ -1,5 +1,5 @@
 //! Session transcripts: where they live, the title Claude Code gave a session, and whether the
-//! last turn was an Esc interrupt.
+//! last turn was an Esc interrupt or still awaits its first reply.
 //!
 //! The public functions that need Claude Code's config folder are thin wrappers over `*_in`
 //! ones that take it, so unit tests use a temporary directory.
@@ -16,8 +16,9 @@ use crate::core::paths;
 
 /// The title is looked for in this many bytes at the end of a transcript.
 pub const TITLE_TAIL_BYTES: u64 = 512 * 1024;
-/// The interrupt marker is looked for in this many bytes at the end of a transcript.
-pub const INTERRUPT_TAIL_BYTES: u64 = 8192;
+/// How a turn ended is looked for in this many bytes at the end of a transcript: enough for
+/// the line of a long pasted prompt.
+pub const TURN_TAIL_BYTES: u64 = 256 * 1024;
 /// What Claude Code writes when the user presses Esc.
 pub const INTERRUPT_MARKER: &str = "[Request interrupted by user";
 /// Where the titles found in the transcripts are kept between runs, in the state folder.
@@ -52,25 +53,65 @@ pub fn tail(path: &Path, n: u64) -> io::Result<Vec<u8>> {
     Ok(bytes)
 }
 
-/// Tells whether the transcript's last user entry is an Esc interrupt marker.
+/// How a transcript ends, as far as an Esc interrupt goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TurnEnd {
+    /// The last user entry is the Esc interrupt marker.
+    Interrupted,
+    /// The last user entry is a prompt with no reply after it: Esc before the first reply
+    /// leaves no marker, and a turn still waiting for its first reply looks the same.
+    AwaitsReply,
+    /// A reply, a tool result, or nothing readable.
+    Other,
+}
+
+/// Tells how the transcript ends; only its last [`TURN_TAIL_BYTES`] are read.
 ///
-/// Only the end of the transcript is read. An assistant entry after the marker means the
-/// session went on, so it was not interrupted.
-pub fn was_interrupted(path: &Path) -> bool {
-    let Ok(chunk) = tail(path, INTERRUPT_TAIL_BYTES) else {
-        return false;
+/// An assistant entry after the last user entry means the session went on.
+pub fn turn_end(path: &Path) -> TurnEnd {
+    let Ok(chunk) = tail(path, TURN_TAIL_BYTES) else {
+        return TurnEnd::Other;
     };
     for line in chunk.split(|&b| b == b'\n').rev() {
         let Ok(entry) = serde_json::from_slice::<Value>(line) else {
             continue;
         };
         match entry.get("type").and_then(Value::as_str) {
-            Some("user") => return is_interrupt(entry.get("message")),
-            Some("assistant") => return false,
+            Some("user") if is_interrupt(entry.get("message")) => return TurnEnd::Interrupted,
+            Some("user")
+                if entry.get("isMeta").and_then(Value::as_bool) != Some(true)
+                    && is_prompt(entry.get("message")) =>
+            {
+                return TurnEnd::AwaitsReply
+            }
+            Some("user" | "assistant") => return TurnEnd::Other,
             _ => {}
         }
     }
-    false
+    TurnEnd::Other
+}
+
+/// What Claude Code writes in place of a prompt for a local command and its output.
+const LOCAL_COMMAND_TAGS: [&str; 3] = ["<command-", "<local-command-", "<bash-"];
+
+/// Tells whether a user message is something the user typed: text, not a tool result, a local
+/// command nor the interrupt marker.
+fn is_prompt(message: Option<&Value>) -> bool {
+    match message.and_then(|m| m.get("content")) {
+        Some(Value::String(text)) => {
+            !text.trim().is_empty()
+                && !text.starts_with(INTERRUPT_MARKER)
+                && !LOCAL_COMMAND_TAGS.iter().any(|tag| text.starts_with(tag))
+        }
+        Some(Value::Array(blocks)) => {
+            !blocks.is_empty()
+                && !is_interrupt(message)
+                && blocks
+                    .iter()
+                    .all(|block| block.get("type").and_then(Value::as_str) != Some("tool_result"))
+        }
+        _ => false,
+    }
 }
 
 /// Tells whether a user message is the marker itself, not a tool result that quotes it.
@@ -289,7 +330,7 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::claude::transcript::{
-        find_title, tail, title_of, transcript_path_in, was_interrupted, Titles, TITLES_FILE,
+        find_title, tail, title_of, transcript_path_in, turn_end, Titles, TurnEnd, TITLES_FILE,
     };
 
     fn set_mtime(path: &Path, secs: u64) {
@@ -382,7 +423,7 @@ mod tests {
             &path,
             &[json!({"type": "user", "message": {"content": [result]}})],
         );
-        assert!(!was_interrupted(&path));
+        assert!(turn_end(&path) != TurnEnd::Interrupted);
     }
 
     #[test]
@@ -394,7 +435,7 @@ mod tests {
             &path,
             &[json!({"type": "user", "message": {"content": [block]}})],
         );
-        assert!(was_interrupted(&path));
+        assert!(turn_end(&path) == TurnEnd::Interrupted);
     }
 
     #[test]
@@ -405,7 +446,7 @@ mod tests {
             &path,
             &[json!({"type": "user", "message": {"content": "[Request interrupted by user]"}})],
         );
-        assert!(was_interrupted(&path));
+        assert!(turn_end(&path) == TurnEnd::Interrupted);
     }
 
     #[test]
@@ -419,13 +460,58 @@ mod tests {
                 json!({"type": "assistant", "message": {"content": "ok"}}),
             ],
         );
-        assert!(!was_interrupted(&path));
+        assert!(turn_end(&path) != TurnEnd::Interrupted);
+    }
+
+    #[test]
+    fn a_prompt_with_no_reply_awaits_one() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("t.jsonl");
+        let prompt = json!({"type": "user", "message": {"content": "do it"}});
+        let blocks =
+            json!({"type": "user", "message": {"content": [{"type": "text", "text": "x"}]}});
+        let reply = json!({"type": "assistant", "message": {"content": "ok"}});
+        let other = json!({"type": "api-request"});
+        write_transcript(&path, &[reply.clone(), prompt.clone(), other]);
+        assert!(turn_end(&path) == TurnEnd::AwaitsReply);
+        write_transcript(&path, &[blocks]);
+        assert!(turn_end(&path) == TurnEnd::AwaitsReply);
+        write_transcript(&path, &[prompt, reply]);
+        assert!(turn_end(&path) != TurnEnd::AwaitsReply);
+    }
+
+    #[test]
+    fn a_long_pasted_prompt_still_awaits_a_reply() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("t.jsonl");
+        let prompt = json!({"type": "user", "message": {"content": "x".repeat(100_000)}});
+        write_transcript(&path, &[json!({"type": "assistant"}), prompt]);
+        assert!(turn_end(&path) == TurnEnd::AwaitsReply);
+    }
+
+    #[test]
+    fn a_tool_result_a_marker_or_a_meta_entry_awaits_no_reply() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("t.jsonl");
+        let result = json!({"type": "tool_result", "content": "done"});
+        let ends = [
+            json!({"type": "user", "message": {"content": [result]}}),
+            json!({"type": "user", "message": {"content": "[Request interrupted by user]"}}),
+            json!({"type": "user", "isMeta": true, "message": {"content": "caveat"}}),
+            json!({"type": "user", "message": {"content": "<local-command-stdout>ok"}}),
+            json!({"type": "user", "message": {"content": " "}}),
+        ];
+        for end in ends {
+            write_transcript(&path, std::slice::from_ref(&end));
+            assert!(turn_end(&path) != TurnEnd::AwaitsReply, "{end}");
+        }
+        assert!(turn_end(&tmp.path().join("missing")) != TurnEnd::AwaitsReply);
     }
 
     #[test]
     fn a_missing_transcript_was_not_interrupted() {
         let tmp = TempDir::new().unwrap();
-        assert!(!was_interrupted(&tmp.path().join("missing")));
+        assert!(turn_end(&tmp.path().join("missing")) != TurnEnd::Interrupted);
     }
 
     #[test]
