@@ -15,7 +15,8 @@ use crate::ui::words::{self, BLUE, CLAUDE, CURRENT, FAINT, GREEN, INK, RULE, SOF
 
 /// How many of a folder's sessions open under it at once; the rest scroll into view.
 pub const SHOWN: usize = 5;
-/// The list's width in the Alt+n popup; the landing page gives it all the room it has.
+/// The narrowest the list draws well: the landing page keeps this much beside its statistics,
+/// and the golden panels draw at it.
 pub const WIDTH: usize = 48;
 /// The cells a session's age takes.
 const AGE_WIDTH: usize = 4;
@@ -438,9 +439,20 @@ pub fn list_lines(
         .filter(|(_, owner)| **owner == Some(cursor))
         .map(|(n, _)| n)
         .collect();
-    // Scrolls just enough to keep every line of the selected row in view
-    let top = match (picked.first(), picked.last()) {
-        (Some(&first), Some(&last)) => (last + 1)
+    // An open folder brings its sessions on show along with it
+    let folder = shown.get(cursor).and_then(|r| r.folder);
+    let block_end = owners
+        .iter()
+        .rposition(|owner| {
+            owner
+                .and_then(|i| shown[i].folder)
+                .is_some_and(|f| Some(f) == folder)
+        })
+        .or(picked.last().copied());
+    // Scrolls just enough to keep every line of the selected row, and of its folder's open
+    // sessions where they fit, in view
+    let top = match (picked.first(), block_end) {
+        (Some(&first), Some(last)) => (last + 1)
             .saturating_sub(room)
             .min(total.saturating_sub(room))
             .min(first),
@@ -487,10 +499,13 @@ pub fn keys_line(keys: &[(&str, &str)], width: usize) -> Line<'static> {
     line
 }
 
-/// The Alt+n panel as `height` lines: the search line, the list and the keys.
-pub fn screen(picker: &mut Picker, now: f64, height: u16) -> Vec<Line<'static>> {
+/// The Alt+n panel as `height` lines of `width` columns: the search line, the list and the
+/// keys.
+pub fn screen(picker: &mut Picker, now: f64, width: u16, height: u16) -> Vec<Line<'static>> {
     let shown = picker.shown();
     let height = usize::from(height);
+    // A cell to spare on the right, as the landing page leaves
+    let width = usize::from(width).saturating_sub(1);
     let prompt = styled(&[(" ❯ ", BLUE), (&picker.query, INK), ("▌", BLUE)]);
     let mut lines = vec![prompt, Line::default()];
     lines.extend(list_lines(
@@ -500,12 +515,12 @@ pub fn screen(picker: &mut Picker, now: f64, height: u16) -> Vec<Line<'static>> 
         &picker.expanded,
         now,
         height.saturating_sub(4),
-        WIDTH,
+        width,
     ));
     while lines.len() < height.saturating_sub(1) {
         lines.push(Line::default());
     }
-    lines.push(keys_line(&FOOTER, WIDTH));
+    lines.push(keys_line(&FOOTER, width));
     lines
         .into_iter()
         .map(|line| {
@@ -709,7 +724,7 @@ mod tests {
         // query, and "w" keeps both folders
         p.query = "w".into();
         p.expanded = set(&["/w/api"]);
-        let lines = screen(&mut p, NOW, 16);
+        let lines = screen(&mut p, NOW, WIDTH as u16 + 1, 16);
         assert_eq!(lines.len(), 16);
         let text: Vec<String> = lines.iter().map(plain).collect();
         for t in &text {
@@ -762,6 +777,30 @@ mod tests {
         // At the bottom of the list nothing more lies below
         let end = list_lines(&shown, &many, 29, &none, NOW, 8, WIDTH);
         assert_eq!(plain(&end[7]), "   1 session");
+    }
+
+    #[test]
+    fn opening_a_folder_low_in_the_list_brings_its_sessions_into_view() {
+        let mut many: Vec<Folder> = (0..8)
+            .map(|i| Folder {
+                path: format!("/w/f{i}"),
+                name: format!("f{i}"),
+                last: NOW - f64::from(i),
+                count: 1,
+                spend: 0.0,
+                sessions: Vec::new(),
+            })
+            .collect();
+        many[5].sessions = sessions();
+        let open = set(&["/w/f5"]);
+        let shown = rows(&many, "", &open, &no_dirs, &HashMap::new());
+        let lines: Vec<String> = list_lines(&shown, &many, 5, &open, NOW, 16, WIDTH)
+            .iter()
+            .map(plain)
+            .collect();
+        assert!(lines.iter().any(|x| x.starts_with(" ▾ f5")), "{lines:?}");
+        let tasks: Vec<_> = lines.iter().filter(|x| x.contains("task ")).collect();
+        assert_eq!(tasks.len(), 5, "{lines:?}");
     }
 
     #[test]

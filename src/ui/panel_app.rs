@@ -101,7 +101,7 @@ impl App for Panel {
     fn update(&mut self, now: f64, _runtime: &mut Runtime, screen: &mut Screen) {
         let drawn = screen.draw(|frame| {
             let area = frame.area();
-            let lines = picker::screen(&mut self.picker, now, area.height);
+            let lines = picker::screen(&mut self.picker, now, area.width, area.height);
             frame.render_widget(Paragraph::new(lines), area);
         });
         if let Err(e) = drawn {

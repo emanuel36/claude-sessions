@@ -16,8 +16,8 @@ use crate::term::tmux::{self, Pane};
 use crate::ui::line::{cell_len, ljust, pad_right, push, rjust, truncate, width_of};
 use crate::ui::usage::{Day, Totals};
 use crate::ui::words::{
-    self, CLAUDE, CURRENT, ERROR, INACTIVE, INK, MAGENTA, MASCOT, MASCOT_ROWS, PERMISSION, STRONG,
-    SUBTLE, SUCCESS, WARNING,
+    self, BAR, CLAUDE, CURRENT, ERROR, INACTIVE, INK, MAGENTA, MASCOT, MASCOT_ROWS, PERMISSION,
+    STRONG, SUBTLE, SUCCESS, WARNING,
 };
 
 /// The sidebar pane's width.
@@ -43,8 +43,6 @@ const HEAD: i64 = 5;
 const ENTRY: usize = 2;
 /// Two-letter day names, for the narrow chart.
 const DAY_NAMES: [&str; 7] = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
-/// A bar cell: half height, so stacked bars have a gap between them.
-const BAR: &str = "▄";
 /// Active hours: a cell per hour, from no work to the busiest hour.
 const HEAT: [&str; 5] = ["·", "░", "▒", "▓", "█"];
 /// The hours ruled under the active hours.
@@ -930,17 +928,17 @@ mod tests {
                 "     4 sessions · 12m wait",
                 "",
                 "• Usage",
-                &format!("{ELBOW}5h ▄▄▄▄▄▄▄▄  58% 2h33"),
-                "     7d ▄▄▄▄▄▄▄▄  31% 2d18h",
+                &format!("{ELBOW}5h ━━━━━━━━  58% 2h33"),
+                "     7d ━━━━━━━━  31% 2d18h",
                 "",
                 "• Spend 7d           $24.00",
                 &format!("{ELBOW}We                $0.0"),
-                "     Th ▄▄▄▄           $2.0",
-                "     Fr ▄▄▄▄▄▄▄        $4.0",
-                "     Sa ▄▄▄▄▄▄▄▄▄▄     $6.0",
-                "     Su ▄▄▄▄▄▄▄▄▄▄▄▄▄▄ $8.0",
-                "     Mo ▄▄             $1.0",
-                "     Tu ▄▄▄▄▄          $3.0",
+                "     Th ━━━━           $2.0",
+                "     Fr ━━━━━━━        $4.0",
+                "     Sa ━━━━━━━━━━     $6.0",
+                "     Su ━━━━━━━━━━━━━━ $8.0",
+                "     Mo ━━             $1.0",
+                "     Tu ━━━━━          $3.0",
             ])[..]
         );
         // Today's row is bold
@@ -976,15 +974,15 @@ mod tests {
 
     #[test]
     fn hbar_draws_at_least_one_cell_for_any_spend() {
-        assert_eq!(hbar(1.0, 2.0, 4), "▄▄");
-        assert_eq!(hbar(0.001, 100.0, 4), "▄");
+        assert_eq!(hbar(1.0, 2.0, 4), "━━");
+        assert_eq!(hbar(0.001, 100.0, 4), "━");
         assert_eq!(hbar(0.0, 0.0, 4), "");
     }
 
     #[test]
     fn hbar_rounds_half_to_even() {
         // round(2.5) == 2 in Python
-        assert_eq!(hbar(5.0, 8.0, 4), "▄▄");
+        assert_eq!(hbar(5.0, 8.0, 4), "━━");
     }
 
     #[test]
@@ -1038,7 +1036,7 @@ mod tests {
             lines[14],
             "   ⎿  Wed                                         $0.00"
         );
-        assert!(lines[18].ends_with("▄ $8.00"));
+        assert!(lines[18].ends_with("━ $8.00"));
         assert!(lines[23].starts_with("   ⎿  claude-sessions  ") && lines[23].ends_with("$18.40"));
         assert!(!lines.iter().any(|l| l.contains(" x ")));
         let n = lines.len();

@@ -168,6 +168,10 @@ pub fn fit(text: &str, width: usize) -> String {
     out
 }
 
+/// A bar cell: a line through the middle of the cell, level with the text, so stacked bars
+/// have a gap between them.
+pub const BAR: &str = "━";
+
 /// The style of a quota bar's filled cells: Claude's orange, then yellow, then red.
 pub fn bar_style(pct: f64) -> Style {
     if pct >= RED {
@@ -179,7 +183,7 @@ pub fn bar_style(pct: f64) -> Style {
     }
 }
 
-/// A share of 100 as a bar of `cells` half-height cells, coloured by level, empty in subtle.
+/// A share of 100 as a bar of `cells` [`BAR`] cells, coloured by level, empty in subtle.
 ///
 /// The filled part rounds half to even, as Python's `round` does. A part with no cells is left
 /// out, so the bar has at most two spans.
@@ -190,7 +194,7 @@ pub fn bar(pct: f64, cells: usize) -> Vec<Span<'static>> {
     [(filled, bar_style(pct)), (cells - filled, SUBTLE)]
         .into_iter()
         .filter(|(count, _)| *count > 0)
-        .map(|(count, style)| Span::styled("▄".repeat(count), style))
+        .map(|(count, style)| Span::styled(BAR.repeat(count), style))
         .collect()
 }
 
@@ -242,7 +246,7 @@ mod tests {
     fn bar_fills_by_rounding_and_colours_by_level() {
         let b = bar(58.0, 14);
         let text: String = b.iter().map(|s| s.content.as_ref()).collect();
-        assert_eq!(text, "▄".repeat(14));
+        assert_eq!(text, "━".repeat(14));
         assert_eq!(b[0].content.chars().count(), 8);
         assert_eq!(b[0].style, CLAUDE);
         assert_eq!(b[1].style, SUBTLE);
@@ -265,7 +269,7 @@ mod tests {
         assert_eq!(bar(-20.0, 4)[0].style, SUBTLE);
         let full = bar(250.0, 4);
         assert_eq!(full.len(), 1);
-        assert_eq!(full[0].content, "▄▄▄▄");
+        assert_eq!(full[0].content, "━━━━");
         assert_eq!(full[0].style, ERROR);
         assert!(bar(50.0, 0).is_empty());
     }

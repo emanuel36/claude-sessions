@@ -109,8 +109,8 @@
 <text x="610.4" y="207.5" fill="#808080" textLength="42.0" lengthAdjust="spacingAndGlyphs">$1.90</text>
 <text x="711.2" y="207.5" fill="#505050" textLength="8.4" lengthAdjust="spacingAndGlyphs">⎿</text>
 <text x="736.4" y="207.5" fill="#999999" textLength="16.8" lengthAdjust="spacingAndGlyphs">5h</text>
-<text x="761.6" y="207.5" fill="#d77757" textLength="84.0" lengthAdjust="spacingAndGlyphs">▄▄▄▄▄▄▄▄▄▄</text>
-<text x="845.6" y="207.5" fill="#505050" textLength="126.0" lengthAdjust="spacingAndGlyphs">▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄</text>
+<text x="761.6" y="207.5" fill="#d77757" textLength="84.0" lengthAdjust="spacingAndGlyphs">━━━━━━━━━━</text>
+<text x="845.6" y="207.5" fill="#505050" textLength="126.0" lengthAdjust="spacingAndGlyphs">━━━━━━━━━━━━━━━</text>
 <text x="988.4" y="207.5" fill="#d7d9de" textLength="25.2" lengthAdjust="spacingAndGlyphs">42%</text>
 <text x="1022.0" y="207.5" fill="#999999" textLength="50.4" lengthAdjust="spacingAndGlyphs">resets</text>
 <text x="1080.8" y="207.5" fill="#999999" textLength="16.8" lengthAdjust="spacingAndGlyphs">in</text>
@@ -124,8 +124,8 @@
 <text x="551.6" y="225.5" fill="#808080" textLength="16.8" lengthAdjust="spacingAndGlyphs">4h</text>
 <text x="610.4" y="225.5" fill="#808080" textLength="42.0" lengthAdjust="spacingAndGlyphs">$3.30</text>
 <text x="736.4" y="225.5" fill="#999999" textLength="16.8" lengthAdjust="spacingAndGlyphs">7d</text>
-<text x="761.6" y="225.5" fill="#d77757" textLength="134.4" lengthAdjust="spacingAndGlyphs">▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄</text>
-<text x="896.0" y="225.5" fill="#505050" textLength="75.6" lengthAdjust="spacingAndGlyphs">▄▄▄▄▄▄▄▄▄</text>
+<text x="761.6" y="225.5" fill="#d77757" textLength="134.4" lengthAdjust="spacingAndGlyphs">━━━━━━━━━━━━━━━━</text>
+<text x="896.0" y="225.5" fill="#505050" textLength="75.6" lengthAdjust="spacingAndGlyphs">━━━━━━━━━</text>
 <text x="988.4" y="225.5" fill="#d7d9de" textLength="25.2" lengthAdjust="spacingAndGlyphs">63%</text>
 <text x="1022.0" y="225.5" fill="#999999" textLength="50.4" lengthAdjust="spacingAndGlyphs">resets</text>
 <text x="1080.8" y="225.5" fill="#999999" textLength="16.8" lengthAdjust="spacingAndGlyphs">in</text>
@@ -155,18 +155,18 @@
 <text x="190.4" y="297.5" fill="#808080" textLength="50.4" lengthAdjust="spacingAndGlyphs">$58.20</text>
 <text x="249.2" y="297.5" fill="#808080" textLength="16.8" lengthAdjust="spacingAndGlyphs">7d</text>
 <text x="736.4" y="297.5" fill="#999999" textLength="25.2" lengthAdjust="spacingAndGlyphs">Fri</text>
-<text x="770.0" y="297.5" fill="#d77757" textLength="117.6" lengthAdjust="spacingAndGlyphs">▄▄▄▄▄▄▄▄▄▄▄▄▄▄</text>
+<text x="770.0" y="297.5" fill="#d77757" textLength="117.6" lengthAdjust="spacingAndGlyphs">━━━━━━━━━━━━━━</text>
 <text x="1097.6" y="297.5" fill="#999999" textLength="50.4" lengthAdjust="spacingAndGlyphs">$18.40</text>
 <text x="56.0" y="315.5" fill="#444444" textLength="596.4" lengthAdjust="spacingAndGlyphs">───────────────────────────────────────────────────────────────────────</text>
 <text x="736.4" y="315.5" fill="#999999" textLength="25.2" lengthAdjust="spacingAndGlyphs">Sat</text>
-<text x="770.0" y="315.5" fill="#d77757" textLength="260.4" lengthAdjust="spacingAndGlyphs">▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄</text>
+<text x="770.0" y="315.5" fill="#d77757" textLength="260.4" lengthAdjust="spacingAndGlyphs">━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</text>
 <text x="1097.6" y="315.5" fill="#999999" textLength="50.4" lengthAdjust="spacingAndGlyphs">$42.10</text>
 <text x="56.0" y="333.5" fill="#808080" textLength="8.4" lengthAdjust="spacingAndGlyphs">▸</text>
 <text x="72.8" y="333.5" fill="#ffffff" font-weight="bold" textLength="42.0" lengthAdjust="spacingAndGlyphs">infra</text>
 <text x="602.0" y="333.5" fill="#808080" textLength="16.8" lengthAdjust="spacingAndGlyphs">1d</text>
 <text x="627.2" y="333.5" fill="#808080" textLength="25.2" lengthAdjust="spacingAndGlyphs">ago</text>
 <text x="736.4" y="333.5" fill="#999999" textLength="25.2" lengthAdjust="spacingAndGlyphs">Sun</text>
-<text x="770.0" y="333.5" fill="#d77757" textLength="226.8" lengthAdjust="spacingAndGlyphs">▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄</text>
+<text x="770.0" y="333.5" fill="#d77757" textLength="226.8" lengthAdjust="spacingAndGlyphs">━━━━━━━━━━━━━━━━━━━━━━━━━━━</text>
 <text x="1097.6" y="333.5" fill="#999999" textLength="50.4" lengthAdjust="spacingAndGlyphs">$36.50</text>
 <text x="72.8" y="351.5" fill="#808080" textLength="8.4" lengthAdjust="spacingAndGlyphs">9</text>
 <text x="89.6" y="351.5" fill="#808080" textLength="67.2" lengthAdjust="spacingAndGlyphs">sessions</text>
@@ -174,18 +174,18 @@
 <text x="182.0" y="351.5" fill="#808080" textLength="50.4" lengthAdjust="spacingAndGlyphs">$26.00</text>
 <text x="240.8" y="351.5" fill="#808080" textLength="16.8" lengthAdjust="spacingAndGlyphs">7d</text>
 <text x="736.4" y="351.5" fill="#999999" textLength="25.2" lengthAdjust="spacingAndGlyphs">Mon</text>
-<text x="770.0" y="351.5" fill="#d77757" textLength="319.2" lengthAdjust="spacingAndGlyphs">▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄</text>
+<text x="770.0" y="351.5" fill="#d77757" textLength="319.2" lengthAdjust="spacingAndGlyphs">━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</text>
 <text x="1097.6" y="351.5" fill="#999999" textLength="50.4" lengthAdjust="spacingAndGlyphs">$51.20</text>
 <text x="56.0" y="369.5" fill="#444444" textLength="596.4" lengthAdjust="spacingAndGlyphs">───────────────────────────────────────────────────────────────────────</text>
 <text x="736.4" y="369.5" fill="#999999" textLength="25.2" lengthAdjust="spacingAndGlyphs">Tue</text>
-<text x="770.0" y="369.5" fill="#d77757" textLength="84.0" lengthAdjust="spacingAndGlyphs">▄▄▄▄▄▄▄▄▄▄</text>
+<text x="770.0" y="369.5" fill="#d77757" textLength="84.0" lengthAdjust="spacingAndGlyphs">━━━━━━━━━━</text>
 <text x="1097.6" y="369.5" fill="#999999" textLength="50.4" lengthAdjust="spacingAndGlyphs">$12.90</text>
 <text x="56.0" y="387.5" fill="#808080" textLength="8.4" lengthAdjust="spacingAndGlyphs">▸</text>
 <text x="72.8" y="387.5" fill="#ffffff" font-weight="bold" textLength="33.6" lengthAdjust="spacingAndGlyphs">docs</text>
 <text x="602.0" y="387.5" fill="#808080" textLength="16.8" lengthAdjust="spacingAndGlyphs">2d</text>
 <text x="627.2" y="387.5" fill="#808080" textLength="25.2" lengthAdjust="spacingAndGlyphs">ago</text>
 <text x="736.4" y="387.5" fill="#ffffff" font-weight="bold" textLength="25.2" lengthAdjust="spacingAndGlyphs">Wed</text>
-<text x="770.0" y="387.5" fill="#d77757" textLength="168.0" lengthAdjust="spacingAndGlyphs">▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄</text>
+<text x="770.0" y="387.5" fill="#d77757" textLength="168.0" lengthAdjust="spacingAndGlyphs">━━━━━━━━━━━━━━━━━━━━</text>
 <text x="1097.6" y="387.5" fill="#ffffff" font-weight="bold" textLength="50.4" lengthAdjust="spacingAndGlyphs">$27.30</text>
 <text x="72.8" y="405.5" fill="#808080" textLength="8.4" lengthAdjust="spacingAndGlyphs">5</text>
 <text x="89.6" y="405.5" fill="#808080" textLength="67.2" lengthAdjust="spacingAndGlyphs">sessions</text>
@@ -203,23 +203,23 @@
 <text x="627.2" y="441.5" fill="#808080" textLength="25.2" lengthAdjust="spacingAndGlyphs">ago</text>
 <text x="711.2" y="441.5" fill="#505050" textLength="8.4" lengthAdjust="spacingAndGlyphs">⎿</text>
 <text x="736.4" y="441.5" fill="#d7d9de" textLength="100.8" lengthAdjust="spacingAndGlyphs">payments-api</text>
-<text x="879.2" y="441.5" fill="#d77757" textLength="210.0" lengthAdjust="spacingAndGlyphs">▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄</text>
+<text x="879.2" y="441.5" fill="#d77757" textLength="210.0" lengthAdjust="spacingAndGlyphs">━━━━━━━━━━━━━━━━━━━━━━━━━</text>
 <text x="1097.6" y="441.5" fill="#999999" textLength="50.4" lengthAdjust="spacingAndGlyphs">$71.40</text>
 <text x="72.8" y="459.5" fill="#808080" textLength="8.4" lengthAdjust="spacingAndGlyphs">3</text>
 <text x="89.6" y="459.5" fill="#808080" textLength="67.2" lengthAdjust="spacingAndGlyphs">sessions</text>
 <text x="736.4" y="459.5" fill="#d7d9de" textLength="58.8" lengthAdjust="spacingAndGlyphs">web-app</text>
-<text x="879.2" y="459.5" fill="#d77757" textLength="168.0" lengthAdjust="spacingAndGlyphs">▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄</text>
+<text x="879.2" y="459.5" fill="#d77757" textLength="168.0" lengthAdjust="spacingAndGlyphs">━━━━━━━━━━━━━━━━━━━━</text>
 <text x="1097.6" y="459.5" fill="#999999" textLength="50.4" lengthAdjust="spacingAndGlyphs">$58.20</text>
 <text x="56.0" y="477.5" fill="#444444" textLength="596.4" lengthAdjust="spacingAndGlyphs">───────────────────────────────────────────────────────────────────────</text>
 <text x="736.4" y="477.5" fill="#d7d9de" textLength="42.0" lengthAdjust="spacingAndGlyphs">infra</text>
-<text x="879.2" y="477.5" fill="#d77757" textLength="75.6" lengthAdjust="spacingAndGlyphs">▄▄▄▄▄▄▄▄▄</text>
+<text x="879.2" y="477.5" fill="#d77757" textLength="75.6" lengthAdjust="spacingAndGlyphs">━━━━━━━━━</text>
 <text x="1097.6" y="477.5" fill="#999999" textLength="50.4" lengthAdjust="spacingAndGlyphs">$26.00</text>
 <text x="56.0" y="495.5" fill="#808080" textLength="8.4" lengthAdjust="spacingAndGlyphs">▸</text>
 <text x="72.8" y="495.5" fill="#ffffff" font-weight="bold" textLength="42.0" lengthAdjust="spacingAndGlyphs">notes</text>
 <text x="602.0" y="495.5" fill="#808080" textLength="16.8" lengthAdjust="spacingAndGlyphs">9d</text>
 <text x="627.2" y="495.5" fill="#808080" textLength="25.2" lengthAdjust="spacingAndGlyphs">ago</text>
 <text x="736.4" y="495.5" fill="#d7d9de" textLength="33.6" lengthAdjust="spacingAndGlyphs">docs</text>
-<text x="879.2" y="495.5" fill="#d77757" textLength="25.2" lengthAdjust="spacingAndGlyphs">▄▄▄</text>
+<text x="879.2" y="495.5" fill="#d77757" textLength="25.2" lengthAdjust="spacingAndGlyphs">━━━</text>
 <text x="1106.0" y="495.5" fill="#999999" textLength="42.0" lengthAdjust="spacingAndGlyphs">$9.10</text>
 <text x="72.8" y="513.5" fill="#808080" textLength="16.8" lengthAdjust="spacingAndGlyphs">12</text>
 <text x="98.0" y="513.5" fill="#808080" textLength="67.2" lengthAdjust="spacingAndGlyphs">sessions</text>
@@ -235,17 +235,17 @@
 <text x="711.2" y="549.5" fill="#505050" textLength="8.4" lengthAdjust="spacingAndGlyphs">⎿</text>
 <text x="736.4" y="549.5" fill="#d7d9de" textLength="33.6" lengthAdjust="spacingAndGlyphs">Opus</text>
 <text x="778.4" y="549.5" fill="#d7d9de" textLength="25.2" lengthAdjust="spacingAndGlyphs">5.5</text>
-<text x="879.2" y="549.5" fill="#d77757" textLength="201.6" lengthAdjust="spacingAndGlyphs">▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄</text>
+<text x="879.2" y="549.5" fill="#d77757" textLength="201.6" lengthAdjust="spacingAndGlyphs">━━━━━━━━━━━━━━━━━━━━━━━━</text>
 <text x="1089.2" y="549.5" fill="#999999" textLength="58.8" lengthAdjust="spacingAndGlyphs">$148.60</text>
 <text x="72.8" y="567.5" fill="#808080" textLength="8.4" lengthAdjust="spacingAndGlyphs">2</text>
 <text x="89.6" y="567.5" fill="#808080" textLength="67.2" lengthAdjust="spacingAndGlyphs">sessions</text>
 <text x="736.4" y="567.5" fill="#d7d9de" textLength="50.4" lengthAdjust="spacingAndGlyphs">Sonnet</text>
 <text x="795.2" y="567.5" fill="#d7d9de" textLength="25.2" lengthAdjust="spacingAndGlyphs">5.5</text>
-<text x="879.2" y="567.5" fill="#d77757" textLength="42.0" lengthAdjust="spacingAndGlyphs">▄▄▄▄▄</text>
+<text x="879.2" y="567.5" fill="#d77757" textLength="42.0" lengthAdjust="spacingAndGlyphs">━━━━━</text>
 <text x="1097.6" y="567.5" fill="#999999" textLength="50.4" lengthAdjust="spacingAndGlyphs">$31.40</text>
 <text x="736.4" y="585.5" fill="#d7d9de" textLength="42.0" lengthAdjust="spacingAndGlyphs">Haiku</text>
 <text x="786.8" y="585.5" fill="#d7d9de" textLength="25.2" lengthAdjust="spacingAndGlyphs">5.5</text>
-<text x="879.2" y="585.5" fill="#d77757" textLength="8.4" lengthAdjust="spacingAndGlyphs">▄</text>
+<text x="879.2" y="585.5" fill="#d77757" textLength="8.4" lengthAdjust="spacingAndGlyphs">━</text>
 <text x="1106.0" y="585.5" fill="#999999" textLength="42.0" lengthAdjust="spacingAndGlyphs">$8.40</text>
 <text x="56.0" y="801.5" fill="#d77757" textLength="16.8" lengthAdjust="spacingAndGlyphs">↑↓</text>
 <text x="81.2" y="801.5" fill="#d7d9de" textLength="33.6" lengthAdjust="spacingAndGlyphs">move</text>

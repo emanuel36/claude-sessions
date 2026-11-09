@@ -71,7 +71,14 @@ struct PanelFixture {
     now: f64,
     #[serde(flatten)]
     list: ListFixture,
+    /// The popup's inner width; Python's popup was 50 columns wide, one spare.
+    #[serde(default = "panel_width")]
+    width: u16,
     height: u16,
+}
+
+fn panel_width() -> u16 {
+    picker::WIDTH as u16 + 1
 }
 
 /// Renders a fixture as the Rust screens draw it; `None` for an unknown kind.
@@ -102,7 +109,7 @@ fn render(fixture: &Value) -> Option<Vec<Line<'static>>> {
         Some("panel") => {
             let f: PanelFixture = serde_json::from_value(fixture.clone()).expect("panel fixture");
             let mut p = f.list.picker();
-            Some(picker::screen(&mut p, f.now, f.height))
+            Some(picker::screen(&mut p, f.now, f.width, f.height))
         }
         _ => None,
     }
