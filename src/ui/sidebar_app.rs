@@ -42,12 +42,26 @@ pub fn main_sidebar() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// When each interruptible session's grace ends, so the sidebar wakes up to settle it.
-fn quiet_deadlines(records: &[Record]) -> Vec<f64> {
+/// How often a working session past its grace is checked again: Esc before the first reply
+/// changes no file, so only its pane tells.
+const RECHECK_SECONDS: f64 = 5.0;
+
+/// When each interruptible session's grace ends, so the sidebar wakes up to settle it; a
+/// working one past its grace is checked again every [`RECHECK_SECONDS`] after `read_at`, when
+/// the records were read.
+fn quiet_deadlines(records: &[Record], read_at: f64) -> Vec<f64> {
     records
         .iter()
         .filter(|r| interruptible(r))
-        .map(|r| r.updated_at + QUIET_SECONDS)
+        .map(|r| {
+            let grace = r.updated_at + QUIET_SECONDS;
+            // Only a session in a pane can be read again for its spinner
+            if grace <= read_at && r.status == Status::Working && r.mux.is_some() {
+                read_at + RECHECK_SECONDS
+            } else {
+                grace
+            }
+        })
         .collect()
 }
 
@@ -257,7 +271,7 @@ impl App for Sidebar {
         self.watch_transcripts(runtime);
         self.shell.schedule.animating = animating(&self.entries);
         self.shell.schedule.labels = labels(&self.entries, &self.runs, &self.shell.stats);
-        self.shell.schedule.quiet = quiet_deadlines(&self.records);
+        self.shell.schedule.quiet = quiet_deadlines(&self.records, self.records_at);
         self.draw(now, screen);
     }
 }
@@ -272,7 +286,7 @@ mod tests {
     };
 
     use crate::claude::statusline::Quota;
-    use crate::core::state::{Record, Status};
+    use crate::core::state::{Mux, Record, Status};
     use crate::term::tmux::fake::FakeTmux;
     use crate::ui::pane::{App, Step, Visible};
     use crate::ui::runtime::{Msg, Runtime};
@@ -340,8 +354,32 @@ mod tests {
             background: 2,
             ..record("d", Status::Permission)
         };
-        let got = quiet_deadlines(&[working, asking, done, background]);
+        let got = quiet_deadlines(&[working, asking, done, background], NOW - 20.0);
         assert_eq!(got, [NOW + 2.0, NOW - 7.0]);
+    }
+
+    #[test]
+    fn a_working_session_past_its_grace_is_checked_again() {
+        let working = Record {
+            updated_at: NOW - 60.0,
+            mux: Some(Mux {
+                socket: "/s".to_owned(),
+                pane: "%1".to_owned(),
+            }),
+            ..record("a", Status::Working)
+        };
+        // Outside tmux there is no pane to read again
+        let bare = Record {
+            updated_at: NOW - 60.0,
+            ..record("c", Status::Working)
+        };
+        // Waiting on the user is settled by the transcript alone: no check again
+        let asking = Record {
+            updated_at: NOW - 60.0,
+            ..record("b", Status::Input)
+        };
+        let got = quiet_deadlines(&[working, asking, bare], NOW);
+        assert_eq!(got, [NOW + 5.0, NOW - 57.0, NOW - 57.0]);
     }
 
     #[test]

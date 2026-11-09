@@ -36,6 +36,9 @@ const MIN_ID_PREFIX: usize = 8;
 /// it may hold a tab.
 const PANES_FORMAT: &str = "#{pane_id}\t#{window_id}\t#{pane_index}\t#{window_index}\t\
                             #{@cs-sidebar}\t#{@cs-landing}\t#{window_name}";
+/// The frames of Claude Code's spinner, which starts the line of a running turn; on Linux
+/// and in Ghostty one frame is drawn as `*`.
+const SPINNER: [char; 7] = ['·', '✢', '✳', '✶', '✻', '✽', '*'];
 const PANE_IN_VIEW_FORMAT: &str = "#{&&:#{&&:#{pane_active},#{window_active}},#{session_attached}}";
 const NAMING_FORMAT: &str = "#{automatic-rename}\t#{@cs-auto-name}\t#{window_name}";
 
@@ -399,6 +402,29 @@ pub fn pane_in_view(m: &Mux, t: &dyn Runner) -> bool {
     t.run(&["display-message", "-p", "-t", &m.pane, PANE_IN_VIEW_FORMAT]) == "1"
 }
 
+/// Tells whether Claude's spinner shows in the pane, as `✽ Generating… (12s · ↓ 1.2k tokens)`:
+/// a turn still running. A narrow pane may drop the part in brackets; once the turn ends the
+/// line reads `✻ Worked for 12s`, with no ellipsis.
+///
+/// `None` when tmux gives nothing back, so a failure is never read as no spinner. `t` must
+/// talk to the server of `m`.
+pub fn spinner_in_pane(m: &Mux, t: &dyn Runner) -> Option<bool> {
+    let screen = t.run(&["capture-pane", "-p", "-t", &m.pane]);
+    if screen.trim().is_empty() {
+        return None;
+    }
+    Some(screen.lines().any(|line| {
+        let mut chars = line.trim_start().chars();
+        chars.next().is_some_and(|c| SPINNER.contains(&c))
+            && chars.next() == Some(' ')
+            && chars
+                .as_str()
+                .split_whitespace()
+                .next()
+                .is_some_and(|word| word.ends_with('…'))
+    }))
+}
+
 /// Marks a finished session seen right away when its pane is already on screen.
 ///
 /// `t` must talk to the server of the record's pane.
@@ -510,8 +536,8 @@ mod tests {
     use crate::term::tmux::{
         add_sidebar_running, attaches, close_window_with, detect, detect_with, fit_sidebars,
         is_headless, name_window, next_session_window, pane_in_view, panes, settle_if_viewed,
-        window_entries, window_name, windows_of, Cli, Pane, Procs, Runner, Window, SIDEBAR_WIDTH,
-        WINDOW_NAME_LEN,
+        spinner_in_pane, window_entries, window_name, windows_of, Cli, Pane, Procs, Runner, Window,
+        SIDEBAR_WIDTH, WINDOW_NAME_LEN,
     };
     use std::cell::RefCell;
     use std::collections::HashMap;
@@ -987,6 +1013,25 @@ mod tests {
         done.status_since = 1.0;
         let settled = settle_if_viewed(done, 5.0, &t);
         assert_eq!((settled.status, settled.status_since), (Status::Idle, 5.0));
+    }
+
+    #[test]
+    fn spinner_in_pane_reads_a_running_turn_from_the_screen() {
+        let screen = |text: &'static str| FakeTmux::new(move |_| text.into());
+        let m = mux("/s", "%4");
+        let running = screen("● Bash(ls)\n\n✽ Generating… (25s · ↓ 1.8k tokens)\n❯ ");
+        assert_eq!(spinner_in_pane(&m, &running), Some(true));
+        assert_eq!(running.calls()[0], ["capture-pane", "-p", "-t", "%4"]);
+        let thinking = screen("  · Thinking… (3s)\n❯ ");
+        assert_eq!(spinner_in_pane(&m, &thinking), Some(true));
+        // The frame Linux draws as an asterisk, in a pane too narrow for the brackets
+        let narrow = screen("* Thinking…\n❯ ");
+        assert_eq!(spinner_in_pane(&m, &narrow), Some(true));
+        let bullet = screen("* a note… about it\n❯ ");
+        assert_eq!(spinner_in_pane(&m, &bullet), Some(false));
+        let ended = screen("✻ Crunched for 18s · done 9:26 AM\n❯ ");
+        assert_eq!(spinner_in_pane(&m, &ended), Some(false));
+        assert_eq!(spinner_in_pane(&m, &FakeTmux::silent()), None);
     }
 
     #[test]

@@ -1,6 +1,8 @@
 //! `cst hook` and what follows from Claude Code's events: the live sessions, as they really are.
 //!
 //! Esc fires no hook, so a session the user interrupted is settled here, when it is read.
+//! Esc before the first reply leaves no marker in the transcript either: the pane then shows
+//! whether the turn still runs.
 //!
 //! Each public function is a thin wrapper over one that takes [`Seams`] (the records directory,
 //! the journal, and how to reach a tmux server), so unit tests use a temporary directory and a
@@ -11,7 +13,7 @@ use std::path::Path;
 
 use anyhow::{bail, Context, Result};
 
-use crate::claude::transcript::{title_of, was_interrupted};
+use crate::claude::transcript::{title_of, turn_end, TurnEnd};
 use crate::core::journal;
 use crate::core::paths;
 use crate::core::state::{
@@ -194,7 +196,7 @@ fn live_sessions_in(s: &Seams<'_>, now: f64) -> Vec<Record> {
             if INTERRUPTIBLE.contains(&record.status)
                 && record.background == 0
                 && quiet
-                && record.transcript.as_deref().is_some_and(was_interrupted)
+                && interrupted(s, &record)
             {
                 settle_interrupted_in(s, &record.id, now).unwrap_or(record)
             } else {
@@ -205,6 +207,24 @@ fn live_sessions_in(s: &Seams<'_>, now: f64) -> Vec<Record> {
     // Settling changes a status, and with it the order
     records.sort_by(by_urgency);
     records
+}
+
+/// Tells whether a quiet session was stopped with Esc: its transcript ends on the marker, or,
+/// stopped before its first reply, on the prompt while its pane shows no spinner.
+fn interrupted(s: &Seams<'_>, r: &Record) -> bool {
+    let Some(transcript) = r.transcript.as_deref() else {
+        return false;
+    };
+    match turn_end(transcript) {
+        TurnEnd::Interrupted => true,
+        TurnEnd::AwaitsReply => {
+            r.status == Status::Working
+                && r.mux
+                    .as_ref()
+                    .is_some_and(|m| tmux::spinner_in_pane(m, &*(s.bind)(&m.socket)) == Some(false))
+        }
+        TurnEnd::Other => false,
+    }
 }
 
 /// Writes an Esc interrupt to disk, unless a hook changed the session meanwhile.
@@ -639,6 +659,51 @@ mod tests {
         });
         let all = live_sessions_in(&rig.seams(), 100.0);
         assert_eq!((all[0].status, all[0].pending.len()), (Status::Idle, 0));
+    }
+
+    /// A working session in pane `%7` whose transcript ends on a prompt with no reply.
+    fn unanswered(rig: &Rig) {
+        let transcript = write_transcript(
+            &rig.dir.path().join("t.jsonl"),
+            &[r#"{"type":"user","message":{"content":"do it"}}"#],
+        );
+        rig.write(&Record {
+            status: Status::Working,
+            transcript: Some(transcript),
+            mux: Some(Mux {
+                socket: "/s".to_owned(),
+                pane: "%7".to_owned(),
+            }),
+            ..live_record("s1")
+        });
+    }
+
+    #[test]
+    fn esc_before_the_first_reply_is_settled_once_the_spinner_is_gone() {
+        let rig = Rig::replying(|_| Rc::new(|_: &[&str]| "✻ Worked for 2s\n❯ ".to_owned()));
+        unanswered(&rig);
+        assert_eq!(
+            live_sessions_in(&rig.seams(), 100.0)[0].status,
+            Status::Idle
+        );
+        assert_eq!(rig.calls(), ["-S /s capture-pane -p -t %7"]);
+    }
+
+    #[test]
+    fn a_turn_awaiting_its_first_reply_keeps_working() {
+        let rig = Rig::replying(|_| Rc::new(|_: &[&str]| "✽ Thinking… (40s)\n❯ ".to_owned()));
+        unanswered(&rig);
+        assert_eq!(
+            live_sessions_in(&rig.seams(), 100.0)[0].status,
+            Status::Working
+        );
+        // A tmux that does not answer settles nothing
+        let rig = Rig::new();
+        unanswered(&rig);
+        assert_eq!(
+            live_sessions_in(&rig.seams(), 100.0)[0].status,
+            Status::Working
+        );
     }
 
     #[test]
