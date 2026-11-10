@@ -55,7 +55,6 @@ and week's statistics.
 |---|---|
 | Alt+↑ / Alt+↓ | Previous / next session, most urgent first |
 | Alt+n | New session, or resume one, from the folders you used |
-| Alt+r | Rename the current session |
 | Alt+c | Close the current session, after a confirmation |
 
 On the landing page: ↑ ↓ move, → / ← show or hide a folder's sessions, Enter starts or resumes,

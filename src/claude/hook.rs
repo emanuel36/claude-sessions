@@ -177,6 +177,36 @@ fn handle_event_in(
     Ok(())
 }
 
+/// Gives a session the title its transcript holds now, and its window the name: Claude Code
+/// fires no hook for /rename, so whoever sees the transcript change calls this.
+///
+/// `t` talks to the server of the record's pane. Does nothing when the title is the record's.
+pub fn adopt_title(id: &str, t: &dyn Runner) {
+    if let Err(e) = with_seams(|s| adopt_title_in(s, id, t)).and_then(|done| done) {
+        paths::log_error(&format_args!("hook: cannot adopt the title: {e:#}"));
+    }
+}
+
+fn adopt_title_in(s: &Seams<'_>, id: &str, t: &dyn Runner) -> Result<()> {
+    let lock = store::lock_in(s.dir, id).context("cannot lock the record")?;
+    let Some(mut record) = store::read_in(s.dir, id) else {
+        return Ok(());
+    };
+    let found = record
+        .transcript
+        .as_deref()
+        .map(title_of)
+        .unwrap_or_default();
+    if found.is_empty() || found == record.title {
+        return Ok(());
+    }
+    record.title = found;
+    store::write_in(s.dir, &record, s.journal).context("cannot write the record")?;
+    tmux::name_window(&record, &record.title, t);
+    drop(lock);
+    Ok(())
+}
+
 /// Returns the records of all live sessions, ordered for display.
 ///
 /// Records of dead processes are deleted, and sessions the user interrupted with Esc (in the
@@ -288,8 +318,8 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::claude::hook::{
-        claude_pid, handle_event_in, live_sessions_in, parse_event, seen_in, settle_interrupted_in,
-        Bind, Binder, Seams,
+        adopt_title_in, claude_pid, handle_event_in, live_sessions_in, parse_event, seen_in,
+        settle_interrupted_in, Bind, Binder, Seams,
     };
     use crate::claude::install::HOOK_TIMEOUT;
     use crate::core::journal::JournalEvent;
@@ -856,5 +886,38 @@ mod tests {
         let rig = Rig::new();
         rig.handle(&event("s", "Bogus"), &env(&[]), 1.0);
         assert!(rig.read("s").is_some());
+    }
+
+    #[test]
+    fn a_rename_in_the_transcript_names_the_record_and_the_window() {
+        let rig = Rig::replying(|_| Rc::new(|_| "1\t\tclaude".to_owned()));
+        let dir = TempDir::new().expect("temp dir");
+        let transcript = write_transcript(
+            &dir.path().join("s1.jsonl"),
+            &["{\"type\":\"ai-title\",\"aiTitle\":\"Fix the login bug\"}"],
+        );
+        let mux = Mux {
+            socket: "here".to_owned(),
+            pane: "%3".to_owned(),
+        };
+        rig.write(&Record {
+            title: "Fix the login bug".to_owned(),
+            cwd: "/w/notes".to_owned(),
+            transcript: Some(transcript.clone()),
+            mux: Some(mux),
+            ..live_record("s1")
+        });
+        // The title is the record's already: nothing to do
+        adopt_title_in(&rig.seams(), "s1", &*rig.here()).expect("adopt");
+        assert!(rig.calls().is_empty());
+        let mut text = fs::read_to_string(&transcript).expect("read");
+        text.push_str("{\"type\":\"custom-title\",\"customTitle\":\"Mine\"}\n");
+        fs::write(&transcript, text).expect("write transcript");
+        adopt_title_in(&rig.seams(), "s1", &*rig.here()).expect("adopt");
+        assert_eq!(rig.read("s1").expect("record").title, "Mine");
+        assert!(rig
+            .calls()
+            .iter()
+            .any(|c| c.contains("rename-window -t %3 Mine")));
     }
 }

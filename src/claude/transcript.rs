@@ -197,6 +197,33 @@ pub fn title_of(path: &Path) -> String {
         .unwrap_or_default()
 }
 
+/// Tells whether a title was written to a transcript after its first `*seen` bytes, and moves
+/// `*seen` to the end of the file; only the bytes added since are read.
+///
+/// A transcript that shrank, or cannot be read, counts as untitled.
+pub fn titled_since(path: &Path, seen: &mut u64) -> bool {
+    let Ok(mut file) = File::open(path) else {
+        return false;
+    };
+    let Ok(len) = file.seek(SeekFrom::End(0)) else {
+        return false;
+    };
+    let from = if len < *seen { len } else { *seen };
+    *seen = len;
+    let mut added = Vec::new();
+    let read = file
+        .seek(SeekFrom::Start(from))
+        .and_then(|_| file.read_to_end(&mut added));
+    read.is_ok()
+        && TITLE_KEYS
+            .iter()
+            .any(|key| contains(&added, key.as_bytes()))
+}
+
+fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+    rfind(haystack, needle).is_some()
+}
+
 /// Session titles, read from the transcripts again only when one changes.
 ///
 /// With `stored`, they are also kept on disk, so a new process reads only the transcripts that
@@ -330,7 +357,8 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::claude::transcript::{
-        find_title, tail, title_of, transcript_path_in, turn_end, Titles, TurnEnd, TITLES_FILE,
+        find_title, tail, title_of, titled_since, transcript_path_in, turn_end, Titles, TurnEnd,
+        TITLES_FILE,
     };
 
     fn set_mtime(path: &Path, secs: u64) {
@@ -601,5 +629,29 @@ mod tests {
         fs::write(&path, b"{\"aiTitle\":\"First\"}\n").unwrap();
         let mut titles = Titles::in_dir(true, state);
         assert_eq!(titles.get("a", &path), "First");
+    }
+
+    #[test]
+    fn titled_since_sees_only_what_was_appended() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("t.jsonl");
+        fs::write(&path, b"{\"aiTitle\":\"First\"}\n").unwrap();
+        let mut seen = fs::metadata(&path).unwrap().len();
+        // Nothing new, and a title already seen, do not count
+        assert!(!titled_since(&path, &mut seen));
+        let mut text = fs::read(&path).unwrap();
+        text.extend_from_slice(b"{\"type\":\"user\"}\n");
+        fs::write(&path, &text).unwrap();
+        assert!(!titled_since(&path, &mut seen));
+        text.extend_from_slice(b"{\"type\":\"custom-title\",\"customTitle\":\"Mine\"}\n");
+        fs::write(&path, &text).unwrap();
+        assert!(titled_since(&path, &mut seen));
+        assert_eq!(seen, text.len() as u64);
+        assert!(!titled_since(&path, &mut seen));
+        // A missing or shrunken transcript counts as untitled
+        assert!(!titled_since(&tmp.path().join("missing"), &mut seen));
+        fs::write(&path, b"{}\n").unwrap();
+        assert!(!titled_since(&path, &mut seen));
+        assert_eq!(seen, 3);
     }
 }

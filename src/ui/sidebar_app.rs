@@ -2,16 +2,18 @@
 //!
 //! tmux tells the pane when its window comes on screen (F12), leaves it (F11) and when windows
 //! or panes change (F10). While shown, inotify reports the records, the journal, Claude Code's
-//! history and the transcripts of working or waiting sessions, and the pane reads again only
+//! history and the transcripts of the live sessions, and the pane reads again only
 //! what changed. tmux is called only when shown, on a layout change and on a click.
 
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use crossterm::event::{MouseButton, MouseEventKind};
 use ratatui::widgets::Paragraph;
 
 use crate::claude::hook::{self, QUIET_SECONDS};
+use crate::claude::transcript::titled_since;
 use crate::core::state::{self, unix_now, Record, Status, TIMED};
 use crate::term::tmux::{self, Cli, Pane, Runner};
 use crate::ui::pane::{self, own_socket, own_window, App, Shell, Step, Visible, WINDOW_PAUSE};
@@ -65,12 +67,12 @@ fn quiet_deadlines(records: &[Record], read_at: f64) -> Vec<f64> {
         .collect()
 }
 
-/// The directories of the transcripts of interruptible sessions, once each.
+/// The directories of the transcripts of the live sessions, once each: a session's title can
+/// change in any state.
 fn transcript_dirs(records: &[Record]) -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = Vec::new();
     let found = records
         .iter()
-        .filter(|r| interruptible(r))
         .filter_map(|r| r.transcript.as_deref()?.parent());
     for dir in found {
         if !dirs.iter().any(|d| d == dir) {
@@ -129,6 +131,8 @@ struct Sidebar {
     /// The server's panes, listed again only on a layout change or when shown.
     panes: Vec<Pane>,
     records: Vec<Record>,
+    /// How much of each live session's transcript was checked for a new title.
+    titled: HashMap<PathBuf, u64>,
     /// When the records were read.
     records_at: f64,
     entries: Vec<Entry>,
@@ -146,6 +150,7 @@ impl Sidebar {
             shell: Shell::new("sidebar", false),
             panes: Vec::new(),
             records: Vec::new(),
+            titled: HashMap::new(),
             records_at: 0.0,
             entries: Vec::new(),
             runs: Vec::new(),
@@ -175,6 +180,7 @@ impl Sidebar {
                 Step::Wait
             }
             Msg::Changed(path) => {
+                self.adopt_renamed(&path);
                 let touched = self.shell.watches.changed(&path, &self.records, now);
                 if touched.any() {
                     self.shell.stale.add(touched);
@@ -199,6 +205,37 @@ impl Sidebar {
             self.shell
                 .watches
                 .watch(runtime, &dir, &mut self.shell.load_error);
+        }
+    }
+
+    /// Gives the session whose transcript is `path` its new title, when /rename just wrote one;
+    /// the window of a session on another server is not ours to name.
+    fn adopt_renamed(&mut self, path: &Path) {
+        let Some(r) = (self.records.iter()).find(|r| r.transcript.as_deref() == Some(path)) else {
+            return;
+        };
+        let seen = self.titled.entry(path.to_path_buf()).or_insert(0);
+        let ours = r.mux.as_ref().is_none_or(|m| m.socket == self.socket);
+        if titled_since(path, seen) && ours {
+            hook::adopt_title(&r.id, &*self.tmux);
+            self.shell.stale.records = true;
+            self.shell.schedule.dirty = true;
+        }
+    }
+
+    /// Starts checking the transcripts of the live sessions from their end, and forgets the
+    /// ones that are gone.
+    fn track_titles(&mut self) {
+        let live: Vec<&Path> = self
+            .records
+            .iter()
+            .filter_map(|r| r.transcript.as_deref())
+            .collect();
+        self.titled.retain(|path, _| live.contains(&path.as_path()));
+        for path in live {
+            self.titled
+                .entry(path.to_path_buf())
+                .or_insert_with(|| std::fs::metadata(path).map_or(0, |m| m.len()));
         }
     }
 
@@ -268,6 +305,7 @@ impl App for Sidebar {
             return;
         }
         self.reload(now);
+        self.track_titles();
         self.watch_transcripts(runtime);
         self.shell.schedule.animating = animating(&self.entries);
         self.shell.schedule.labels = labels(&self.entries, &self.runs, &self.shell.stats);
@@ -383,7 +421,7 @@ mod tests {
     }
 
     #[test]
-    fn transcripts_of_interruptible_sessions_are_watched_once() {
+    fn transcripts_of_live_sessions_are_watched_once() {
         let a = record("a", Status::Working);
         let a2 = Record {
             id: "a2".to_owned(),
@@ -395,7 +433,14 @@ mod tests {
         };
         let idle = record("i", Status::Idle);
         let got = transcript_dirs(&[a, a2, none, idle, record("b", Status::Input)]);
-        assert_eq!(got, [PathBuf::from("/p/a"), PathBuf::from("/p/b")]);
+        assert_eq!(
+            got,
+            [
+                PathBuf::from("/p/a"),
+                PathBuf::from("/p/i"),
+                PathBuf::from("/p/b")
+            ]
+        );
     }
 
     #[test]
