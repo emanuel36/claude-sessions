@@ -154,9 +154,9 @@ fn shown_sidebar_redraws_on_record_change() {
     let Some(side) = Sidebar::start() else { return };
     side.record("s1", "alpha", Status::Idle);
     side.assert_shows("alpha", START);
-    assert!(!side.screen().contains("approve"));
+    assert!(!side.screen().contains("! alpha"));
     side.record("s1", "alpha", Status::Permission);
-    side.assert_shows("approve", Duration::from_millis(500));
+    side.assert_shows("! alpha", Duration::from_millis(500));
 }
 
 #[test]
@@ -168,11 +168,11 @@ fn hidden_sidebar_catches_up_when_shown() {
     thread::sleep(Duration::from_millis(200));
     side.record("s1", "alpha", Status::Permission);
     assert!(
-        !side.shows_within("approve", Duration::from_millis(500)),
+        !side.shows_within("! alpha", Duration::from_millis(500)),
         "a hidden sidebar read a record"
     );
     side.send("F12");
-    side.assert_shows("approve", Duration::from_millis(500));
+    side.assert_shows("! alpha", Duration::from_millis(500));
 }
 
 #[test]
@@ -229,5 +229,5 @@ fn records_dir_recreated_is_watched_again() {
     fs::create_dir_all(side.env.runtime_dir()).expect("create records dir");
     thread::sleep(Duration::from_millis(200));
     side.record("s1", "alpha", Status::Permission);
-    side.assert_shows("approve", Duration::from_secs(1));
+    side.assert_shows("! alpha", Duration::from_secs(1));
 }

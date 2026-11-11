@@ -319,7 +319,7 @@ mod tests {
         assert_eq!(lines[8].chars().count(), LIST_MAX, "{}", lines[8]);
         assert!(lines[8].contains("a session title long enough"));
         let stats_at = LIST_MAX + GAP;
-        assert!(from(&lines[0], stats_at).trim().starts_with("• Today"));
+        assert!(from(&lines[0], stats_at).trim().starts_with("• Usage"));
         assert!(lines[29].starts_with(" ↑↓ move"), "{}", lines[29]);
     }
 
@@ -342,19 +342,18 @@ mod tests {
             width as u16,
             30,
         ));
-        let right = from(&lines[1], picker::WIDTH + GAP);
-        assert_eq!(right.trim(), "• Today               $9.50");
+        let right: Vec<String> = (lines.iter())
+            .map(|l| from(l, picker::WIDTH + GAP).trim().to_owned())
+            .collect();
+        assert_eq!(right[1], "• Usage");
+        assert!(right.contains(&"• Today               $9.50".to_owned()));
     }
 
     #[test]
     fn a_short_screen_falls_back_to_the_sidebar_stats() {
         let lines = texts(&screen(&mut picker(), false, 2, &stats(), now(), 160, 8));
         assert_eq!(lines.len(), 8);
-        assert!(
-            lines[1].ends_with("• Today               $9.50"),
-            "{}",
-            lines[1]
-        );
+        assert!(lines[1].ends_with("• Usage"), "{}", lines[1]);
     }
 
     #[test]
