@@ -158,7 +158,7 @@ impl Shell {
     ///
     /// The statistics are added up again when the history or the journal changed, and every
     /// minute: today's figures grow with the time, and the week moves on at midnight. `full`
-    /// adds the week's totals and today's hours, which only the landing page shows. Returns
+    /// adds the week's totals and hours, which only the landing page shows. Returns
     /// whether they were added up again.
     pub fn read_stats(&mut self, stale: &Stale, now: f64, full: bool) -> bool {
         if stale.history {

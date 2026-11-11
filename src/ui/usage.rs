@@ -16,9 +16,10 @@ use crate::core::state::{Status, NEEDS_YOU};
 
 /// Days of spend the sidebar shows, today included.
 pub const WEEK_DAYS: u64 = 7;
-/// The longest a span still open at `now` counts, in seconds: a session killed mid-turn writes
-/// no event to end it.
-pub const MAX_OPEN: f64 = 7200.0;
+/// The longest a working session goes without an event and still counts as working, in
+/// seconds. A longer silence is a suspended machine or a session killed mid-turn, which writes
+/// no event to end its turn; the silences of real turns stay well under it.
+pub const MAX_SILENCE: f64 = 3600.0;
 
 /// What today's journal adds up to.
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
@@ -157,7 +158,8 @@ impl Reader {
         &self.totals
     }
 
-    /// Returns the seconds sessions worked in each hour of today, midnight first.
+    /// Returns the seconds sessions worked in each hour of the day over the last 7 days,
+    /// today included, midnight first.
     ///
     /// Reads what [`Reader::totals`] read last, so call it after `totals` in the same tick.
     pub fn hours(&self, now: f64) -> [f64; 24] {
@@ -165,10 +167,12 @@ impl Reader {
     }
 
     fn hours_in<Tz: TimeZone>(&self, now: f64, tz: &Tz) -> [f64; 24] {
-        let Some(today) = local_date(now, tz) else {
+        let Some(first) = local_date(now, tz)
+            .and_then(|today| today.checked_sub_days(ChronoDays::new(WEEK_DAYS - 1)))
+        else {
             return [0.0; 24];
         };
-        working_hours_in(&events_of(&self.journals), today, now, tz)
+        working_hours_in(&events_of(&self.journals), first, now, tz)
     }
 
     /// Returns today's lines, sessions and waiting.
@@ -300,9 +304,10 @@ fn needs_you(status: &str) -> bool {
 
 /// Adds up, by hour of the day, the time sessions spent working from `first_day` on.
 ///
-/// A session works from a `working` event to its next status event; work that began the day
-/// before counts from midnight. One still working counts up to `now`, [`MAX_OPEN`] at most.
-/// Hours and midnight are in the zone `tz`.
+/// A session works from a `working` event to its next status event, except for silences of
+/// more than [`MAX_SILENCE`] between its events; work that began the day before counts from
+/// midnight. One still working counts up to `now`, or up to its last event once that is more
+/// than [`MAX_SILENCE`] old. Hours and midnight are in the zone `tz`.
 ///
 /// Returns 24 sums of seconds, midnight first.
 fn working_hours_in<Tz: TimeZone>(
@@ -315,22 +320,36 @@ fn working_hours_in<Tz: TimeZone>(
     let Some(midnight) = midnight_of(first_day, tz) else {
         return hours;
     };
-    // In the order sessions started working, which is the order of their sums
-    let mut started: Vec<(&str, f64)> = Vec::new();
+    // (session, start of its current span, its last event), in the order sessions started
+    // working, which is the order of their sums
+    let mut started: Vec<(&str, f64, f64)> = Vec::new();
     let mut spans: Vec<(f64, f64)> = Vec::new();
     let from = first_day.pred_opt().unwrap_or(first_day);
     for e in events.range(from..).flat_map(|(_, evs)| evs.iter()) {
+        let open = started.iter().position(|s| s.0 == e.id);
+        if let Some(i) = open {
+            let (_, start, last) = started[i];
+            if e.t - last > MAX_SILENCE {
+                spans.push((start, last));
+                started[i].1 = e.t;
+            }
+            started[i].2 = e.t;
+        }
         let Some(status) = e.status.as_deref() else {
             continue;
         };
-        if let Some(i) = started.iter().position(|s| s.0 == e.id) {
-            spans.push((started.remove(i).1, e.t));
+        if let Some(i) = open {
+            let (_, start, _) = started.remove(i);
+            spans.push((start, e.t));
         }
         if status == Status::Working.as_str() {
-            started.push((&e.id, e.t));
+            started.push((&e.id, e.t, e.t));
         }
     }
-    spans.extend(started.iter().map(|&(_, t)| (t, now.min(t + MAX_OPEN))));
+    for &(_, start, last) in &started {
+        let end = if now - last > MAX_SILENCE { last } else { now };
+        spans.push((start, end));
+    }
     for (start, end) in spans {
         let mut start = start.max(midnight);
         while start < end {
@@ -424,7 +443,7 @@ mod tests {
     use crate::claude::spend::ModelSpend;
     use crate::claude::transcript::transcript_path_in;
     use crate::core::journal::{Days, JournalEvent, SessionTotals};
-    use crate::ui::usage::{day_summary, working_hours_in, Day, Reader, Totals, MAX_OPEN};
+    use crate::ui::usage::{day_summary, working_hours_in, Day, Reader, Totals};
 
     fn tz() -> FixedOffset {
         // Not UTC, so a function that ignores the zone gets the wrong hours and days
@@ -655,6 +674,32 @@ mod tests {
     }
 
     #[test]
+    fn the_hours_add_up_the_last_7_days() {
+        let dir = TempDir::new().unwrap();
+        for (days, start, end) in [
+            (0, (9, 0), (9, 30)),
+            (6, (9, 0), (9, 15)),
+            (7, (9, 0), (10, 0)),
+        ] {
+            let day = ago(days);
+            log(
+                dir.path(),
+                days,
+                &status(at(day, start.0, start.1), "a", "working"),
+            );
+            log(
+                dir.path(),
+                days,
+                &status(at(day, end.0, end.1), "a", "done"),
+            );
+        }
+        let mut reader = reader(&dir);
+        reader.totals_in(&[session("a", "/w/api")], 0, now(), &tz());
+        // Today and 6 days ago; 7 days ago is out of the week
+        assert_eq!(reader.hours_in(now(), &tz())[9], 2700.0);
+    }
+
+    #[test]
     fn the_day_is_empty_before_the_totals_read_anything() {
         let reader = Reader::in_dir(TempDir::new().unwrap().path().to_path_buf());
         assert_eq!(reader.day_in(now(), &tz()), Day::default());
@@ -712,21 +757,36 @@ mod tests {
         // a: 9:30-10:30; b: 9:40 until now, 9:50
         assert_eq!((hours[9], hours[10]), (1800.0 + 600.0, 1800.0));
         assert_eq!(hours.iter().sum::<f64>(), 4200.0);
-        // A session left working with no end counts two hours at most
+        // A session left working with no event for over an hour counts up to its last event
         let late = working_hours_in(&days, day, nine + 86400.0, &tz());
-        assert_eq!(late.iter().sum::<f64>(), 3600.0 + MAX_OPEN);
+        assert_eq!(late.iter().sum::<f64>(), 3600.0);
+    }
+
+    #[test]
+    fn a_long_silence_while_working_is_not_work() {
+        // Working at 22:00, the machine suspends at 22:20 and wakes at 8:00
+        let day = ago(1);
+        let ten = at(day, 22, 0);
+        let evening = [
+            status(ten, "a", "working"),
+            usage(ten + 1200.0, "a", 1.0, 0, 0),
+        ];
+        let morning = [status(at(today(), 8, 0), "a", "done")];
+        let days: Days = [(day, &evening[..]), (today(), &morning[..])].into();
+        let hours = working_hours_in(&days, day, at(today(), 9, 0), &tz());
+        assert_eq!(hours[22], 1200.0);
+        assert_eq!(hours.iter().sum::<f64>(), 1200.0);
     }
 
     #[test]
     fn working_hours_count_work_from_yesterday_from_midnight() {
         let midnight = at(today(), 0, 0);
         let before = [status(midnight - 600.0, "a", "working")];
-        let after = [status(midnight + 5.0 * 3600.0, "a", "done")];
+        let after = [status(midnight + 2400.0, "a", "done")];
         let days: Days = [(ago(1), &before[..]), (today(), &after[..])].into();
         let hours = working_hours_in(&days, today(), midnight + 6.0 * 3600.0, &tz());
-        // A closed span counts whole, however long
-        assert_eq!(hours[..5], [3600.0; 5]);
-        assert_eq!(hours.iter().sum::<f64>(), 5.0 * 3600.0);
+        assert_eq!(hours[0], 2400.0);
+        assert_eq!(hours.iter().sum::<f64>(), 2400.0);
     }
 
     #[test]
