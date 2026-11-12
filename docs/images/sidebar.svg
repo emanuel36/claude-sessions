@@ -23,20 +23,28 @@
 <text x="39.2" y="117.5" fill="#d7d9de" textLength="100.8" lengthAdjust="spacingAndGlyphs">payments-api</text>
 <text x="232.4" y="117.5" fill="#ff6b80" font-weight="bold" textLength="16.8" lengthAdjust="spacingAndGlyphs">3m</text>
 <text x="39.2" y="135.5" fill="#505050" textLength="8.4" lengthAdjust="spacingAndGlyphs">⎿</text>
-<text x="81.2" y="135.5" fill="#999999" textLength="142.8" lengthAdjust="spacingAndGlyphs">$6.21   31m  Opus</text>
+<text x="81.2" y="135.5" fill="#999999" textLength="42.0" lengthAdjust="spacingAndGlyphs">$6.21</text>
+<text x="148.4" y="135.5" fill="#999999" textLength="25.2" lengthAdjust="spacingAndGlyphs">31m</text>
+<text x="190.4" y="135.5" fill="#999999" textLength="33.6" lengthAdjust="spacingAndGlyphs">Opus</text>
 <text x="22.4" y="171.5" fill="#ffc107" font-weight="bold" textLength="8.4" lengthAdjust="spacingAndGlyphs">?</text>
 <text x="39.2" y="171.5" fill="#d7d9de" textLength="42.0" lengthAdjust="spacingAndGlyphs">infra</text>
 <text x="232.4" y="171.5" fill="#ffc107" font-weight="bold" textLength="16.8" lengthAdjust="spacingAndGlyphs">7m</text>
 <text x="39.2" y="189.5" fill="#505050" textLength="8.4" lengthAdjust="spacingAndGlyphs">⎿</text>
-<text x="81.2" y="189.5" fill="#999999" textLength="142.8" lengthAdjust="spacingAndGlyphs">$1.12   10m  Opus</text>
+<text x="81.2" y="189.5" fill="#999999" textLength="42.0" lengthAdjust="spacingAndGlyphs">$1.12</text>
+<text x="148.4" y="189.5" fill="#999999" textLength="25.2" lengthAdjust="spacingAndGlyphs">10m</text>
+<text x="190.4" y="189.5" fill="#999999" textLength="33.6" lengthAdjust="spacingAndGlyphs">Opus</text>
 <text x="22.4" y="225.5" fill="#d77757" font-weight="bold" textLength="8.4" lengthAdjust="spacingAndGlyphs">✽</text>
 <text x="39.2" y="225.5" fill="#ffffff" font-weight="bold" textLength="58.8" lengthAdjust="spacingAndGlyphs">web-app</text>
 <text x="39.2" y="243.5" fill="#505050" textLength="8.4" lengthAdjust="spacingAndGlyphs">⎿</text>
-<text x="81.2" y="243.5" fill="#999999" textLength="142.8" lengthAdjust="spacingAndGlyphs">$3.40   21m  Opus</text>
+<text x="81.2" y="243.5" fill="#999999" textLength="42.0" lengthAdjust="spacingAndGlyphs">$3.40</text>
+<text x="148.4" y="243.5" fill="#999999" textLength="25.2" lengthAdjust="spacingAndGlyphs">21m</text>
+<text x="190.4" y="243.5" fill="#999999" textLength="33.6" lengthAdjust="spacingAndGlyphs">Opus</text>
 <text x="22.4" y="279.5" fill="#4eba65" font-weight="bold" textLength="8.4" lengthAdjust="spacingAndGlyphs">✓</text>
 <text x="39.2" y="279.5" fill="#d7d9de" textLength="33.6" lengthAdjust="spacingAndGlyphs">docs</text>
 <text x="39.2" y="297.5" fill="#505050" textLength="8.4" lengthAdjust="spacingAndGlyphs">⎿</text>
-<text x="81.2" y="297.5" fill="#999999" textLength="142.8" lengthAdjust="spacingAndGlyphs">$0.58    5m  Opus</text>
+<text x="81.2" y="297.5" fill="#999999" textLength="42.0" lengthAdjust="spacingAndGlyphs">$0.58</text>
+<text x="156.8" y="297.5" fill="#999999" textLength="16.8" lengthAdjust="spacingAndGlyphs">5m</text>
+<text x="190.4" y="297.5" fill="#999999" textLength="33.6" lengthAdjust="spacingAndGlyphs">Opus</text>
 <text x="22.4" y="459.5" fill="#d77757" textLength="8.4" lengthAdjust="spacingAndGlyphs">•</text>
 <text x="39.2" y="459.5" fill="#ffffff" font-weight="bold" textLength="42.0" lengthAdjust="spacingAndGlyphs">Usage</text>
 <text x="39.2" y="477.5" fill="#505050" textLength="8.4" lengthAdjust="spacingAndGlyphs">⎿</text>
