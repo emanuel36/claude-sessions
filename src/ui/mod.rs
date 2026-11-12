@@ -11,6 +11,7 @@ pub mod picker;
 pub mod runtime;
 pub mod sidebar;
 pub mod sidebar_app;
+pub mod tree;
 pub mod usage;
 pub mod watch;
 pub mod words;
