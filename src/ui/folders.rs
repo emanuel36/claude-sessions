@@ -156,6 +156,7 @@ mod tests {
             cwd: cwd.to_string_lossy().into_owned(),
             last,
             first_prompt: prompt.into(),
+            prompts: Vec::new(),
         }
     }
 

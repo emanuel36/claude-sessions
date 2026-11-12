@@ -475,6 +475,7 @@ mod tests {
             cwd: cwd.into(),
             last: 0.0,
             first_prompt: String::new(),
+            prompts: Vec::new(),
         }
     }
 
