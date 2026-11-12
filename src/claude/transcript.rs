@@ -184,10 +184,45 @@ fn string_rest(bytes: &[u8]) -> Option<usize> {
     None
 }
 
+/// Returns where the last occurrence of `needle` starts in `haystack`; an empty needle is
+/// found at the end, as with [`str::rfind`].
+///
+/// Scans back a block of starts at a time for the needle's second and second-to-last bytes, a
+/// test the compiler vectorises, and compares whole windows only in a block that has that pair.
 fn rfind(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack
-        .windows(needle.len())
-        .rposition(|window| window == needle)
+    const BLOCK: usize = 32;
+    let n = needle.len();
+    if n == 0 {
+        return Some(haystack.len());
+    }
+    if n < 3 || haystack.len() < n {
+        return haystack.windows(n).rposition(|window| window == needle);
+    }
+    // Not the ends: the keys searched for start and end with `"`, which JSON is full of
+    let (second, penultimate) = (needle[1], needle[n - 2]);
+    // One past the last place a needle can start
+    let mut end = haystack.len() - n + 1;
+    while end > 0 {
+        let start = end.saturating_sub(BLOCK);
+        let seconds = &haystack[start + 1..end + 1];
+        let penultimates = &haystack[start + n - 2..end + n - 2];
+        let pair = seconds
+            .iter()
+            .zip(penultimates)
+            .fold(false, |seen, (&a, &b)| {
+                seen | ((a == second) & (b == penultimate))
+            });
+        if pair {
+            if let Some(at) = (start..end)
+                .rev()
+                .find(|&at| &haystack[at..at + n] == needle)
+            {
+                return Some(at);
+            }
+        }
+        end = start;
+    }
+    None
 }
 
 /// Returns a session's title from its transcript, empty when it has none or cannot be read.
@@ -357,8 +392,8 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::claude::transcript::{
-        find_title, tail, title_of, titled_since, transcript_path_in, turn_end, Titles, TurnEnd,
-        TITLES_FILE,
+        find_title, rfind, tail, title_of, titled_since, transcript_path_in, turn_end, Titles,
+        TurnEnd, TITLES_FILE,
     };
 
     fn set_mtime(path: &Path, secs: u64) {
@@ -385,6 +420,56 @@ mod tests {
     fn transcript_path_replaces_every_non_alphanumeric_char() {
         let path = transcript_path_in(Path::new("/c"), "x", "/a b/c.d_e/ç");
         assert_eq!(path, Path::new("/c/projects/-a-b-c-d-e--/x.jsonl"));
+    }
+
+    /// Where the last `needle` starts in `haystack`, comparing every window.
+    fn naive_rfind(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+        if needle.is_empty() {
+            return Some(haystack.len());
+        }
+        haystack
+            .windows(needle.len())
+            .rposition(|window| window == needle)
+    }
+
+    #[test]
+    fn rfind_finds_an_empty_needle_at_the_end() {
+        assert_eq!(rfind(b"", b""), Some(0));
+        assert_eq!(rfind(b"abc", b""), Some(3));
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn rfind_finds_the_last_occurrence(
+            haystack in "[ab\"]{0,80}",
+            needle in "[ab\"]{1,6}",
+        ) {
+            let (haystack, needle) = (haystack.as_bytes(), needle.as_bytes());
+            proptest::prop_assert_eq!(rfind(haystack, needle), naive_rfind(haystack, needle));
+        }
+
+        #[test]
+        fn rfind_finds_long_needles(
+            haystack in "[ab\"]{0,200}",
+            needle in "[ab\"]{30,40}|a{10,40}|\"[ab]{8,38}\"",
+        ) {
+            let (haystack, needle) = (haystack.as_bytes(), needle.as_bytes());
+            proptest::prop_assert_eq!(rfind(haystack, needle), naive_rfind(haystack, needle));
+        }
+
+        #[test]
+        fn rfind_finds_a_needle_taken_from_the_haystack(
+            haystack in "[ab\"]{1,200}",
+            from in 0usize..200,
+            len in 1usize..60,
+        ) {
+            let haystack = haystack.as_bytes();
+            let from = from % haystack.len();
+            let needle = &haystack[from..(from + len).min(haystack.len())];
+            let found = rfind(haystack, needle);
+            proptest::prop_assert!(found >= Some(from));
+            proptest::prop_assert_eq!(found, naive_rfind(haystack, needle));
+        }
     }
 
     #[test]
