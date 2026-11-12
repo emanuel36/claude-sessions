@@ -7,6 +7,7 @@ use crate::claude::history::HistorySession;
 use crate::claude::transcript::{transcript_path_in, Titles};
 use crate::core::paths;
 use crate::ui::picker::{Folder, Session};
+use crate::ui::search::name;
 
 /// A session worth listing: its id, title, folder and last use.
 #[derive(Debug, Clone)]
@@ -127,14 +128,6 @@ impl Scan {
         }
         self.titles.save();
         found
-    }
-}
-
-/// A folder's name: its last path component, or the whole path when it has none.
-fn name(path: &str) -> String {
-    match path.rsplit('/').next() {
-        Some(last) if !last.is_empty() => last.to_owned(),
-        _ => path.to_owned(),
     }
 }
 
