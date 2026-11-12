@@ -60,6 +60,27 @@ and week's statistics.
 On the landing page: ↑ ↓ move, → / ← show or hide a folder's sessions, Enter starts or resumes,
 / searches, q quits.
 
+### Starting in a folder that is not in the list
+
+The new-session list (Alt+n, and the landing page) begins with two rows. Both open the folders
+on your disk as a tree below the row, starting at your home folder, most recently used first.
+
+| Row | Use it to |
+|---|---|
+| `+ New folder…` | Pick a parent folder, type a name and start a session in the new folder |
+| `Open another folder…` | Find a folder that exists but has no sessions yet, and start in it |
+
+| Keys | Does |
+|---|---|
+| → / ← | Open or close a folder; ← on a closed one goes to the folder holding it |
+| Typing (on the landing page, press / first) | With a row open, searches the folders below the current one, ignoring case; on a history row or a closed row it still filters the history |
+| → or Enter on `+ New folder…` or `Open another folder…` | Opens its tree, starting at your home folder; Enter or ← on the open row closes it |
+| Enter | Under Open another folder, starts in the folder; under New folder, picks it as the parent |
+| Enter on `+ create … and start` | Creates the folder, and any missing parents, and starts there |
+
+Nothing is created and no session starts until you press Enter on a row. Hidden folders,
+`node_modules` and `target` are left out; a search that starts with `.` includes hidden ones.
+
 ## Get started
 
 Needs Linux (x86_64 or arm64), tmux 3.3 or newer and Claude Code. Install with one command:
