@@ -26,6 +26,9 @@ use crate::ui::runtime::{signal, Msg, Runtime, Schedule, Screen, Signal};
 use crate::ui::sidebar::Stats;
 use crate::ui::usage::Reader;
 
+/// The sessions found that the page shows at once.
+const FOUND_SHOWN: usize = 10;
+
 /// Runs the landing page in the tmux pane this process runs in, until its terminal goes away.
 ///
 /// # Errors
@@ -91,7 +94,8 @@ struct Landing {
 impl Landing {
     /// A page that runs tmux commands with `tmux`, its folders listed in `picker`; history and
     /// titles are kept on disk for the next process.
-    fn new(tmux: Box<dyn Runner>, picker: Picker) -> Self {
+    fn new(tmux: Box<dyn Runner>, mut picker: Picker) -> Self {
+        picker.found_shown = FOUND_SHOWN;
         Landing {
             tmux,
             shell: Shell::new("landing", true),
@@ -196,7 +200,7 @@ impl Landing {
             Some((RowKind::Root, _)) => {
                 self.picker.key(picker::Key::Enter);
             }
-            Some((RowKind::Dir, Some(Root::Open)) | (RowKind::Create, _)) => {
+            Some((RowKind::Dir, Some(Root::Open)) | (RowKind::Create | RowKind::Hit, _)) => {
                 if let Some(row) = row {
                     open(self.tmux.as_ref(), &row, &self.picker.folders);
                 }
@@ -245,6 +249,9 @@ impl Landing {
 
     /// Reads the history's folders again.
     fn load_folders(&mut self) {
+        // The cursor is an index: the rows may change under it, so it follows the row instead
+        let identity = |r: &picker::Row| (r.kind, r.path.clone(), r.id.clone());
+        let before = self.picker.selected().map(|r| identity(&r));
         let costs = self.shell.stats.totals.as_ref().map(|t| &t.per_session);
         let generation = self.shell.history.generation();
         self.picker.folders = self.scan.load(
@@ -253,6 +260,15 @@ impl Landing {
             costs.unwrap_or(&Default::default()),
             &self.live,
         );
+        self.picker.sessions = self.scan.searchable(&self.live);
+        if let Some(before) = before {
+            let at = self
+                .picker
+                .shown()
+                .iter()
+                .position(|r| identity(r) == before);
+            self.picker.cursor = at.unwrap_or(self.picker.cursor);
+        }
     }
 
     /// Draws the page; a failed draw keeps the last screen.
@@ -320,6 +336,7 @@ mod tests {
     use crate::ui::pane::{App, LogOnce, Step, Visible};
     use crate::ui::picker::{Folder, Picker, Root, RowKind, Session};
     use crate::ui::runtime::{Msg, Runtime};
+    use crate::ui::search::Searchable;
     use crate::ui::sidebar::Stats;
     use crate::ui::usage::Reader;
 
@@ -432,6 +449,107 @@ mod tests {
         let parent = format!("{home}/projects");
         assert!(page.picker.dirs.contains(&(Root::New, parent)));
         assert_eq!(calls.calls(), Vec::<Vec<String>>::new());
+    }
+
+    /// `n` sessions of the folder `path` about LinkedIn.
+    fn linkedin_sessions(n: u32, path: &str) -> Vec<Searchable> {
+        (0..n)
+            .map(|i| {
+                let (id, title) = (format!("h{i}"), format!("LinkedIn {i}"));
+                let last = NOW - f64::from(i) * 60.0;
+                Searchable::new(id, title, path.into(), last, false, true, &[])
+            })
+            .collect()
+    }
+
+    #[test]
+    fn enter_while_searching_on_a_hit_resumes_at_once() {
+        let (mut page, calls, mut runtime) = page();
+        let t = tempfile::tempdir().unwrap();
+        let dir = t.path().join("deleted").to_string_lossy().into_owned();
+        page.picker.sessions = linkedin_sessions(1, &dir);
+        search(&mut page, &mut runtime, "linkedin");
+        assert_eq!(page.picker.selected().unwrap().kind, RowKind::Hit);
+        press(&mut page, &mut runtime, &[KeyCode::Enter]);
+        assert_eq!(
+            calls.calls(),
+            [["new-window", "-c", dir.as_str(), "claude --resume h0"]]
+        );
+        assert!(t.path().join("deleted").is_dir());
+        assert_eq!((page.picker.query.as_str(), page.searching), ("", false));
+    }
+
+    #[test]
+    fn the_landing_shows_ten_hits() {
+        let (mut page, _, mut runtime) = page();
+        page.picker.sessions = linkedin_sessions(12, "/w/cv");
+        search(&mut page, &mut runtime, "linkedin");
+        let shown = page.picker.shown();
+        assert_eq!(shown.iter().filter(|r| r.kind == RowKind::Hit).count(), 10);
+    }
+
+    #[test]
+    fn a_reload_fills_the_sessions_the_search_looks_in() {
+        let (t, _, mut page, _, _) = home_page();
+        let (config, state) = (t.path().join("config"), t.path().join("state"));
+        std::fs::create_dir_all(&config).unwrap();
+        let project = t.path().join("projects");
+        let line = |at: u64, text: &str| {
+            serde_json::json!({
+                "sessionId": "s9", "project": project, "timestamp": at, "display": text
+            })
+        };
+        let text = format!(
+            "{}\n{}\n",
+            line(1000, "first"),
+            line(2000, "about LinkedIn")
+        );
+        std::fs::write(config.join("history.jsonl"), text).unwrap();
+        page.scan = Scan::in_dir(Titles::new(false), config.clone());
+        page.shell.history = HistoryReader::with_dirs(false, config, state);
+        page.shell.usage = Reader::in_dir(t.path().join("journal"));
+        page.records = Box::new(|_| Vec::new());
+        page.shell.stale.history = true;
+        page.reload(NOW);
+        let hits = crate::ui::search::hits(&page.picker.sessions, "linkedin");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(page.picker.sessions[hits[0].index].id, "s9");
+    }
+
+    #[test]
+    fn a_reload_keeps_the_selected_hit() {
+        let (t, _, mut page, _, mut runtime) = home_page();
+        let (config, state) = (t.path().join("config"), t.path().join("state"));
+        std::fs::create_dir_all(&config).unwrap();
+        let project = t.path().join("projects");
+        page.scan = Scan::in_dir(Titles::new(false), config.clone());
+        page.shell.history = HistoryReader::with_dirs(false, config.clone(), state);
+        page.shell.usage = Reader::in_dir(t.path().join("journal"));
+        page.records = Box::new(|_| Vec::new());
+        let write = |ids: &[(&str, u64)]| {
+            let lines: Vec<String> = ids
+                .iter()
+                .map(|(id, at)| {
+                    serde_json::json!({
+                        "sessionId": id, "project": project, "timestamp": at,
+                        "display": format!("LinkedIn {id}")
+                    })
+                    .to_string()
+                })
+                .collect();
+            std::fs::write(config.join("history.jsonl"), lines.join("\n") + "\n").unwrap();
+        };
+        write(&[("s1", 1000), ("s2", 2000)]);
+        page.shell.stale.history = true;
+        page.reload(NOW);
+        search(&mut page, &mut runtime, "linkedin");
+        while page.picker.selected().map(|r| r.id) != Some("s1".into()) {
+            press(&mut page, &mut runtime, &[KeyCode::Down]);
+        }
+        write(&[("s1", 1000), ("s2", 2000), ("s3", 3000)]);
+        page.shell.stale.history = true;
+        page.reload(NOW);
+        assert_eq!(page.picker.selected().unwrap().id, "s1");
     }
 
     #[test]

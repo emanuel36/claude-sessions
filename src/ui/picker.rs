@@ -457,6 +457,9 @@ impl Picker {
     /// The rows on show: the entries, each followed by its tree when open, then the history: a
     /// typed path, the sessions found and the folders. The cursor is kept on one of them.
     pub fn shown(&mut self) -> Vec<Row> {
+        // Sessions that went away under the same text must not leave the block scrolled past them
+        let last_start = self.found().len().saturating_sub(self.found_shown);
+        self.found_scroll = self.found_scroll.min(last_start);
         let mut out: Vec<Row> = ROOTS.iter().flat_map(|&r| self.root_rows(r)).collect();
         let mut history = rows(
             &self.folders,
@@ -2536,6 +2539,22 @@ mod tests {
         p.key(Key::Up);
         assert_eq!(p.cursor, first);
         assert_eq!(hit_ids(&mut p), ["h0", "h1", "h2", "h3", "h4"]);
+    }
+
+    #[test]
+    fn the_block_survives_hits_shrinking_under_the_same_text() {
+        let mut p = picker(false);
+        let all: Vec<Searchable> = (0..7)
+            .map(|i| searchable(&format!("h{i}"), "linkedin", "/w/cv", f64::from(i), &[]))
+            .collect();
+        p.sessions = all.clone();
+        type_text(&mut p, "linkedin");
+        for _ in 0..6 {
+            p.key(Key::Down);
+        }
+        assert_eq!(hit_ids(&mut p), ["h2", "h3", "h4", "h5", "h6"]);
+        p.sessions = all[..2].to_vec();
+        assert_eq!(hit_ids(&mut p).len(), 2);
     }
 
     #[test]

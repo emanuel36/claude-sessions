@@ -19,6 +19,7 @@ use crate::ui::folders::Scan;
 use crate::ui::pane::{self, open, picker_key, quits, App, LogOnce, Step};
 use crate::ui::picker::{self, Folder, Picker};
 use crate::ui::runtime::{Msg, Runtime, Schedule, Screen};
+use crate::ui::search::Searchable;
 use crate::ui::usage::Reader;
 
 /// Runs the panel in the terminal this process runs in, until the user leaves it.
@@ -32,15 +33,15 @@ pub fn main_panel() -> anyhow::Result<()> {
     let mut app = Panel::new(Box::new(Cli::default()), Picker::default());
     // Reading the history takes a moment on a long one: the search line comes first
     app.update(unix_now(), &mut runtime, &mut screen);
-    app.picker.folders = folders(unix_now());
+    (app.picker.folders, app.picker.sessions) = folders(unix_now());
     app.update(unix_now(), &mut runtime, &mut screen);
     pane::run(&mut app, &mut runtime, &mut screen);
     Ok(())
 }
 
-/// The folders Claude ran in that still exist, last used first; the history and the titles
-/// read are kept on disk for the next panel.
-fn folders(now: f64) -> Vec<Folder> {
+/// The folders Claude ran in that still exist, last used first, and the sessions to search,
+/// none of them open now; the history and the titles read are kept on disk for the next panel.
+fn folders(now: f64) -> (Vec<Folder>, Vec<Searchable>) {
     let mut history = HistoryReader::new(true);
     history.load();
     let generation = history.generation();
@@ -49,7 +50,9 @@ fn folders(now: f64) -> Vec<Folder> {
         .totals(history.sessions(), generation, now)
         .per_session;
     let open: HashSet<String> = hook::live_sessions(now).into_iter().map(|r| r.id).collect();
-    Scan::new(Titles::new(true)).load(history.sessions(), generation, costs, &open)
+    let mut scan = Scan::new(Titles::new(true));
+    let folders = scan.load(history.sessions(), generation, costs, &open);
+    (folders, scan.searchable(&open))
 }
 
 /// The panel: the folder list, and the server it opens windows in.
