@@ -14,6 +14,7 @@ use serde::Deserialize;
 use crate::core::paths;
 use crate::shell;
 use crate::ui::line::{cell_len, cells, ljust, plain, push, rjust, styled, truncate, width_of};
+use crate::ui::search::{self, Hit, Searchable};
 use crate::ui::tree::{self, Disk};
 use crate::ui::words::{
     self, CLAUDE, FAINT, GREEN, INACTIVE, INK, PERMISSION, RULE, SOFT, STRONG, SUBTLE,
@@ -100,10 +101,12 @@ pub enum RowKind {
     Dir,
     /// A folder to create, then start a session in.
     Create,
+    /// A session of any folder that the typed text found.
+    Hit,
 }
 
-/// A line of the list: an entry to the disk, a disk folder, a typed path, a folder, or one of a
-/// folder's sessions.
+/// A line of the list: an entry to the disk, a disk folder, a typed path, a folder, one of a
+/// folder's sessions, or a session found by the search.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Row {
     /// What the row is.
@@ -112,9 +115,11 @@ pub struct Row {
     pub path: String,
     /// The folder's index in the folders, for folder and session rows.
     pub folder: Option<usize>,
-    /// The session's index in its folder's sessions, for session rows.
+    /// The session's index in its folder's sessions, for session rows; in the sessions searched,
+    /// for hits.
     pub session: Option<usize>,
-    /// Whether a session is the last of its folder on show, drawn with the closing branch.
+    /// Whether a session is the last of its folder on show, drawn with the closing branch; for a
+    /// hit, whether it is the last on show with more found below.
     pub end: bool,
     /// For entry and disk rows: the entry they belong to.
     pub root: Option<Root>,
@@ -125,6 +130,8 @@ pub struct Row {
     pub label: String,
     /// The byte offsets in `label` of the characters a search matched.
     pub hits: Vec<usize>,
+    /// For a hit: the session id.
+    pub id: String,
 }
 
 /// A key the list takes.
@@ -171,6 +178,12 @@ pub struct Picker {
     pub dirs: BTreeSet<(Root, String)>,
     /// While typing in a tree: the entry and the folder searched below.
     pub anchor: Option<(Root, String)>,
+    /// The sessions of every folder that the typed text searches.
+    pub sessions: Vec<Searchable>,
+    /// How many of the sessions found show at once; the rest scroll into view.
+    pub found_shown: usize,
+    /// How many of the sessions found are scrolled past.
+    found_scroll: usize,
     /// Where the cursor was when the first character was typed in a tree, to go back to once
     /// the text is cleared.
     typed_at: usize,
@@ -203,6 +216,9 @@ impl Picker {
             open: BTreeSet::new(),
             dirs: BTreeSet::new(),
             anchor: None,
+            sessions: Vec::new(),
+            found_shown: SHOWN,
+            found_scroll: 0,
             typed_at: 0,
             recent: RefCell::default(),
         }
@@ -407,17 +423,55 @@ impl Picker {
         }
     }
 
-    /// The rows on show: the entries, each followed by its tree when open, then the history.
-    /// The cursor is kept on one of them.
+    /// The sessions the typed text finds, ranked; none while the text is typed in a tree.
+    pub fn found(&self) -> Vec<Hit> {
+        if self.anchor.is_some() {
+            return Vec::new();
+        }
+        search::hits(&self.sessions, &self.query)
+    }
+
+    /// The rows of the sessions found that are on show.
+    fn hit_rows(&self) -> Vec<Row> {
+        let found = self.found();
+        let count = found.len();
+        let start = self.found_scroll.min(count);
+        let stop = (start + self.found_shown).min(count);
+        found[start..stop]
+            .iter()
+            .enumerate()
+            .filter_map(|(i, hit)| {
+                let session = self.sessions.get(hit.index)?;
+                Some(Row {
+                    kind: RowKind::Hit,
+                    path: session.path.clone(),
+                    session: Some(hit.index),
+                    end: start + i + 1 == stop && stop < count,
+                    id: session.id.clone(),
+                    ..Row::default()
+                })
+            })
+            .collect()
+    }
+
+    /// The rows on show: the entries, each followed by its tree when open, then the history: a
+    /// typed path, the sessions found and the folders. The cursor is kept on one of them.
     pub fn shown(&mut self) -> Vec<Row> {
+        // Sessions that went away under the same text must not leave the block scrolled past them
+        let last_start = self.found().len().saturating_sub(self.found_shown);
+        self.found_scroll = self.found_scroll.min(last_start);
         let mut out: Vec<Row> = ROOTS.iter().flat_map(|&r| self.root_rows(r)).collect();
-        out.extend(rows(
+        let mut history = rows(
             &self.folders,
             &self.query,
             &self.expanded,
             self.is_dir.as_ref(),
             &self.scroll,
-        ));
+        );
+        // The sessions found go after a typed path, before the folders
+        let at = usize::from(history.first().is_some_and(|r| r.kind == RowKind::Path));
+        history.splice(at..at, self.hit_rows());
+        out.extend(history);
         self.cursor = self.cursor.min(out.len().saturating_sub(1));
         out
     }
@@ -528,6 +582,7 @@ impl Picker {
     /// The first character decides what the text searches, from the row under the cursor
     /// ([`Picker::anchor_of`]); clearing the text returns to the tree as it was.
     fn typed(&mut self, key: Key, row: Option<&Row>) {
+        self.found_scroll = 0;
         if let Key::Char(c) = key {
             if self.query.is_empty() {
                 self.anchor = row.and_then(|r| self.anchor_of(r));
@@ -546,7 +601,7 @@ impl Picker {
 
     /// The cursor after a key typed into the search: on the typed path's row when listed, else
     /// as [`Picker::tree_cursor`] puts it in a searched tree; with no tree searched, on the first
-    /// history row.
+    /// folder, else the first session found, else the first history row.
     fn after_typing(&mut self) {
         let shown = self.shown();
         // A typed path that exists is what the text names, wherever it was typed
@@ -554,7 +609,10 @@ impl Picker {
             .iter()
             .position(|r| r.kind == RowKind::Path)
             .or_else(|| match self.anchor.as_ref().map(|(root, _)| *root) {
-                None => shown.iter().position(|r| r.root.is_none()),
+                None => [RowKind::Folder, RowKind::Hit]
+                    .iter()
+                    .find_map(|&kind| shown.iter().position(|r| r.kind == kind))
+                    .or_else(|| shown.iter().position(|r| r.root.is_none())),
                 Some(root) => self.tree_cursor(root, &shown),
             });
         if let Some(i) = at {
@@ -588,6 +646,7 @@ impl Picker {
     /// Leaves the search: the text and what it searched below are cleared.
     pub fn end_search(&mut self) {
         self.query.clear();
+        self.found_scroll = 0;
         self.anchor = None;
     }
 
@@ -596,10 +655,14 @@ impl Picker {
         self.select(|r| r.kind == RowKind::Dir && r.root == Some(root) && r.path == path);
     }
 
-    /// Scrolls a folder's sessions when the cursor would leave them with more that way.
+    /// Scrolls a folder's sessions, or the sessions found, when the cursor would leave them with
+    /// more that way.
     ///
     /// Returns whether it scrolled, in which case the cursor stays on its line.
     fn scrolls(&mut self, row: Option<&Row>, key: Key) -> bool {
+        if let Some(row) = row.filter(|r| r.kind == RowKind::Hit) {
+            return self.scrolls_found(row, key);
+        }
         let Some(row) = row.filter(|r| r.kind == RowKind::Session) else {
             return false;
         };
@@ -614,6 +677,20 @@ impl Picker {
         }
         if key == Key::Up && start > 0 && session == start {
             self.scroll.insert(row.path.clone(), start - 1);
+            return true;
+        }
+        false
+    }
+
+    /// Scrolls the sessions found from `row`, one of them, as [`Picker::scrolls`] does.
+    fn scrolls_found(&mut self, row: &Row, key: Key) -> bool {
+        if key == Key::Down && row.end {
+            self.found_scroll += 1;
+            return true;
+        }
+        let first = self.found().get(self.found_scroll).map(|hit| hit.index);
+        if key == Key::Up && self.found_scroll > 0 && row.session == first {
+            self.found_scroll -= 1;
             return true;
         }
         false
@@ -753,6 +830,51 @@ fn session_line(row: &Row, folders: &[Folder], now: f64, width: usize) -> Line<'
     line
 }
 
+/// A session found by the search: its title, its folder's name in grey, `(deleted)` when the
+/// folder is gone, then how often the words occur and its age. The last on show, with more
+/// found below, starts with the mark that more lie below.
+///
+/// # Arguments
+/// * `row`: the hit's row.
+/// * `sessions`: the sessions searched, which `row.session` points into.
+/// * `count`: how often the typed words occur in the session.
+/// * `now`: current time as a Unix timestamp.
+/// * `width`: columns available.
+fn hit_line(
+    row: &Row,
+    sessions: &[Searchable],
+    count: usize,
+    now: f64,
+    width: usize,
+) -> Line<'static> {
+    let Some(session) = row.session.and_then(|s| sessions.get(s)) else {
+        return Line::default();
+    };
+    let lead = if row.end {
+        format!("{MORE}  ")
+    } else {
+        "   ".to_owned()
+    };
+    let deleted = if session.gone { " (deleted)" } else { "" };
+    let tail = format!(
+        "{count}×  {}",
+        ljust(&words::age(session.last, now), AGE_WIDTH)
+    );
+    // The lead, the two spaces after the title and one before the tail
+    let room = width.saturating_sub(3 + 2 + 1 + width_of(&tail));
+    let name = words::fit(&session.name, room / 3);
+    let title = words::fit(
+        &session.title,
+        room.saturating_sub(width_of(&name) + width_of(deleted)),
+    );
+    let mut line = styled(&[(&lead, FAINT), (&title, INK), ("  ", INK)]);
+    push(&mut line, format!("{name}{deleted}"), INACTIVE);
+    let gap = width.saturating_sub(cell_len(&line) + width_of(&tail));
+    push(&mut line, " ".repeat(gap), INK);
+    push(&mut line, tail, SOFT);
+    line
+}
+
 /// Cuts a line longer than `width` with a grey ellipsis.
 fn cut(mut line: Line<'static>, width: usize) -> Line<'static> {
     if cell_len(&line) > width {
@@ -824,22 +946,37 @@ fn create_line(row: &Row, width: usize) -> Line<'static> {
     cut(styled(&[("   + ", GREEN), (&text, INK)]), width)
 }
 
-/// Every row's lines, with a rule under the entries and between folders, and the row each line
-/// belongs to. With `nothing` set, a last line says nothing matches.
+/// Every row's lines, with a rule under the entries and between folders, a header over the
+/// sessions found, and the row each line belongs to. With `nothing` set, a last line says
+/// nothing matches.
+///
+/// # Arguments
+/// * `shown`: the rows from [`Picker::shown`].
+/// * `picker`: the list: its folders, open folders and the sessions searched.
+/// * `found`: the sessions found, from [`Picker::found`].
+/// * `nothing`: whether to say nothing matches.
+/// * `now`: current time as a Unix timestamp.
+/// * `width`: columns available.
 fn row_lines(
     shown: &[Row],
-    folders: &[Folder],
-    expanded: &BTreeSet<String>,
+    picker: &Picker,
+    found: &[Hit],
     nothing: bool,
     now: f64,
     width: usize,
 ) -> (Vec<Line<'static>>, Vec<Option<usize>>) {
+    let folders = &picker.folders;
     let mut lines = Vec::new();
     let mut owners = Vec::new();
     for (i, row) in shown.iter().enumerate() {
         let after_entries = i > 0 && shown[i - 1].root.is_some() && row.root.is_none();
         if !lines.is_empty() && (row.kind == RowKind::Folder || after_entries) {
             lines.push(rule(width));
+            owners.push(None);
+        }
+        if row.kind == RowKind::Hit && (i == 0 || shown[i - 1].kind != RowKind::Hit) {
+            let count = format!("  {} found", found.len());
+            lines.push(styled(&[("   Sessions", STRONG), (&count, INACTIVE)]));
             owners.push(None);
         }
         let drawn: Vec<Line<'static>> = match row.kind {
@@ -851,8 +988,13 @@ fn row_lines(
             RowKind::Dir => vec![dir_line(row, width)],
             RowKind::Create => vec![create_line(row, width)],
             RowKind::Session => vec![session_line(row, folders, now, width)],
+            RowKind::Hit => {
+                let hit = found.iter().find(|h| Some(h.index) == row.session);
+                let count = hit.map_or(0, |h| h.count);
+                vec![hit_line(row, &picker.sessions, count, now, width)]
+            }
             RowKind::Folder => match row.folder.and_then(|f| folders.get(f)) {
-                Some(folder) => folder_lines(folder, expanded, now, width).into(),
+                Some(folder) => folder_lines(folder, &picker.expanded, now, width).into(),
                 None => Vec::new(),
             },
         };
@@ -906,8 +1048,8 @@ pub fn list_lines(
     // The gutter takes a column of the width
     let (lines, owners) = row_lines(
         shown,
-        &picker.folders,
-        &picker.expanded,
+        picker,
+        &picker.found(),
         typed && !found,
         now,
         width.saturating_sub(1),
@@ -1069,7 +1211,7 @@ pub fn hints(row: Option<&Row>, picker: &Picker) -> Vec<(&'static str, &'static 
                 vec![("Enter", "new session"), ("←", "close")]
             }
             (RowKind::Folder, _) => vec![("Enter", "new session"), ("→", "sessions")],
-            (RowKind::Session, _) => vec![("Enter", "resume")],
+            (RowKind::Session | RowKind::Hit, _) => vec![("Enter", "resume")],
             (RowKind::Path, _) => vec![("Enter", "start here")],
         },
         None => Vec::new(),
@@ -1154,18 +1296,23 @@ fn tilde(path: &str, home: &str) -> String {
 
 /// The tmux `new-window` arguments that open a row: resume its session, or start one.
 pub fn command(row: &Row, folders: &[Folder]) -> Vec<String> {
-    let session = row
-        .folder
-        .and_then(|f| folders.get(f))
-        .zip(row.session)
-        .and_then(|(folder, s)| folder.sessions.get(s));
-    match session {
-        Some(session) if row.kind == RowKind::Session => vec![
+    let id = match row.kind {
+        RowKind::Hit => Some(row.id.as_str()),
+        RowKind::Session => row
+            .folder
+            .and_then(|f| folders.get(f))
+            .zip(row.session)
+            .and_then(|(folder, s)| folder.sessions.get(s))
+            .map(|session| session.id.as_str()),
+        _ => None,
+    };
+    match id {
+        Some(id) => vec![
             "-c".to_owned(),
             row.path.clone(),
-            format!("claude --resume {}", shell::quote(&session.id)),
+            format!("claude --resume {}", shell::quote(id)),
         ],
-        _ => vec!["-c".to_owned(), expand_user(&row.path), "claude".to_owned()],
+        None => vec!["-c".to_owned(), expand_user(&row.path), "claude".to_owned()],
     }
 }
 
@@ -1180,9 +1327,11 @@ mod tests {
 
     use crate::ui::line::{cell_len, cells};
     use crate::ui::picker::{
-        command, dir_line, hints, hints_line, keys_line, list_lines, placeholder, rows, screen,
-        search_box, session_line, tilde, Folder, Key, Picker, Root, Row, RowKind, Session, WIDTH,
+        command, dir_line, hints, hints_line, hit_line, keys_line, list_lines, placeholder, rows,
+        screen, search_box, session_line, tilde, Folder, Key, Picker, Root, Row, RowKind, Session,
+        WIDTH,
     };
+    use crate::ui::search::Searchable;
     use crate::ui::words::{CLAUDE, GREEN, INACTIVE, INK, PERMISSION, SOFT, SUBTLE};
 
     const NOW: f64 = 1_700_000_000.0;
@@ -2239,5 +2388,208 @@ mod tests {
             " ↑↓ move · Enter new / resume · Esc"
         );
         assert_eq!(plain(&keys_line(&keys, 12)), " ↑↓ move · …");
+    }
+
+    /// A session of `path` to search, its title its own, used `ago` seconds before `NOW`.
+    fn searchable(id: &str, title: &str, path: &str, ago: f64, prompts: &[&str]) -> Searchable {
+        let prompts: Vec<String> = prompts.iter().map(|p| (*p).to_owned()).collect();
+        let (id, title, path) = (id.to_owned(), title.to_owned(), path.to_owned());
+        Searchable::new(id, title, path, NOW - ago, false, true, &prompts)
+    }
+
+    /// The test picker, searching two LinkedIn sessions of `/w/cv` and one about something else.
+    fn linkedin_picker() -> Picker {
+        let mut p = picker(false);
+        p.sessions = vec![
+            searchable("b", "Banner options", "/w/cv", 60.0, &["a linkedin banner"]),
+            searchable("x", "Unrelated", "/w/cv", 30.0, &["nothing here"]),
+            searchable("a", "Post on LinkedIn", "/w/cv", 7200.0, &["write it"]),
+        ];
+        p
+    }
+
+    /// The ids of the hit rows on show.
+    fn hit_ids(p: &mut Picker) -> Vec<String> {
+        p.shown()
+            .into_iter()
+            .filter(|r| r.kind == RowKind::Hit)
+            .map(|r| r.id)
+            .collect()
+    }
+
+    #[test]
+    fn typed_text_lists_the_sessions_found_under_a_header() {
+        let mut p = linkedin_picker();
+        type_text(&mut p, "linkedin");
+        let shown = p.shown();
+        let text: Vec<String> = list_lines(&p, &shown, NOW, 40, WIDTH)
+            .iter()
+            .map(plain)
+            .collect();
+        let header = text.iter().position(|t| t.contains("Sessions  2 found"));
+        let header = header.unwrap_or_else(|| panic!("{text:?}"));
+        // The title holding the word first, though older
+        assert!(text[header + 1].contains("Post on LinkedIn"), "{text:?}");
+        assert!(text[header + 2].contains("Banner options"), "{text:?}");
+        for line in &text[header + 1..=header + 2] {
+            assert!(line.contains("  cv") && line.contains("1×"), "{line}");
+        }
+        let selected = p.selected().unwrap();
+        assert_eq!((selected.kind, selected.id.as_str()), (RowKind::Hit, "a"));
+    }
+
+    #[test]
+    fn a_folder_matching_by_path_keeps_the_cursor() {
+        let mut p = picker(false);
+        p.folders.push(Folder {
+            path: "/w/vtp".into(),
+            name: "vtp".into(),
+            last: NOW - 9000.0,
+            count: 1,
+            spend: 0.0,
+            sessions: Vec::new(),
+        });
+        p.sessions = vec![searchable(
+            "s",
+            "Build",
+            "/w/api",
+            60.0,
+            &["fix the vtp build"],
+        )];
+        type_text(&mut p, "vtp");
+        assert_eq!(hit_ids(&mut p), ["s"]);
+        let selected = p.selected().unwrap();
+        assert_eq!(
+            (selected.kind, selected.path.as_str()),
+            (RowKind::Folder, "/w/vtp")
+        );
+        let opened = p.key(Key::Enter).unwrap();
+        assert_eq!(
+            (opened.kind, opened.path.as_str()),
+            (RowKind::Folder, "/w/vtp")
+        );
+    }
+
+    /// The row of the first session of `sessions`, as a hit.
+    fn hit_row(sessions: &[Searchable]) -> Row {
+        Row {
+            kind: RowKind::Hit,
+            path: sessions[0].path.clone(),
+            session: Some(0),
+            id: sessions[0].id.clone(),
+            ..Row::default()
+        }
+    }
+
+    #[test]
+    fn a_deleted_folder_reads_deleted() {
+        let mut sessions = vec![searchable("a", "Banner", "/w/cv", 60.0, &[])];
+        sessions[0].gone = true;
+        let line = plain(&hit_line(&hit_row(&sessions), &sessions, 2, NOW, WIDTH));
+        assert!(line.contains("cv (deleted)"), "{line}");
+    }
+
+    #[test]
+    fn a_hit_line_fits_the_narrow_panel() {
+        let title = "A very long title about posting on LinkedIn in English, with more words";
+        let path = "/w/a-folder-with-a-really-long-name-indeed";
+        let sessions = vec![searchable("a", title, path, 7200.0, &[])];
+        let line = hit_line(&hit_row(&sessions), &sessions, 12, NOW, WIDTH);
+        assert!(cell_len(&line) <= WIDTH, "{}", plain(&line));
+        let text = plain(&line);
+        assert!(text.ends_with("12×  2h"), "{text}");
+        assert!(text.starts_with("   A very"), "{text}");
+        assert!(text.contains("  a-folder"), "{text}");
+    }
+
+    #[test]
+    fn the_block_shows_found_shown_hits_and_scrolls() {
+        let mut p = picker(false);
+        p.sessions = (0..7)
+            .map(|i| {
+                searchable(
+                    &format!("h{i}"),
+                    "linkedin",
+                    "/w/cv",
+                    f64::from(i) * 60.0,
+                    &[],
+                )
+            })
+            .collect();
+        assert_eq!(p.found_shown, 5);
+        type_text(&mut p, "linkedin");
+        assert_eq!(hit_ids(&mut p), ["h0", "h1", "h2", "h3", "h4"]);
+        let first = p.cursor;
+        for _ in 0..4 {
+            p.key(Key::Down);
+        }
+        assert_eq!(p.selected().unwrap().id, "h4");
+        // More below: the cursor stays on the last line and the block scrolls
+        p.key(Key::Down);
+        assert_eq!(p.cursor, first + 4);
+        assert_eq!(hit_ids(&mut p), ["h1", "h2", "h3", "h4", "h5"]);
+        assert_eq!(p.selected().unwrap().id, "h5");
+        for _ in 0..4 {
+            p.key(Key::Up);
+        }
+        assert_eq!(
+            (p.cursor, p.selected().unwrap().id),
+            (first, "h1".to_owned())
+        );
+        p.key(Key::Up);
+        assert_eq!(p.cursor, first);
+        assert_eq!(hit_ids(&mut p), ["h0", "h1", "h2", "h3", "h4"]);
+    }
+
+    #[test]
+    fn the_block_survives_hits_shrinking_under_the_same_text() {
+        let mut p = picker(false);
+        let all: Vec<Searchable> = (0..7)
+            .map(|i| searchable(&format!("h{i}"), "linkedin", "/w/cv", f64::from(i), &[]))
+            .collect();
+        p.sessions = all.clone();
+        type_text(&mut p, "linkedin");
+        for _ in 0..6 {
+            p.key(Key::Down);
+        }
+        assert_eq!(hit_ids(&mut p), ["h2", "h3", "h4", "h5", "h6"]);
+        p.sessions = all[..2].to_vec();
+        assert_eq!(hit_ids(&mut p).len(), 2);
+    }
+
+    #[test]
+    fn clearing_the_text_drops_the_block() {
+        let mut p = linkedin_picker();
+        p.found_shown = 1;
+        type_text(&mut p, "linkedin");
+        p.key(Key::Down);
+        assert_eq!(hit_ids(&mut p), ["b"]);
+        for _ in 0.."linkedin".len() {
+            p.key(Key::Backspace);
+        }
+        assert!(hit_ids(&mut p).is_empty());
+        assert_eq!(p.found_scroll, 0);
+        assert!(p.selected().is_some());
+    }
+
+    #[test]
+    fn text_typed_in_a_tree_finds_no_sessions() {
+        let (_t, mut p, _) = home_picker();
+        p.sessions = linkedin_picker().sessions;
+        p.key(Key::Down);
+        p.key(Key::Right);
+        type_text(&mut p, "linkedin");
+        assert!(p.anchor.is_some());
+        assert!(p.found().is_empty());
+        assert!(hit_ids(&mut p).is_empty());
+    }
+
+    #[test]
+    fn enter_on_a_hit_resumes_it_in_its_folder() {
+        let sessions = vec![searchable("id", "Banner", "/p", 60.0, &[])];
+        assert_eq!(
+            command(&hit_row(&sessions), &folders()),
+            ["-c", "/p", "claude --resume id"]
+        );
     }
 }

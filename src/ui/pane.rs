@@ -326,8 +326,9 @@ pub fn picker_key(key: &KeyEvent) -> Option<picker::Key> {
 
 /// Runs `new-window` for a row of the folder list: resume its session, or start one.
 ///
-/// A create row's folder, and any missing parent, is created first; when that fails, the
-/// failure goes to the error log and nothing starts.
+/// A create row's folder, and any missing parent, is created first, as is the folder of a
+/// session found that was deleted; when that fails, the failure goes to the error log and
+/// nothing starts.
 pub fn open(tmux: &dyn Runner, row: &picker::Row, folders: &[picker::Folder]) {
     open_with(tmux, row, folders, &paths::process_env);
 }
@@ -339,7 +340,7 @@ fn open_with(
     folders: &[picker::Folder],
     env: paths::Lookup<'_>,
 ) {
-    if row.kind == picker::RowKind::Create {
+    if matches!(row.kind, picker::RowKind::Create | picker::RowKind::Hit) {
         if let Err(e) = std::fs::create_dir_all(&row.path) {
             paths::log_error_with(env, &format_args!("cannot create {}: {e}", row.path));
             return;
@@ -556,6 +557,48 @@ mod tests {
         let env = |key: &str| (key == "CST_STATE_DIR").then(|| state.clone().into_os_string());
         let tmux = FakeTmux::silent();
         open_with(&tmux, &create_row(&path), &[], &env);
+        assert!(tmux.calls().is_empty());
+        let log = std::fs::read_to_string(state.join(ERROR_LOG)).unwrap();
+        assert!(log.contains(&*path.to_string_lossy()), "{log}");
+    }
+
+    #[test]
+    fn a_hit_in_a_deleted_folder_creates_it_and_resumes() {
+        let t = tempfile::tempdir().unwrap();
+        let path = t.path().join("gone/Projeto");
+        let row = Row {
+            kind: RowKind::Hit,
+            id: "id".into(),
+            path: path.to_string_lossy().into_owned(),
+            ..Row::default()
+        };
+        let tmux = FakeTmux::silent();
+        open(&tmux, &row, &[]);
+        assert!(path.is_dir());
+        let want = [
+            "new-window",
+            "-c",
+            &path.to_string_lossy(),
+            "claude --resume id",
+        ];
+        assert_eq!(tmux.calls(), [want.map(str::to_owned).to_vec()]);
+    }
+
+    #[test]
+    fn a_hit_logs_and_starts_nothing_when_its_folder_cannot_be_made() {
+        let t = tempfile::tempdir().unwrap();
+        let path = t.path().join("x");
+        std::fs::write(&path, "").unwrap();
+        let state = t.path().join("state");
+        let env = |key: &str| (key == "CST_STATE_DIR").then(|| state.clone().into_os_string());
+        let row = Row {
+            kind: RowKind::Hit,
+            id: "id".into(),
+            path: path.to_string_lossy().into_owned(),
+            ..Row::default()
+        };
+        let tmux = FakeTmux::silent();
+        open_with(&tmux, &row, &[], &env);
         assert!(tmux.calls().is_empty());
         let log = std::fs::read_to_string(state.join(ERROR_LOG)).unwrap();
         assert!(log.contains(&*path.to_string_lossy()), "{log}");

@@ -35,6 +35,8 @@ pub struct HistorySession {
     pub last: f64,
     /// Its first prompt that is not a command, cut to [`PROMPT_CHARS`] characters.
     pub first_prompt: String,
+    /// Every prompt typed in it, commands left out, whole and in the order typed.
+    pub prompts: Vec<String>,
 }
 
 /// The sessions found so far, in the order they first appeared.
@@ -80,6 +82,7 @@ impl Sessions {
                     cwd: project.to_owned(),
                     last: 0.0,
                     first_prompt: String::new(),
+                    prompts: Vec::new(),
                 });
                 self.index.insert(id.to_owned(), self.list.len() - 1);
                 self.list.len() - 1
@@ -95,8 +98,15 @@ impl Sessions {
         project.clone_into(&mut session.cwd);
         let prompt = entry.get("display").and_then(Value::as_str).unwrap_or("");
         // A command such as /resume says nothing about the session
-        if session.first_prompt.is_empty() && !prompt.starts_with('/') {
+        if prompt.is_empty() || prompt.starts_with('/') {
+            return;
+        }
+        if session.first_prompt.is_empty() {
             session.first_prompt = prompt.chars().take(PROMPT_CHARS).collect();
+        }
+        let typed = without_placeholders(prompt);
+        if !typed.trim().is_empty() {
+            session.prompts.push(typed);
         }
     }
 
@@ -106,6 +116,53 @@ impl Sessions {
         sorted.sort_by(|a, b| b.last.total_cmp(&a.last));
         sorted
     }
+}
+
+/// `prompt` without Claude Code's paste placeholders: `[Pasted text #1]`,
+/// `[Pasted text #1 +20 lines]` and `[Image #1]`.
+fn without_placeholders(prompt: &str) -> String {
+    let mut out = String::with_capacity(prompt.len());
+    let mut rest = prompt;
+    while let Some(at) = rest.find('[') {
+        out.push_str(&rest[..at]);
+        rest = &rest[at..];
+        match placeholder_len(rest) {
+            Some(len) => rest = &rest[len..],
+            None => {
+                out.push('[');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The length of the placeholder `text` starts with, if it does.
+fn placeholder_len(text: &str) -> Option<usize> {
+    let digits = |s: &str| s.bytes().take_while(u8::is_ascii_digit).count();
+    let body = text.strip_prefix('[')?;
+    let (kind, after) = match body.strip_prefix("Pasted text #") {
+        Some(after) => (true, after),
+        None => (false, body.strip_prefix("Image #")?),
+    };
+    let len = digits(after);
+    if len == 0 {
+        return None;
+    }
+    let mut tail = &after[len..];
+    if kind {
+        if let Some(lines) = tail.strip_prefix(" +") {
+            let n = digits(lines);
+            let end = lines[n..].strip_prefix(" lines")?;
+            if n == 0 {
+                return None;
+            }
+            tail = end;
+        }
+    }
+    tail.strip_prefix(']')?;
+    Some(text.len() - tail.len() + 1)
 }
 
 /// Groups history lines by session, most recent first.
@@ -433,6 +490,62 @@ mod tests {
         let line = entry("a", "/w/api", 10, &"é".repeat(1000));
         let sessions = read_history(&[&line]);
         assert_eq!(sessions[0].first_prompt.chars().count(), PROMPT_CHARS);
+    }
+
+    #[test]
+    fn every_prompt_but_commands_is_kept_whole() {
+        let long = "x".repeat(PROMPT_CHARS + 50);
+        let lines = [
+            entry("s1", "/p", 1, "/resume"),
+            entry("s1", "/p", 2, "first"),
+            entry("s1", "/p", 3, &long),
+        ];
+        let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
+        let sessions = read_history(&lines);
+        assert_eq!(sessions[0].prompts, vec!["first".to_owned(), long]);
+    }
+
+    #[test]
+    fn paste_placeholders_are_not_kept_in_the_prompts() {
+        let lines = [
+            entry("s1", "/p", 1, "[Pasted text #1 +20 lines]"),
+            entry("s1", "/p", 2, "see [Image #2] and [Pasted text #3] now"),
+            entry("s1", "/p", 3, "[Pasted text #4 +5 lines][Image #5]"),
+            entry(
+                "s1",
+                "/p",
+                4,
+                "keep [Pasted text] [Image #x] [Pasted text #1 +x lines]",
+            ),
+        ];
+        let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
+        let sessions = read_history(&lines);
+        // The first prompt is as typed
+        assert_eq!(sessions[0].first_prompt, "[Pasted text #1 +20 lines]");
+        assert_eq!(
+            sessions[0].prompts,
+            [
+                "see  and  now",
+                "keep [Pasted text] [Image #x] [Pasted text #1 +x lines]"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_stored_reading_without_prompts_is_read_again() {
+        let env = Env::new();
+        env.write(&[entry("a", "/w/api", 10, "first")]);
+        env.reader(true).load();
+        // The reading as an older version kept it: sessions without `prompts`
+        let path = env.state().join(STORED_HISTORY);
+        let mut stored: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        for session in stored["sessions"].as_array_mut().unwrap() {
+            session.as_object_mut().unwrap().remove("prompts");
+        }
+        fs::write(&path, stored.to_string()).unwrap();
+        let mut reader = env.reader(false);
+        assert_eq!(reader.load()[0].prompts, ["first"]);
     }
 
     #[test]

@@ -9,6 +9,7 @@ pub mod pane;
 pub mod panel_app;
 pub mod picker;
 pub mod runtime;
+pub mod search;
 pub mod sidebar;
 pub mod sidebar_app;
 pub mod tree;
