@@ -24,6 +24,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::{Frame, Terminal};
 
 use crate::core::state::unix_now;
+use crate::ui::words::age_period;
 
 /// One thing the pane's loop wakes up for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -358,6 +359,9 @@ pub struct Schedule {
     pub animating: bool,
     /// Start times (Unix) of labels that change every minute after them.
     pub labels: Vec<f64>,
+    /// Times (Unix) shown as an age ([`crate::ui::words::age`]): minutes, then hours, days
+    /// and weeks, so most change far less often than every minute.
+    pub ages: Vec<f64>,
     /// One-shot deadlines (Unix), such as the end of a session's quiet grace.
     pub quiet: Vec<f64>,
     /// When the pane last drew (Unix).
@@ -370,9 +374,9 @@ impl Schedule {
     /// The next time (Unix) the pane must wake up, or `None` to sleep until an event.
     ///
     /// A hidden pane never wakes. A visible one wakes at the earliest of: the next 1/8 s
-    /// boundary while animating; the next whole minute after each label's start; each quiet
-    /// deadline still ahead; and 100 ms after the last draw when dirty (which may already be
-    /// past, meaning at once).
+    /// boundary while animating; the next whole minute after each label's start; the next
+    /// time each age's text can change; each quiet deadline still ahead; and 100 ms after the
+    /// last draw when dirty (which may already be past, meaning at once).
     pub fn next_wake(&self, now: f64) -> Option<f64> {
         if !self.visible {
             return None;
@@ -384,11 +388,16 @@ impl Schedule {
             .labels
             .iter()
             .map(|&since| next_boundary(since, LABEL_PERIOD, now));
+        let ages = self
+            .ages
+            .iter()
+            .map(|&since| next_boundary(since, age_period(now - since), now));
         let quiet = self.quiet.iter().copied().filter(|&at| at > now);
         let redraw = self.dirty.then_some(self.last_draw + REDRAW_GAP);
         frame
             .into_iter()
             .chain(labels)
+            .chain(ages)
             .chain(quiet)
             .chain(redraw)
             .reduce(f64::min)
@@ -529,6 +538,7 @@ mod tests {
             visible: false,
             animating: true,
             labels: vec![10.0],
+            ages: vec![10.0],
             quiet: vec![1003.0],
             last_draw: 999.0,
             dirty: true,
@@ -570,6 +580,22 @@ mod tests {
             ..visible()
         };
         assert_eq!(schedule.next_wake(1000.0), Some(1030.0));
+    }
+
+    #[test]
+    fn age_wakes_when_its_text_can_change() {
+        // 30 s, 2 h and 5 days old: the first changes within the minute
+        let schedule = Schedule {
+            ages: vec![970.0, 1000.0 - 7200.5, 1000.0 - 5.0 * 86400.0 - 10.0],
+            ..visible()
+        };
+        assert_eq!(schedule.next_wake(1000.0), Some(1030.0));
+        // Hours old: the next whole hour of its age, not of the minute
+        let old = Schedule {
+            ages: vec![1000.0 - 7200.5],
+            ..visible()
+        };
+        assert_eq!(old.next_wake(1000.0), Some(1000.0 - 7200.5 + 3.0 * 3600.0));
     }
 
     #[test]
