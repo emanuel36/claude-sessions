@@ -2,138 +2,107 @@
 
 **See at a glance which Claude Code session is waiting for you.**
 
-claude-sessions is a small tool, built on open-source software, for running several Claude Code
-sessions side by side. Its goal is to cut development latency: the time a session sits idle
-waiting for a person to approve a tool, answer a question or read a finished turn. It is one
-program, `cst`, with nothing else to install.
+`cst` runs several Claude Code sessions side by side in tmux, one window per session, with a
+sidebar that lists them all and a landing page to start or resume any of them.
 
 <p align="center">
   <img src="docs/images/sidebar.svg" alt="A session with the sidebar on its left">
 </p>
 
-- **Status at a glance:** every session shows whether it needs approval, has a question, has
-  finished, is working or is idle, and how long it has waited.
-- **Most urgent first:** sessions that need you sit at the top of the sidebar; Alt+↑ / Alt+↓ go
-  to them in that order.
-- **Cost and quota in view:** today's spend, the 5-hour and 7-day quota and the week's spend sit
-  under the sessions.
-- **Keeps your setup:** your own hooks and status line keep working, and uninstalling puts
-  everything back.
-- **Quiet when out of sight:** a sidebar you are not looking at does no work.
+## What it adds to Claude Code
 
-## Built on
+| Feature | Claude Code | `cst` |
+|---|:---:|:---:|
+| Sessions side by side, one window each | — | ✓ |
+| Status and waiting time of every session | — | ✓ |
+| Most urgent session first, Alt+↑ / Alt+↓ | — | ✓ |
+| Resume a session from any folder | per folder | ✓ |
+| Search sessions by title or prompt, any folder *(new)* | — | ✓ |
+| Start in a new or unlisted folder from the list *(new)* | — | ✓ |
+| Spend today and this week, 5-hour and 7-day quota | partial | ✓ |
+| Statistics by day, folder and model | — | ✓ |
 
-| Piece | Role |
-|---|---|
-| [tmux](https://github.com/tmux/tmux) | One window per session, with the sidebar on its left |
-| [Claude Code hooks](https://docs.claude.com/en/docs/claude-code/hooks) and status line | Each session's status, cost and model |
-| [ratatui](https://github.com/ratatui/ratatui) | The sidebar, the landing page and the new-session panel |
+## Statuses
 
-## The landing page
+<p><img src="docs/images/statuses.svg" alt="The six statuses as the sidebar shows them"></p>
 
-Where `cst` opens: the folders you ran Claude in, their recent sessions to resume, and the day's
-and week's statistics.
+## Landing page
+
+`cst` opens on the landing page: your folders and their recent sessions, a search over every
+session, and the day's and week's statistics.
 
 <p align="center">
   <img src="docs/images/landing.svg" alt="The landing page">
 </p>
-
-## Statuses
-
-| Status | Colour | Meaning |
-|---|---|---|
-| Permission | red | Claude needs your approval to run something |
-| Question | amber | Claude asked something, or has a plan to approve |
-| Finished | green | The turn ended and you have not looked yet |
-| Working | orange spinner | Running tools or background agents |
-| Shell | lavender | The turn ended; a shell command still runs |
-| Idle | grey | Seen, or interrupted with Esc |
 
 ## Keys
 
 | Keys | Does |
 |---|---|
 | Alt+↑ / Alt+↓ | Previous / next session, most urgent first |
-| Alt+n | New session, or resume one, from the folders you used |
+| Alt+n | New-session panel: pick a folder, resume a session, or search |
 | Alt+c | Close the current session, after a confirmation |
-
-On the landing page: ↑ ↓ move, → / ← show or hide a folder's sessions, Enter starts or resumes,
-/ searches, q quits.
-
-### Starting in a folder that is not in the list
-
-The new-session list (Alt+n, and the landing page) begins with two rows. Both open the folders
-on your disk as a tree below the row, starting at your home folder, most recently used first.
-
-| Row | Use it to |
-|---|---|
-| `+ New folder…` | Pick a parent folder, type a name and start a session in the new folder |
-| `Open another folder…` | Find a folder that exists but has no sessions yet, and start in it |
-
-| Keys | Does |
-|---|---|
-| → / ← | Open or close a folder; ← on a closed one goes to the folder holding it |
-| Typing (on the landing page, press / first) | With a row open, searches the folders below the current one, ignoring case; on a history row or a closed row it still filters the history |
-| → or Enter on `+ New folder…` or `Open another folder…` | Opens its tree, starting at your home folder; Enter or ← on the open row closes it |
-| Enter | Under Open another folder, starts in the folder; under New folder, picks it as the parent |
-| Enter on `+ create … and start` | Creates the folder, and any missing parents, and starts there |
-
-Nothing is created and no session starts until you press Enter on a row. Hidden folders,
-`node_modules` and `target` are left out; a search that starts with `.` includes hidden ones.
+| / | Landing page: search |
+| q | Landing page: end `cst` and every session in it |
 
 ## Get started
 
-Needs Linux (x86_64 or arm64), tmux 3.3 or newer and Claude Code. Install with one command:
+Needs Linux (x86_64 or arm64), tmux 3.3 or newer and Claude Code.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/emanuel36/claude-sessions/main/install.sh | sh
 ```
 
-The [install script](https://github.com/emanuel36/claude-sessions/blob/main/install.sh):
+<details>
+<summary>What the install script does</summary>
 
-1. Checks that the system is Linux and that tmux is 3.3 or newer.
-2. Downloads the latest [release](https://github.com/emanuel36/claude-sessions/releases) for
-   your machine and checks its SHA-256.
-3. Removes the Python version (1.x) if it is installed.
-4. Installs `cst` in `~/.local/bin`.
-5. Registers `cst` with Claude Code: a hook on 11 events and the status line in
-   `settings.json`. Your own status line keeps running, and a backup of your settings is kept
-   beside them.
-6. Tells you if `~/.local/bin` is not on your PATH yet, and if a `cst` from before is still
-   open.
+- Downloads the latest [release](https://github.com/emanuel36/claude-sessions/releases) and
+  checks its SHA-256.
+- Installs `cst` in `~/.local/bin`.
+- Registers a hook and the status line in Claude Code's `settings.json`, after a backup.
+- Removes the Python version (1.x) if it is installed.
 
-Then open it with `cst`, or `cst --ghostty` for a new Ghostty window.
+</details>
 
-- **Update:** run `cst update`, then run `cst` again. The open sidebars and the landing page
-  switch to the new version; your sessions keep running.
-- **Uninstall:** run `cst uninstall`, which restores your settings, then delete
-  `~/.local/bin/cst`.
-- **Coming from 1.x:** the hooks and your own status line carry over; the cost history of the
-  Python version is not read, so the day's and week's statistics start afresh. Sessions still
-  open from 1.x keep running; run `cst` to switch them to the new version.
+- **Open:** `cst`, or `cst --ghostty` for a new Ghostty window.
+- **Update:** `cst update`. Your sessions keep running.
+- **Uninstall:** `cst uninstall` restores your settings; then delete `~/.local/bin/cst`.
+
+## Where things live
+
+```
+~/.local/bin/cst                 the program
+~/.claude/settings.json          hook and status line (backup beside it)
+~/.local/state/cst/
+├── history.json                 prompts read from Claude Code's history
+├── titles.json                  session titles
+├── statusline.json              cost and quota last reported
+├── journal/                     the day's activity, for the statistics
+├── tmux.conf                    the tmux configuration in use
+└── errors.log                   failures
+```
+
+## How the repository is organised
+
+```
+claude-sessions/
+├── src/
+│   ├── core/      session status, records, cost history, file locations
+│   ├── claude/    Claude Code side: hook, status line, install, history
+│   ├── term/      tmux side: launcher, configuration, window layout
+│   └── ui/        landing page, sidebar, new-session panel, search
+├── assets/        tmux configuration
+├── tests/         integration tests and screen goldens
+└── install.sh     installer
+```
 
 ## Troubleshooting
 
 | Symptom | Cause |
 |---|---|
-| A session never changes colour | It is not in a `cst` window, or the hooks are missing: run `cst update` |
+| A session never changes colour | Not in a `cst` window, or hooks missing: run `cst update` |
 | Cost is empty | The status line has not reported yet, or another tool replaced it |
-| Quota is missing | Claude Code reports it only to subscribers, after the first response |
-| The sidebar is blank or out of date after an update | Open windows still run the old version: run `cst` again |
-| Anything else | Failures are written to `~/.local/state/cst/errors.log` |
-
-## How it is organised
-
-| Folder | What it holds |
-|---|---|
-| [src/core](https://github.com/emanuel36/claude-sessions/tree/main/src/core) | Session status, live records, cost history, where files live |
-| [src/claude](https://github.com/emanuel36/claude-sessions/tree/main/src/claude) | Claude Code side: hook, status line, install, prompt history, transcripts |
-| [src/term](https://github.com/emanuel36/claude-sessions/tree/main/src/term) | tmux side: the `cst` launcher, its config and window layout |
-| [src/ui](https://github.com/emanuel36/claude-sessions/tree/main/src/ui) | Landing page, sidebar, new-session panel, and what they watch |
-| [src](https://github.com/emanuel36/claude-sessions/tree/main/src) | The `cst` command, self-update and capped child processes |
-| [assets](https://github.com/emanuel36/claude-sessions/tree/main/assets) | The tmux configuration `cst` runs with |
-| [tests](https://github.com/emanuel36/claude-sessions/tree/main/tests) | Integration tests and the screen goldens |
-| [bench](https://github.com/emanuel36/claude-sessions/tree/main/bench) | The performance check |
+| Anything else | See `~/.local/state/cst/errors.log` |
 
 ## License
 
