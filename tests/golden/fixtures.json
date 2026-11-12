@@ -564,7 +564,7 @@
       }
     ],
     "query": "",
-    "cursor": 0,
+    "cursor": 2,
     "expanded": [],
     "scroll": {},
     "searching": false,
@@ -675,7 +675,7 @@
       }
     ],
     "query": "",
-    "cursor": 2,
+    "cursor": 4,
     "expanded": [],
     "scroll": {},
     "searching": false,
@@ -786,7 +786,7 @@
       }
     ],
     "query": "",
-    "cursor": 0,
+    "cursor": 2,
     "expanded": [],
     "scroll": {},
     "searching": false,
@@ -897,7 +897,7 @@
       }
     ],
     "query": "zzz",
-    "cursor": 0,
+    "cursor": 2,
     "expanded": [],
     "scroll": {},
     "searching": true,
@@ -1008,7 +1008,7 @@
       }
     ],
     "query": "",
-    "cursor": 5,
+    "cursor": 7,
     "expanded": ["/home/dev/work/claude-sessions"],
     "scroll": {"/home/dev/work/claude-sessions": 2},
     "searching": false,
@@ -1119,7 +1119,7 @@
       }
     ],
     "query": "",
-    "cursor": 1,
+    "cursor": 3,
     "expanded": [],
     "scroll": {},
     "height": 20,
@@ -1192,7 +1192,7 @@
       }
     ],
     "query": "",
-    "cursor": 6,
+    "cursor": 8,
     "expanded": ["/home/dev/work/claude-sessions"],
     "scroll": {"/home/dev/work/claude-sessions": 3},
     "height": 12,
@@ -1265,7 +1265,7 @@
       }
     ],
     "query": "/home/dev/work",
-    "cursor": 0,
+    "cursor": 2,
     "expanded": [],
     "scroll": {},
     "height": 16,
@@ -1277,7 +1277,7 @@
     "now": 1793806200.625,
     "folders": [],
     "query": "",
-    "cursor": 0,
+    "cursor": 2,
     "expanded": [],
     "scroll": {},
     "height": 10,

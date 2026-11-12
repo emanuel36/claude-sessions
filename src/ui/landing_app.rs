@@ -21,7 +21,7 @@ use crate::ui::landing;
 use crate::ui::pane::{
     self, open, own_window, picker_key, App, Shell, Step, Visible, WINDOW_PAUSE,
 };
-use crate::ui::picker::{self, Folder, Picker};
+use crate::ui::picker::{self, Folder, Picker, Root, RowKind};
 use crate::ui::runtime::{signal, Msg, Runtime, Schedule, Screen, Signal};
 use crate::ui::sidebar::Stats;
 use crate::ui::usage::Reader;
@@ -84,6 +84,8 @@ struct Landing {
     /// The sessions running now, not offered to resume.
     live: HashSet<String>,
     scan: Scan,
+    /// Reads the session records at a time; the tests give their own.
+    records: Box<dyn Fn(f64) -> Vec<Record>>,
 }
 
 impl Landing {
@@ -98,6 +100,7 @@ impl Landing {
             opened: 0,
             live: HashSet::new(),
             scan: Scan::new(Titles::new(true)),
+            records: Box::new(hook::live_sessions),
         }
     }
 
@@ -133,17 +136,18 @@ impl Landing {
 
     /// Takes a key the user typed; returns whether the page may have changed.
     ///
-    /// Searching, Enter and Esc end the search (Esc also clears it) and every other key goes
-    /// to the folder list. Otherwise `/` starts a search, `q` ends the server, Esc clears the
-    /// search, and the arrows and Enter go to the list, Enter opening a window.
+    /// Searching, Esc ends the search and clears it, and keys other than Enter go to the folder
+    /// list. Enter opens a disk folder of Open another folder or a create row at once, as the
+    /// Alt+n panel does; on a folder of New folder it picks the parent and the search goes on,
+    /// its text cleared for the name; on an entry it opens or closes its tree and the search
+    /// goes on; elsewhere it ends the search. Otherwise `/` starts a search, `q` ends the
+    /// server, Esc clears the search, Backspace with nothing typed does in a tree what ← does,
+    /// and the arrows and Enter go to the list, Enter opening a window.
     fn key(&mut self, key: &KeyEvent) -> bool {
         if self.searching {
             match key.code {
-                KeyCode::Enter => self.searching = false,
-                KeyCode::Esc => {
-                    self.searching = false;
-                    self.picker.query.clear();
-                }
+                KeyCode::Enter => self.enter_searching(),
+                KeyCode::Esc => self.end_search(),
                 _ => match picker_key(key) {
                     Some(key) => {
                         self.picker.key(key);
@@ -157,13 +161,17 @@ impl Landing {
             if key.code != KeyCode::Esc {
                 return false;
             }
-            self.picker.query.clear();
+            self.end_search();
             return true;
         };
         match typed {
             picker::Key::Char('/') => self.searching = true,
             picker::Key::Char('q') => {
                 self.tmux.run(&["kill-server"]);
+            }
+            // With nothing typed, Backspace in a tree does what Left does
+            picker::Key::Backspace if self.picker.query.is_empty() && self.on_tree() => {
+                self.picker.key(typed);
             }
             picker::Key::Char(_) | picker::Key::Backspace => return false,
             _ => {
@@ -175,24 +183,76 @@ impl Landing {
         true
     }
 
+    /// Whether the selected row is an entry or a folder of its tree.
+    fn on_tree(&mut self) -> bool {
+        let row = self.picker.selected();
+        row.is_some_and(|r| matches!(r.kind, RowKind::Root | RowKind::Dir))
+    }
+
+    /// Enter while searching: see [`Landing::key`].
+    fn enter_searching(&mut self) {
+        let row = self.picker.selected();
+        match row.as_ref().map(|r| (r.kind, r.root)) {
+            Some((RowKind::Root, _)) => {
+                self.picker.key(picker::Key::Enter);
+            }
+            Some((RowKind::Dir, Some(Root::Open)) | (RowKind::Create, _)) => {
+                if let Some(row) = row {
+                    open(self.tmux.as_ref(), &row, &self.picker.folders);
+                }
+                self.end_search();
+            }
+            Some((RowKind::Dir, Some(Root::New))) => {
+                self.picker.key(picker::Key::Enter);
+            }
+            // The text stays, filtering the list; the walk read for it does not
+            _ => {
+                self.searching = false;
+                self.picker.disk.forget_search();
+            }
+        }
+    }
+
+    /// Ends the search and clears it, with what it searched below and the walk it read.
+    fn end_search(&mut self) {
+        self.searching = false;
+        self.picker.end_search();
+        self.picker.disk.forget_search();
+    }
+
     /// Reads again what is stale.
     fn reload(&mut self, now: f64) {
         let stale = std::mem::take(&mut self.shell.stale);
         if stale.records {
-            let records = hook::live_sessions(now);
+            let records = (self.records)(now);
             (self.opened, self.live) = open_sessions(&records);
         }
         let totals_due = self.shell.read_stats(&stale, now, true);
         if stale.records || totals_due {
-            let costs = self.shell.stats.totals.as_ref().map(|t| &t.per_session);
-            let generation = self.shell.history.generation();
-            self.picker.folders = self.scan.load(
-                self.shell.history.sessions(),
-                generation,
-                costs.unwrap_or(&Default::default()),
-                &self.live,
-            );
+            self.load_folders();
         }
+        // The page lives for hours, and a session started or ended may have made folders;
+        // the statistics' minute ticks keep the folders read. A search keeps its walk until it
+        // ends, so typing on does not read the whole tree again; text left after it ended
+        // reads its walk anew
+        if stale.records || stale.history {
+            self.picker.disk.forget_folders();
+            if !self.searching {
+                self.picker.disk.forget_search();
+            }
+        }
+    }
+
+    /// Reads the history's folders again.
+    fn load_folders(&mut self) {
+        let costs = self.shell.stats.totals.as_ref().map(|t| &t.per_session);
+        let generation = self.shell.history.generation();
+        self.picker.folders = self.scan.load(
+            self.shell.history.sessions(),
+            generation,
+            costs.unwrap_or(&Default::default()),
+            &self.live,
+        );
     }
 
     /// Draws the page; a failed draw keeps the last screen.
@@ -250,14 +310,18 @@ mod tests {
 
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+    use crate::claude::history::HistoryReader;
     use crate::claude::statusline::Quota;
+    use crate::claude::transcript::Titles;
     use crate::core::state::Record;
     use crate::term::tmux::fake::FakeTmux;
+    use crate::ui::folders::Scan;
     use crate::ui::landing_app::{labels, open_sessions, Landing};
     use crate::ui::pane::{App, LogOnce, Step, Visible};
-    use crate::ui::picker::{Folder, Picker, Session};
+    use crate::ui::picker::{Folder, Picker, Root, RowKind, Session};
     use crate::ui::runtime::{Msg, Runtime};
     use crate::ui::sidebar::Stats;
+    use crate::ui::usage::Reader;
 
     const NOW: f64 = 1_700_000_000.0;
 
@@ -304,17 +368,227 @@ mod tests {
         }
     }
 
+    /// [`page`] with its trees in a tempdir home holding `projects/` and `music/`.
+    fn home_page() -> (tempfile::TempDir, String, Landing, FakeTmux, Runtime) {
+        let t = tempfile::tempdir().unwrap();
+        for dir in ["projects", "music"] {
+            std::fs::create_dir(t.path().join(dir)).unwrap();
+        }
+        let home = t.path().to_string_lossy().into_owned();
+        let (mut page, calls, runtime) = page();
+        page.picker.home = home.clone();
+        (t, home, page, calls, runtime)
+    }
+
+    /// Starts a search and types `text`.
+    fn search(page: &mut Landing, runtime: &mut Runtime, text: &str) {
+        press(page, runtime, &[KeyCode::Char('/')]);
+        let keys: Vec<KeyCode> = text.chars().map(KeyCode::Char).collect();
+        press(page, runtime, &keys);
+    }
+
+    #[test]
+    fn enter_while_searching_opens_a_disk_folder_at_once() {
+        let (_t, home, mut page, calls, mut runtime) = home_page();
+        press(&mut page, &mut runtime, &[KeyCode::Down, KeyCode::Enter]);
+        search(&mut page, &mut runtime, "pro");
+        assert_eq!(page.picker.selected().unwrap().kind, RowKind::Dir);
+        press(&mut page, &mut runtime, &[KeyCode::Enter]);
+        let dir = format!("{home}/projects");
+        assert_eq!(
+            calls.calls(),
+            [["new-window", "-c", dir.as_str(), "claude"]]
+        );
+        assert_eq!((page.picker.query.as_str(), page.searching), ("", false));
+        assert_eq!(page.picker.anchor, None);
+    }
+
+    #[test]
+    fn enter_while_searching_on_a_create_row_creates_and_starts() {
+        let (t, home, mut page, calls, mut runtime) = home_page();
+        press(&mut page, &mut runtime, &[KeyCode::Down, KeyCode::Enter]);
+        search(&mut page, &mut runtime, "notes");
+        assert_eq!(page.picker.selected().unwrap().kind, RowKind::Create);
+        press(&mut page, &mut runtime, &[KeyCode::Enter]);
+        let dir = format!("{home}/notes");
+        assert_eq!(
+            calls.calls(),
+            [["new-window", "-c", dir.as_str(), "claude"]]
+        );
+        assert!(t.path().join("notes").is_dir());
+        assert!(!page.searching);
+    }
+
+    #[test]
+    fn enter_on_a_new_folder_match_picks_the_parent_and_keeps_searching() {
+        let (_t, home, mut page, calls, mut runtime) = home_page();
+        press(&mut page, &mut runtime, &[KeyCode::Enter]);
+        search(&mut page, &mut runtime, "pro");
+        let picked = page.picker.selected().unwrap();
+        assert_eq!((picked.kind, picked.root), (RowKind::Dir, Some(Root::New)));
+        press(&mut page, &mut runtime, &[KeyCode::Enter]);
+        assert!(page.searching);
+        assert_eq!(page.picker.query, "");
+        let parent = format!("{home}/projects");
+        assert!(page.picker.dirs.contains(&(Root::New, parent)));
+        assert_eq!(calls.calls(), Vec::<Vec<String>>::new());
+    }
+
+    #[test]
+    fn only_a_records_or_history_reload_drops_the_folder_cache() {
+        let (t, _, mut page, _, mut runtime) = home_page();
+        // History, journal, records and config of its own: nothing outside the tempdir is read
+        let (config, state) = (t.path().join("config"), t.path().join("state"));
+        page.scan = Scan::in_dir(Titles::new(false), config.clone());
+        page.shell.history = HistoryReader::with_dirs(false, config, state);
+        page.shell.usage = Reader::in_dir(t.path().join("journal"));
+        page.records = Box::new(|_| Vec::new());
+        press(&mut page, &mut runtime, &[KeyCode::Down, KeyCode::Enter]);
+        let listed = |page: &mut Landing, name: &str| {
+            let shown = page.picker.shown();
+            shown
+                .iter()
+                .any(|r| r.kind == RowKind::Dir && r.label == format!("{name}/"))
+        };
+        assert!(!listed(&mut page, "later"));
+        std::fs::create_dir(t.path().join("later")).unwrap();
+        assert!(!listed(&mut page, "later"), "read once and kept");
+        // The statistics' minute ticks: the folders read are kept
+        page.reload(NOW);
+        page.reload(NOW + 60.0);
+        assert!(!listed(&mut page, "later"));
+        page.shell.stale.history = true;
+        page.reload(NOW + 61.0);
+        assert!(listed(&mut page, "later"));
+        std::fs::create_dir(t.path().join("after")).unwrap();
+        page.shell.stale.records = true;
+        page.reload(NOW + 62.0);
+        assert!(listed(&mut page, "after"));
+    }
+
+    #[test]
+    fn a_reload_during_a_search_keeps_the_walk_until_the_search_ends() {
+        let (t, _, mut page, _, mut runtime) = home_page();
+        let (config, state) = (t.path().join("config"), t.path().join("state"));
+        page.scan = Scan::in_dir(Titles::new(false), config.clone());
+        page.shell.history = HistoryReader::with_dirs(false, config, state);
+        page.shell.usage = Reader::in_dir(t.path().join("journal"));
+        page.records = Box::new(|_| Vec::new());
+        press(&mut page, &mut runtime, &[KeyCode::Down, KeyCode::Enter]);
+        let found = |page: &mut Landing| -> Vec<String> {
+            let shown = page.picker.shown();
+            let hits = shown.into_iter().filter(|r| r.kind == RowKind::Dir);
+            hits.map(|r| r.label).collect()
+        };
+        search(&mut page, &mut runtime, "pro");
+        assert_eq!(found(&mut page), ["projects"]);
+        std::fs::create_dir(t.path().join("prolog")).unwrap();
+        page.shell.stale.history = true;
+        page.reload(NOW);
+        assert_eq!(found(&mut page), ["projects"], "the walk is kept");
+        press(&mut page, &mut runtime, &[KeyCode::Esc]);
+        page.picker.cursor = 1;
+        search(&mut page, &mut runtime, "pro");
+        let mut hits = found(&mut page);
+        hits.sort();
+        assert_eq!(
+            hits,
+            ["projects", "prolog"],
+            "read anew once the search ended"
+        );
+    }
+
+    #[test]
+    fn a_search_ended_on_a_history_row_keeps_no_walk_past_a_reload() {
+        let (t, _, mut page, _, mut runtime) = home_page();
+        let (config, state) = (t.path().join("config"), t.path().join("state"));
+        page.scan = Scan::in_dir(Titles::new(false), config.clone());
+        page.shell.history = HistoryReader::with_dirs(false, config, state);
+        page.shell.usage = Reader::in_dir(t.path().join("journal"));
+        page.records = Box::new(|_| Vec::new());
+        press(&mut page, &mut runtime, &[KeyCode::Down, KeyCode::Enter]);
+        search(&mut page, &mut runtime, "w");
+        while page.picker.selected().unwrap().kind != RowKind::Folder {
+            press(&mut page, &mut runtime, &[KeyCode::Down]);
+        }
+        press(&mut page, &mut runtime, &[KeyCode::Enter]);
+        assert!(!page.searching);
+        let listed = |page: &mut Landing| {
+            let shown = page.picker.shown();
+            shown
+                .iter()
+                .any(|r| r.kind == RowKind::Dir && r.label == "wiki")
+        };
+        assert!(!listed(&mut page));
+        std::fs::create_dir(t.path().join("wiki")).unwrap();
+        page.shell.stale.history = true;
+        page.reload(NOW);
+        assert!(listed(&mut page), "the ended search's walk is read anew");
+    }
+
+    #[test]
+    fn escape_while_searching_forgets_where_the_search_started() {
+        let (_t, _, mut page, _, mut runtime) = home_page();
+        press(&mut page, &mut runtime, &[KeyCode::Enter]);
+        search(&mut page, &mut runtime, "pro");
+        assert!(page.picker.anchor.is_some());
+        press(&mut page, &mut runtime, &[KeyCode::Esc]);
+        assert_eq!(page.picker.anchor, None);
+        page.picker.cursor = 4;
+        assert_eq!(page.picker.selected().unwrap().kind, RowKind::Folder);
+        let keys = [KeyCode::Char('/'), KeyCode::Backspace];
+        press(&mut page, &mut runtime, &keys);
+        assert_eq!(page.picker.cursor, 4);
+    }
+
+    #[test]
+    fn backspace_outside_a_search_closes_like_left() {
+        let (_t, _, mut page, _, mut runtime) = home_page();
+        press(&mut page, &mut runtime, &[KeyCode::Enter]);
+        assert!(page.picker.open.contains(&Root::New));
+        press(&mut page, &mut runtime, &[KeyCode::Down, KeyCode::Right]);
+        assert_eq!(page.picker.dirs.len(), 1);
+        // On a tree folder, then on the entry
+        press(&mut page, &mut runtime, &[KeyCode::Backspace]);
+        assert!(page.picker.dirs.is_empty());
+        press(&mut page, &mut runtime, &[KeyCode::Up, KeyCode::Backspace]);
+        assert!(!page.picker.open.contains(&Root::New));
+    }
+
+    #[test]
+    fn enter_on_an_entry_while_searching_toggles_it() {
+        let (_t, _, mut page, calls, mut runtime) = home_page();
+        press(
+            &mut page,
+            &mut runtime,
+            &[KeyCode::Char('/'), KeyCode::Enter],
+        );
+        assert!(page.picker.open.contains(&Root::New));
+        assert!(page.searching);
+        press(&mut page, &mut runtime, &[KeyCode::Enter]);
+        assert!(!page.picker.open.contains(&Root::New));
+        assert!(page.searching);
+        assert_eq!(calls.calls(), Vec::<Vec<String>>::new());
+    }
+
     #[test]
     fn enter_on_a_folder_starts_a_session_there() {
         let (mut page, calls, mut runtime) = page();
-        press(&mut page, &mut runtime, &[KeyCode::Down, KeyCode::Enter]);
+        let keys = [KeyCode::Down, KeyCode::Down, KeyCode::Down, KeyCode::Enter];
+        press(&mut page, &mut runtime, &keys);
         assert_eq!(calls.calls(), [["new-window", "-c", "/w/web", "claude"]]);
     }
 
     #[test]
     fn right_opens_a_folders_sessions_and_enter_resumes_one() {
         let (mut page, calls, mut runtime) = page();
-        let keys = [KeyCode::Right, KeyCode::Down, KeyCode::Enter];
+        let keys = [
+            KeyCode::Down,
+            KeyCode::Down,
+            KeyCode::Right,
+            KeyCode::Down,
+            KeyCode::Enter,
+        ];
         press(&mut page, &mut runtime, &keys);
         assert!(calls.ran(&["new-window", "-c", "/w/api", "claude --resume s1"]));
     }
@@ -333,8 +607,9 @@ mod tests {
         assert_eq!(page.picker.query, "web");
         assert!(!page.searching);
         assert_eq!(calls.calls(), Vec::<Vec<String>>::new());
-        let shown: Vec<_> = page.picker.shown().into_iter().map(|r| r.path).collect();
-        assert_eq!(shown, ["/w/web"]);
+        let shown = page.picker.shown().into_iter();
+        let history: Vec<_> = shown.filter(|r| r.root.is_none()).map(|r| r.path).collect();
+        assert_eq!(history, ["/w/web"]);
     }
 
     #[test]

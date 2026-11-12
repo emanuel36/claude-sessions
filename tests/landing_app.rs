@@ -77,7 +77,10 @@ fn landing_enter_opens_a_window_in_the_folder() {
     let Some(page) = Landing::start() else { return };
     page.app.assert_shows("alpha-proj", START);
     page.app.assert_shows("beta-proj", START);
-    page.app.send("Down");
+    // Past the two entries at the top, then past alpha
+    for _ in 0..3 {
+        page.app.send("Down");
+    }
     page.app.send("Enter");
     let beta = page.beta.display().to_string();
     if !page.app.within(Duration::from_secs(3), || {

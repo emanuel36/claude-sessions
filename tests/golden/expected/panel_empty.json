@@ -1,12 +1,12 @@
 [
-[{"text": " ❯ ▌", "fg": "idx:4", "bg": "default", "bold": false}],
+[{"text": "╭──────────────────────────────────────────────╮", "fg": "idx:244", "bg": "default", "bold": false}],
+[{"text": "│", "fg": "idx:244", "bg": "default", "bold": false}, {"text": " ❯ ", "fg": "rgb:#d77757", "bg": "default", "bold": false}, {"text": "▌", "fg": "default", "bg": "default", "bold": false}, {"text": "Search folders…", "fg": "rgb:#999999", "bg": "default", "bold": false}, {"text": "                           ", "fg": "default", "bg": "default", "bold": false}, {"text": "│", "fg": "idx:244", "bg": "default", "bold": false}],
+[{"text": "╰──────────────────────────────────────────────╯", "fg": "idx:244", "bg": "default", "bold": false}],
 [{"text": " ", "fg": "default", "bg": "default", "bold": false}],
-[{"text": "   nothing matches", "fg": "idx:240", "bg": "default", "bold": false}],
+[{"text": " ", "fg": "default", "bg": "default", "bold": false}, {"text": " ▸ ", "fg": "idx:244", "bg": "default", "bold": false}, {"text": "+ ", "fg": "idx:2", "bg": "default", "bold": false}, {"text": "New folder…", "fg": "idx:15", "bg": "default", "bold": true}],
+[{"text": "❯", "fg": "rgb:#b1b9f9", "bg": "default", "bold": true}, {"text": " ▸ ", "fg": "idx:244", "bg": "default", "bold": false}, {"text": "Open another folder…", "fg": "rgb:#b1b9f9", "bg": "default", "bold": true}],
 [{"text": " ", "fg": "default", "bg": "default", "bold": false}],
 [{"text": " ", "fg": "default", "bg": "default", "bold": false}],
 [{"text": " ", "fg": "default", "bg": "default", "bold": false}],
-[{"text": " ", "fg": "default", "bg": "default", "bold": false}],
-[{"text": " ", "fg": "default", "bg": "default", "bold": false}],
-[{"text": " ", "fg": "default", "bg": "default", "bold": false}],
-[{"text": " ", "fg": "default", "bg": "default", "bold": false}, {"text": "↑↓", "fg": "rgb:#d77757", "bg": "default", "bold": false}, {"text": " move", "fg": "default", "bg": "default", "bold": false}, {"text": " · ", "fg": "idx:240", "bg": "default", "bold": false}, {"text": "→", "fg": "rgb:#d77757", "bg": "default", "bold": false}, {"text": " sessions", "fg": "default", "bg": "default", "bold": false}, {"text": " · ", "fg": "idx:240", "bg": "default", "bold": false}, {"text": "Enter", "fg": "rgb:#d77757", "bg": "default", "bold": false}, {"text": " new / resume", "fg": "default", "bg": "default", "bold": false}, {"text": " · ", "fg": "idx:240", "bg": "default", "bold": false}, {"text": "Esc", "fg": "rgb:#d77757", "bg": "default", "bold": false}]
+[{"text": " ", "fg": "default", "bg": "default", "bold": false}, {"text": "Enter/→ to open", "fg": "rgb:#999999", "bg": "default", "bold": false}, {"text": " · ", "fg": "rgb:#505050", "bg": "default", "bold": false}, {"text": "Esc to cancel", "fg": "rgb:#999999", "bg": "default", "bold": false}]
 ]

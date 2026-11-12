@@ -123,7 +123,12 @@ fn create_temp(dir: &Path) -> io::Result<(fs::File, PathBuf)> {
 /// The log starts over once it passes 1 MiB, so it cannot grow without end. It is opened
 /// without following symlinks, so one planted in its place cannot redirect the write.
 pub fn log_error(what: &dyn Display) {
-    log_error_in(&state_dir(), what);
+    log_error_with(&process_env, what);
+}
+
+/// Appends a line to the error log of the state directory `env` names; never fails.
+pub(crate) fn log_error_with(env: Lookup<'_>, what: &dyn Display) {
+    log_error_in(&state_dir_with(env), what);
 }
 
 fn runtime_dir_with(env: Lookup<'_>, tmp: &Path, uid: u32) -> io::Result<PathBuf> {
