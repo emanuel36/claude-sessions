@@ -1282,5 +1282,57 @@
     "scroll": {},
     "height": 10,
     "dirs": []
+  },
+  {
+    "name": "panel_session_search",
+    "kind": "panel",
+    "now": 1793806200.625,
+    "folders": [
+      {
+        "path": "/home/dev/notes",
+        "name": "notes",
+        "last": 1793633400.625,
+        "count": 1,
+        "spend": 0.0,
+        "sessions": [
+          {"id": "n1", "title": "weekly plan", "last": 1793633400.625, "cost": 0.02}
+        ]
+      }
+    ],
+    "query": "linkedin",
+    "cursor": 2,
+    "expanded": [],
+    "scroll": {},
+    "height": 14,
+    "dirs": [],
+    "sessions": [
+      {
+        "id": "s1",
+        "title": "scrape the linkedin job feed",
+        "path": "/home/dev/work/job-hunt",
+        "last": 1793720400.625,
+        "gone": false,
+        "own_title": true,
+        "prompts": ["scrape the linkedin job feed", "keep only remote roles"]
+      },
+      {
+        "id": "s2",
+        "title": "fix the login redirect",
+        "path": "/home/dev/old/portal",
+        "last": 1793799000.625,
+        "gone": true,
+        "own_title": false,
+        "prompts": ["fix the login redirect", "the linkedin button loops back"]
+      },
+      {
+        "id": "s3",
+        "title": "draft the release post",
+        "path": "/home/dev/work/blog",
+        "last": 1793792400.625,
+        "gone": false,
+        "own_title": false,
+        "prompts": ["draft the release post", "mention the linkedin share card"]
+      }
+    ]
   }
 ]
