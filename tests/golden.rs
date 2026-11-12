@@ -115,6 +115,34 @@ fn render(fixture: &Value) -> Option<Vec<Line<'static>>> {
     }
 }
 
+/// A screen's runs as the expected files hold them: one line of runs per row, each run's keys
+/// in the order `text`, `fg`, `bg`, `bold`.
+fn golden_text(screen: &Value) -> String {
+    let field = |v: &Value| serde_json::to_string(v).expect("json value");
+    let rows: Vec<String> = screen
+        .as_array()
+        .expect("screen lines")
+        .iter()
+        .map(|line| {
+            let runs: Vec<String> = line
+                .as_array()
+                .expect("line runs")
+                .iter()
+                .map(|run| {
+                    let keys = ["text", "fg", "bg", "bold"];
+                    let parts: Vec<String> = keys
+                        .iter()
+                        .map(|k| format!("\"{k}\": {}", field(&run[*k])))
+                        .collect();
+                    format!("{{{}}}", parts.join(", "))
+                })
+                .collect();
+            format!("[{}]", runs.join(", "))
+        })
+        .collect();
+    format!("[\n{}\n]\n", rows.join(",\n"))
+}
+
 #[test]
 fn screens_match_python() {
     // Before anything reads local time: the goldens were made in UTC
@@ -122,6 +150,8 @@ fn screens_match_python() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden");
     let text = std::fs::read_to_string(dir.join("fixtures.json")).expect("read fixtures");
     let fixtures: Vec<Value> = serde_json::from_str(&text).expect("parse fixtures");
+    // UPDATE_GOLDENS=1 writes what the screens draw now instead of comparing
+    let update = std::env::var("UPDATE_GOLDENS").is_ok_and(|v| v == "1");
     let mut checked = 0;
     for fixture in &fixtures {
         let name = fixture["name"].as_str().expect("fixture name");
@@ -129,6 +159,11 @@ fn screens_match_python() {
             continue;
         };
         let path = dir.join("expected").join(format!("{name}.json"));
+        if update {
+            std::fs::write(&path, golden_text(&runs(&lines))).expect("write expected");
+            checked += 1;
+            continue;
+        }
         let expected: Value =
             serde_json::from_str(&std::fs::read_to_string(path).expect("read expected"))
                 .expect("parse expected");

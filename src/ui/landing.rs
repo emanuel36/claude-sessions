@@ -5,27 +5,19 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
 use crate::ui::line::{ljust, pad_right, push, styled};
-use crate::ui::picker::{self, keys_line, list_lines, Picker};
+use crate::ui::picker::{self, hints_line, list_lines, search_box, Picker, Row};
 use crate::ui::sidebar::{self, panel_lines, stats_lines, Stats, PANEL_CONTENT, PANEL_WIDTH};
-use crate::ui::words::{BLUE, FAINT, INK, MASCOT, MASCOT_ROWS, MONTHS, SOFT, STRONG, WEEKDAYS};
+use crate::ui::words::{MASCOT, MASCOT_ROWS, MONTHS, SOFT, STRONG, WEEKDAYS};
 
 /// The columns between the list and the statistics, which take the sidebar's width on the right.
 pub const GAP: usize = 4;
 /// The folder list grows with the terminal up to this, so ages stay near the names.
 pub const LIST_MAX: usize = 72;
-/// The keys the landing page takes.
-pub const FOOTER: [(&str, &str); 5] = [
-    ("↑↓", "move"),
-    ("→", "sessions"),
-    ("Enter", "new / resume"),
-    ("/", "search"),
-    ("q", "quit"),
-];
 
 /// The cells each mascot row takes beside the name and the date.
 const MASCOT_CELLS: usize = 10;
-/// The header, a blank line, the search line and a blank line, above the list.
-const TOP: usize = 6;
+/// The header, a blank line, the search box and a blank line, above the list.
+const TOP: usize = 8;
 
 /// The mascot beside the name, today's date and how many sessions are open.
 ///
@@ -49,13 +41,18 @@ pub fn header(opened: usize, now: f64) -> Vec<Line<'static>> {
     ]
 }
 
-/// The search line: what was typed, or how to start typing.
-pub fn search_line(query: &str, searching: bool) -> Line<'static> {
-    if searching || !query.is_empty() {
-        let cursor = if searching { "▌" } else { "" };
-        return styled(&[(" ❯ ", BLUE), (query, INK), (cursor, BLUE)]);
-    }
-    styled(&[(" ❯ ", BLUE), ("/ to search", FAINT)])
+/// What the keys do on the landing page: those of the selected row, as in the Alt+n panel,
+/// then `/` and `q`, which only this page takes. Esc here only clears a search, so the panel's
+/// `Esc to cancel` is left out.
+///
+/// # Arguments
+/// * `row`: the selected row, if any.
+/// * `picker`: what is open, to tell whether → opens or ← closes.
+pub fn footer(row: Option<&Row>, picker: &Picker) -> Vec<(&'static str, &'static str)> {
+    let mut keys = picker::hints(row, picker);
+    keys.retain(|&(key, _)| key != "Esc");
+    keys.extend([("/", "search"), ("q", "quit")]);
+    keys
 }
 
 /// What the right of the page shows, and its width: the wide statistics, the sidebar's, or
@@ -95,7 +92,7 @@ fn append(line: &mut Line<'static>, tail: Line<'static>) {
 
 /// The page as `height` lines of `width` columns.
 ///
-/// The header, the search line and the folder list fill the left, up to [`LIST_MAX`] columns;
+/// The header, the search box and the folder list fill the left, up to [`LIST_MAX`] columns;
 /// the wide statistics sit right after it, the two centred together. A terminal too narrow or
 /// short for them gets the sidebar's statistics, and one too narrow for those the list alone.
 ///
@@ -126,22 +123,18 @@ pub fn screen(
         width.saturating_sub(right_width + GAP)
     });
     let mut left = header(opened, now);
-    left.extend([
-        Line::default(),
-        search_line(&picker.query, searching),
-        Line::default(),
-    ]);
+    left.push(Line::default());
+    // Out of a search, the box tells how to start one
+    let hint = if searching {
+        picker::placeholder(picker)
+    } else {
+        "/ to search"
+    };
+    left.extend(search_box(&picker.query, hint, searching, list_width));
+    left.push(Line::default());
     let room = height.saturating_sub(TOP + 2).max(1);
     let shown = picker.shown();
-    left.extend(list_lines(
-        &shown,
-        &picker.folders,
-        picker.cursor,
-        &picker.expanded,
-        now,
-        room,
-        list_width,
-    ));
+    left.extend(list_lines(picker, &shown, now, room, list_width));
     let rows = height.saturating_sub(2);
     left.resize(rows.max(left.len()), Line::default());
     // The list and the statistics sit together in the middle of the terminal
@@ -172,7 +165,8 @@ pub fn screen(
         .collect();
     lines.push(Line::default());
     let keys_width = width.saturating_sub(1 + margin.len());
-    lines.push(indented(keys_line(&FOOTER, keys_width)));
+    let keys = footer(shown.get(picker.cursor), picker);
+    lines.push(indented(hints_line(&keys, keys_width)));
     lines.truncate(height);
     lines
 }
@@ -188,9 +182,9 @@ mod tests {
     use ratatui::widgets::{Paragraph, Widget};
 
     use crate::claude::statusline::Quota;
-    use crate::ui::landing::{header, screen, search_line, FOOTER, GAP, LIST_MAX};
+    use crate::ui::landing::{footer, header, screen, GAP, LIST_MAX};
     use crate::ui::line::{pad_right, plain, row_text, truncate, width_of};
-    use crate::ui::picker::{self, keys_line, Folder, Key, Picker, Session};
+    use crate::ui::picker::{self, hints_line, Folder, Key, Picker, Session};
     use crate::ui::sidebar::{self, panel_lines, Stats, PANEL_CONTENT, PANEL_WIDTH};
     use crate::ui::usage::{Day, Totals};
 
@@ -281,11 +275,51 @@ mod tests {
     }
 
     #[test]
-    fn search_line_shows_the_query_or_how_to_start() {
-        assert_eq!(plain(&search_line("", false)), " ❯ / to search");
-        assert_eq!(plain(&search_line("ap", true)), " ❯ ap▌");
-        assert_eq!(plain(&search_line("ap", false)), " ❯ ap");
-        assert_eq!(plain(&search_line("", true)), " ❯ ▌");
+    fn the_landing_uses_the_search_box() {
+        let box_of = |p: &mut Picker, searching| {
+            let lines = texts(&screen(p, searching, 0, &stats(), now(), 60, 20));
+            lines[3..8].to_vec()
+        };
+        let mut p = picker();
+        let idle = box_of(&mut p, false);
+        let border = "─".repeat(57);
+        assert_eq!(idle[0], "");
+        assert_eq!(idle[1], format!("╭{border}╮"));
+        assert_eq!(idle[2], format!("│ ❯ / to search{}│", " ".repeat(43)));
+        assert_eq!(idle[3], format!("╰{border}╯"));
+        assert_eq!(idle[4], "");
+        // While searching, nothing typed yet: the panel's placeholder after the cursor
+        assert!(box_of(&mut p, true)[2].starts_with("│ ❯ ▌Search folders…"));
+        p.query = "ap".into();
+        assert!(box_of(&mut p, true)[2].starts_with("│ ❯ ap▌ "));
+        // A search ended keeps its text, with no cursor
+        assert!(box_of(&mut p, false)[2].starts_with("│ ❯ ap "));
+    }
+
+    #[test]
+    fn the_landing_footer_adds_search_and_quit() {
+        let mut p = picker();
+        // The footer sits under the list, which the statistics' width pushes right
+        let last = |p: &mut Picker| {
+            let lines = texts(&screen(p, false, 0, &stats(), now(), 100, 20));
+            lines[19].trim_start().to_owned()
+        };
+        assert_eq!(last(&mut p), "Enter/→ to open · / to search · q to quit");
+        p.cursor = 2;
+        assert_eq!(
+            last(&mut p),
+            "Enter to new session · → to sessions · / to search · q to quit"
+        );
+        let row = p.selected();
+        assert_eq!(
+            footer(row.as_ref(), &p),
+            [
+                ("Enter", "new session"),
+                ("→", "sessions"),
+                ("/", "search"),
+                ("q", "quit")
+            ]
+        );
     }
 
     #[test]
@@ -299,7 +333,9 @@ mod tests {
             }],
             ..folder(long_title)
         }];
-        p.key(Key::Right);
+        for key in [Key::Down, Key::Down, Key::Right] {
+            p.key(key);
+        }
         let width = 140;
         // The list and the statistics together, centred
         let margin = (usize::from(width) - LIST_MAX - GAP - PANEL_WIDTH) / 2;
@@ -308,26 +344,31 @@ mod tests {
             .map(|line| from(line, margin))
             .collect();
         assert_eq!(lines.len(), 30);
-        assert!(lines[4].starts_with(" ❯ / to search"), "{}", lines[4]);
-        assert!(lines[6].starts_with(" ▾ api"), "{}", lines[6]);
+        assert!(lines[5].starts_with("│ ❯ / to search"), "{}", lines[5]);
+        assert!(lines[8].starts_with("  ▸ + New folder…"), "{}", lines[8]);
+        assert!(lines[11].starts_with("❯ ▾ api"), "{}", lines[11]);
         assert!(
-            lines[7].starts_with("   3 sessions · $12.50 7d"),
+            lines[12].starts_with("    3 sessions · $12.50 7d"),
             "{}",
-            lines[7]
+            lines[12]
         );
         // The list stops at its widest, the statistics right after it
-        assert_eq!(lines[8].chars().count(), LIST_MAX, "{}", lines[8]);
-        assert!(lines[8].contains("a session title long enough"));
+        assert_eq!(lines[13].chars().count(), LIST_MAX, "{}", lines[13]);
+        assert!(lines[13].contains("a session title long enough"));
         let stats_at = LIST_MAX + GAP;
         assert!(from(&lines[0], stats_at).trim().starts_with("• Usage"));
-        assert!(lines[29].starts_with(" ↑↓ move"), "{}", lines[29]);
+        assert!(
+            lines[29].starts_with(" Enter to new session · ← to close"),
+            "{}",
+            lines[29]
+        );
     }
 
     #[test]
     fn a_narrow_screen_shows_the_list_alone() {
         let lines = texts(&screen(&mut picker(), false, 2, &stats(), now(), 60, 30));
         assert!(!lines.iter().any(|line| line.contains("Today")));
-        assert!(lines[6].starts_with(" ▸ api"), "{}", lines[6]);
+        assert!(lines[11].starts_with("  ▸ api"), "{}", lines[11]);
     }
 
     #[test]
@@ -358,7 +399,8 @@ mod tests {
 
     #[test]
     fn a_footer_too_long_is_cut_with_an_ellipsis() {
-        assert_eq!(plain(&keys_line(&FOOTER, 20)), " ↑↓ move · → sessio…");
+        let line = hints_line(&footer(None, &picker()), 20);
+        assert_eq!(plain(&line), " / to search · q to…");
     }
 
     #[test]
@@ -400,9 +442,13 @@ mod tests {
     fn a_searching_screen_with_no_match_says_so() {
         let mut p = picker();
         p.query = "zzz".into();
-        let lines = texts(&screen(&mut p, true, 0, &stats(), now(), 60, 12));
-        assert_eq!(lines[4], " ❯ zzz▌");
-        assert_eq!(lines[6], "   nothing matches");
+        let lines = texts(&screen(&mut p, true, 0, &stats(), now(), 60, 14));
+        assert!(lines[5].starts_with("│ ❯ zzz▌ "), "{}", lines[5]);
+        assert_eq!(
+            lines[8..10],
+            ["❯ ▸ + New folder…", "  ▸ Open another folder…"]
+        );
+        assert_eq!(lines[11], "    nothing matches");
     }
 
     fn arb_folders() -> impl proptest::strategy::Strategy<Value = Vec<Folder>> {

@@ -171,20 +171,23 @@ mod tests {
         (panel, steps, calls)
     }
 
+    /// Down, the key that also moves past the two entries at the top.
+    const DOWN: KeyCode = KeyCode::Down;
+
     fn chars(text: &str) -> Vec<KeyCode> {
         text.chars().map(KeyCode::Char).collect()
     }
 
     #[test]
     fn enter_on_a_folder_starts_a_session_there() {
-        let (_, steps, calls) = drive(&[KeyCode::Down, KeyCode::Enter]);
+        let (_, steps, calls) = drive(&[DOWN, DOWN, DOWN, KeyCode::Enter]);
         assert_eq!(calls.calls(), [["new-window", "-c", "/w/web", "claude"]]);
-        assert_eq!(steps, [Step::Draw, Step::Quit]);
+        assert_eq!(steps, [Step::Draw, Step::Draw, Step::Draw, Step::Quit]);
     }
 
     #[test]
     fn right_opens_the_sessions_and_enter_resumes_one() {
-        let (_, _, calls) = drive(&[KeyCode::Right, KeyCode::Down, KeyCode::Enter]);
+        let (_, _, calls) = drive(&[DOWN, DOWN, KeyCode::Right, DOWN, KeyCode::Enter]);
         assert_eq!(
             calls.calls(),
             [["new-window", "-c", "/w/api", "claude --resume s1"]]
@@ -193,9 +196,9 @@ mod tests {
 
     #[test]
     fn left_from_a_session_goes_back_to_its_folder_and_closes_it() {
-        let keys = [KeyCode::Right, KeyCode::Down, KeyCode::Down, KeyCode::Left];
+        let keys = [DOWN, DOWN, KeyCode::Right, DOWN, DOWN, KeyCode::Left];
         let (panel, _, _) = drive(&keys);
-        assert_eq!(panel.picker.cursor, 0);
+        assert_eq!(panel.picker.cursor, 2);
         assert!(panel.picker.expanded.is_empty());
     }
 

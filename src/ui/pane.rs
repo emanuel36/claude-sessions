@@ -325,7 +325,26 @@ pub fn picker_key(key: &KeyEvent) -> Option<picker::Key> {
 }
 
 /// Runs `new-window` for a row of the folder list: resume its session, or start one.
+///
+/// A create row's folder, and any missing parent, is created first; when that fails, the
+/// failure goes to the error log and nothing starts.
 pub fn open(tmux: &dyn Runner, row: &picker::Row, folders: &[picker::Folder]) {
+    open_with(tmux, row, folders, &paths::process_env);
+}
+
+/// [`open`], logging to the state directory `env` names.
+fn open_with(
+    tmux: &dyn Runner,
+    row: &picker::Row,
+    folders: &[picker::Folder],
+    env: paths::Lookup<'_>,
+) {
+    if row.kind == picker::RowKind::Create {
+        if let Err(e) = std::fs::create_dir_all(&row.path) {
+            paths::log_error_with(env, &format_args!("cannot create {}: {e}", row.path));
+            return;
+        }
+    }
     let command = picker::command(row, folders);
     let mut args = vec!["new-window"];
     args.extend(command.iter().map(String::as_str));
@@ -374,9 +393,10 @@ mod tests {
         KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
     };
 
+    use crate::core::paths::ERROR_LOG;
     use crate::term::tmux::fake::FakeTmux;
-    use crate::ui::pane::{own_window, picker_key, quits, sight, LogOnce, Sight};
-    use crate::ui::picker::Key;
+    use crate::ui::pane::{open, open_with, own_window, picker_key, quits, sight, LogOnce, Sight};
+    use crate::ui::picker::{Key, Row, RowKind};
     use crate::ui::runtime::Msg;
 
     /// Answers each call with the next of `answers`, then with nothing.
@@ -505,6 +525,40 @@ mod tests {
         assert_eq!(log.check(&"x: gone"), None);
         assert_eq!(log.check(&"y: bad"), Some("y: bad".to_owned()));
         assert_eq!(log.check(&"x: gone"), Some("x: gone".to_owned()));
+    }
+
+    /// A row that creates the folder `path`, then starts a session in it.
+    fn create_row(path: &std::path::Path) -> Row {
+        Row {
+            kind: RowKind::Create,
+            path: path.to_string_lossy().into_owned(),
+            ..Row::default()
+        }
+    }
+
+    #[test]
+    fn open_creates_the_folder_then_starts_there() {
+        let t = tempfile::tempdir().unwrap();
+        let path = t.path().join("Documents/Meu-Projeto");
+        let tmux = FakeTmux::silent();
+        open(&tmux, &create_row(&path), &[]);
+        assert!(path.is_dir());
+        let want = ["new-window", "-c", &path.to_string_lossy(), "claude"];
+        assert_eq!(tmux.calls(), [want.map(str::to_owned).to_vec()]);
+    }
+
+    #[test]
+    fn open_logs_and_starts_nothing_when_create_fails() {
+        let t = tempfile::tempdir().unwrap();
+        let path = t.path().join("x");
+        std::fs::write(&path, "").unwrap();
+        let state = t.path().join("state");
+        let env = |key: &str| (key == "CST_STATE_DIR").then(|| state.clone().into_os_string());
+        let tmux = FakeTmux::silent();
+        open_with(&tmux, &create_row(&path), &[], &env);
+        assert!(tmux.calls().is_empty());
+        let log = std::fs::read_to_string(state.join(ERROR_LOG)).unwrap();
+        assert!(log.contains(&*path.to_string_lossy()), "{log}");
     }
 
     #[test]
