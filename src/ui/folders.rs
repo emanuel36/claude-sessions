@@ -7,7 +7,7 @@ use crate::claude::history::HistorySession;
 use crate::claude::transcript::{transcript_path_in, Titles};
 use crate::core::paths;
 use crate::ui::picker::{Folder, Session};
-use crate::ui::search::name;
+use crate::ui::search::{name, Searchable};
 
 /// A session worth listing: its id, title, folder and last use.
 #[derive(Debug, Clone)]
@@ -16,6 +16,7 @@ struct Found {
     title: String,
     path: String,
     last: f64,
+    gone: bool,
 }
 
 /// The sessions worth listing, with their title and folder, kept for one history generation.
@@ -28,6 +29,7 @@ pub struct Scan {
     config: Option<PathBuf>,
     generation: Option<u64>,
     found: Vec<Found>,
+    searchable: Vec<Searchable>,
 }
 
 impl Scan {
@@ -38,6 +40,7 @@ impl Scan {
             config: None,
             generation: None,
             found: Vec::new(),
+            searchable: Vec::new(),
         }
     }
 
@@ -64,13 +67,13 @@ impl Scan {
         opened: &HashSet<String>,
     ) -> Vec<Folder> {
         if self.generation != Some(generation) {
-            self.found = self.scan(history);
+            (self.found, self.searchable) = self.scan(history);
             self.generation = Some(generation);
         }
         // By path, in the order first seen, so folders used at the same time keep that order
         let mut index: HashMap<&str, usize> = HashMap::new();
         let mut folders: Vec<Folder> = Vec::new();
-        for s in &self.found {
+        for s in self.found.iter().filter(|s| !s.gone) {
             let at = *index.entry(&s.path).or_insert_with(|| {
                 folders.push(Folder {
                     path: s.path.clone(),
@@ -103,31 +106,51 @@ impl Scan {
         folders
     }
 
-    /// The sessions with a title, its own or its first prompt, whose folder still exists.
-    fn scan(&mut self, history: &[HistorySession]) -> Vec<Found> {
+    /// The sessions of the last [`Scan::load`], open ones left out, in the scan's order.
+    pub fn searchable(&self, opened: &HashSet<String>) -> Vec<Searchable> {
+        let open = |s: &&Searchable| !opened.contains(&s.id);
+        self.searchable.iter().filter(open).cloned().collect()
+    }
+
+    /// The sessions with a title, its own or its first prompt, and what can be searched in them.
+    fn scan(&mut self, history: &[HistorySession]) -> (Vec<Found>, Vec<Searchable>) {
         let config = self.config.clone().unwrap_or_else(paths::config_dir);
         let mut found = Vec::new();
+        let mut searchable = Vec::new();
         for s in history {
             let mut title = self
                 .titles
                 .get(&s.id, &transcript_path_in(&config, &s.id, &s.cwd));
-            if title.is_empty() {
+            let own_title = !title.is_empty();
+            if !own_title {
                 title.clone_from(&s.first_prompt);
             }
             // Only commands were typed: nothing to come back to
-            if title.is_empty() || !Path::new(&s.cwd).is_dir() {
+            if title.is_empty() {
                 continue;
             }
             let path = s.cwd.trim_end_matches('/');
+            let path = if path.is_empty() { "/" } else { path }.to_owned();
+            let gone = !Path::new(&s.cwd).is_dir();
+            searchable.push(Searchable::new(
+                s.id.clone(),
+                title.clone(),
+                path.clone(),
+                s.last,
+                gone,
+                own_title,
+                &s.prompts,
+            ));
             found.push(Found {
                 id: s.id.clone(),
                 title,
-                path: if path.is_empty() { "/" } else { path }.to_owned(),
+                path,
                 last: s.last,
+                gone,
             });
         }
         self.titles.save();
-        found
+        (found, searchable)
     }
 }
 
@@ -142,6 +165,7 @@ mod tests {
     use crate::claude::history::HistorySession;
     use crate::claude::transcript::{transcript_path_in, Titles};
     use crate::ui::folders::Scan;
+    use crate::ui::search;
 
     fn session(id: &str, cwd: &Path, last: f64, prompt: &str) -> HistorySession {
         HistorySession {
@@ -271,5 +295,67 @@ mod tests {
             (folders[1].path.as_str(), folders[1].name.as_str()),
             ("/", "/")
         );
+    }
+
+    #[test]
+    fn a_session_of_a_deleted_folder_is_searchable_but_not_listed() {
+        let (tmp, mut scan) = setup();
+        let (a, gone) = (tmp.path().join("a"), tmp.path().join("gone"));
+        let history = [
+            session("1", &a, 100.0, "here"),
+            session("2", &gone, 200.0, "lost"),
+        ];
+        let folders = scan.load(&history, 1, &no_costs(), &HashSet::new());
+        assert_eq!(folders.len(), 1);
+        assert_eq!(folders[0].count, 1);
+        let found = scan.searchable(&HashSet::new());
+        let flags: Vec<_> = found.iter().map(|s| (s.id.as_str(), s.gone)).collect();
+        assert_eq!(flags, [("1", false), ("2", true)]);
+        assert_eq!(found[1].name, "gone");
+    }
+
+    #[test]
+    fn an_open_session_is_not_searchable() {
+        let (tmp, mut scan) = setup();
+        let a = tmp.path().join("a");
+        let history = [
+            session("1", &a, 200.0, "open"),
+            session("2", &a, 100.0, "old"),
+        ];
+        scan.load(&history, 1, &no_costs(), &HashSet::new());
+        let found = scan.searchable(&HashSet::from(["1".to_owned()]));
+        let ids: Vec<_> = found.iter().map(|s| s.id.as_str()).collect();
+        assert_eq!(ids, ["2"]);
+    }
+
+    /// Loads a session whose only `LinkedIn` is in its second prompt; the transcript names it
+    /// when `named`.
+    fn linkedin_hits(named: bool) -> Vec<search::Hit> {
+        let (tmp, mut scan) = setup();
+        let a = tmp.path().join("a");
+        if named {
+            let cwd = a.to_string_lossy().into_owned();
+            let path = transcript_path_in(&tmp.path().join("config"), "1", &cwd);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, "{\"type\":\"x\",\"customTitle\":\"named\"}\n").unwrap();
+        }
+        let mut one = session("1", &a, 100.0, "first");
+        one.prompts = vec!["first".into(), "see LinkedIn, em Inglês".into()];
+        scan.load(&[one], 1, &no_costs(), &HashSet::new());
+        let found = scan.searchable(&HashSet::new());
+        assert_eq!(search::hits(&found, "inglês").len(), 1);
+        search::hits(&found, "linkedin")
+    }
+
+    #[test]
+    fn a_later_prompt_is_searched_with_a_title_from_the_transcript() {
+        let hits = linkedin_hits(true);
+        assert_eq!(hits.iter().map(|h| h.count).collect::<Vec<_>>(), [1]);
+    }
+
+    #[test]
+    fn a_later_prompt_is_searched_with_a_title_from_the_first_prompt() {
+        let hits = linkedin_hits(false);
+        assert_eq!(hits.iter().map(|h| h.count).collect::<Vec<_>>(), [1]);
     }
 }
