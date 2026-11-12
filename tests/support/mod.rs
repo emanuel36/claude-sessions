@@ -151,17 +151,23 @@ impl PrivateTmux {
     }
 }
 
-/// The shell command a pane runs for `cst <args>`: the three env vars pointed at `env` and the
-/// test binary first on the PATH. `$TMUX` and `$TMUX_PANE` are the pane's own.
-pub fn pane_command(env: &TestEnv, args: &str) -> String {
+/// The shell command a pane runs for `cst <args>`: the three env vars pointed at `env`, the test
+/// binary first on the PATH, then the folders of `path`. `$TMUX` and `$TMUX_PANE` are the
+/// pane's own.
+///
+/// The windows `cst` opens take this PATH: tmux gives a pane the environment of the client that
+/// asked for it, so a `set-environment -g PATH` on the server would not reach them.
+pub fn pane_command(env: &TestEnv, args: &str, path: &[&Path]) -> String {
     let bin = Path::new(env!("CARGO_BIN_EXE_cst"))
         .parent()
-        .expect("binary dir")
-        .display()
-        .to_string();
+        .expect("binary dir");
+    let dirs: String = std::iter::once(bin)
+        .chain(path.iter().copied())
+        .map(|dir| format!("'{}':", dir.display()))
+        .collect();
     format!(
         "exec env CST_RUNTIME_DIR='{}' CST_STATE_DIR='{}' CLAUDE_CONFIG_DIR='{}' \
-         PATH='{bin}':\"$PATH\" cst {args}",
+         PATH={dirs}\"$PATH\" cst {args}",
         env.runtime_dir().display(),
         env.state_dir().display(),
         env.claude_dir().display(),
@@ -210,7 +216,19 @@ impl TmuxApp {
 
     /// Runs `cst <args>` in a new current window named `window`.
     pub fn run(tmux: PrivateTmux, env: TestEnv, window: &str, args: &str) -> Self {
-        let command = pane_command(&env, args);
+        Self::run_with_path(tmux, env, window, args, &[])
+    }
+
+    /// Like [`TmuxApp::run`], with the folders of `path` next on `cst`'s PATH (see
+    /// [`pane_command`]).
+    pub fn run_with_path(
+        tmux: PrivateTmux,
+        env: TestEnv,
+        window: &str,
+        args: &str,
+        path: &[&Path],
+    ) -> Self {
+        let command = pane_command(&env, args, path);
         let pane = tmux.run(&[
             "new-window",
             "-P",

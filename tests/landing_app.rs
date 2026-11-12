@@ -13,7 +13,8 @@ use support::{write_history, write_program, TmuxApp};
 const START: Duration = Duration::from_secs(5);
 
 /// The landing page in window `home`, over a history of two folders: `alpha-proj` used a
-/// minute ago, then `beta-proj`. A `claude` that sleeps is first on the server's PATH.
+/// minute ago, then `beta-proj`. A `claude` that sleeps is first on the page's PATH, which the
+/// windows it opens take.
 struct Landing {
     app: TmuxApp,
     alpha: PathBuf,
@@ -30,12 +31,6 @@ impl Landing {
         }
         let claude = bin.join("claude");
         write_program(&claude, "#!/bin/sh\nexec sleep 600\n");
-        let path = format!(
-            "{}:{}",
-            bin.display(),
-            std::env::var("PATH").unwrap_or_default()
-        );
-        tmux.run(&["set-environment", "-g", "PATH", &path]);
         write_history(
             &env,
             &[
@@ -43,7 +38,7 @@ impl Landing {
                 ("s2", &beta, 120.0, "write the docs"),
             ],
         );
-        let app = TmuxApp::run(tmux, env, "home", "landing");
+        let app = TmuxApp::run_with_path(tmux, env, "home", "landing", &[&bin]);
         Some(Landing { app, alpha, beta })
     }
 
