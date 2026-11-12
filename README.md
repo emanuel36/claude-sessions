@@ -76,6 +76,7 @@ curl -fsSL https://raw.githubusercontent.com/emanuel36/claude-sessions/main/inst
 ~/.local/state/cst/
 ├── history.json                 prompts read from Claude Code's history
 ├── titles.json                  session titles
+├── spend.json                   tokens by model read from the week's transcripts
 ├── statusline.json              cost and quota last reported
 ├── journal/                     the day's activity, for the statistics
 ├── tmux.conf                    the tmux configuration in use
