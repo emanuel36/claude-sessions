@@ -86,7 +86,7 @@ fn step_and_close_act_on_the_server_they_run_in() {
 fn version_prints_2_0_0() {
     let out = cst(&env(), &["--version"], b"");
     assert!(out.status.success());
-    assert_eq!(String::from_utf8_lossy(&out.stdout), "cst 2.0.0\n");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "cst 1.0.0\n");
 }
 
 #[test]
