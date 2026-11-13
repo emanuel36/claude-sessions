@@ -5,7 +5,7 @@
 //! that takes them, so unit tests use temporary directories.
 
 use std::collections::HashMap;
-use std::fs::{self, File, Metadata};
+use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
 use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::core::growing::{FileId, Position};
 use crate::core::paths;
 
 /// Claude Code's prompt history, in its config folder.
@@ -21,8 +22,6 @@ pub const HISTORY: &str = "history.jsonl";
 pub const STORED_HISTORY: &str = "history.json";
 /// A title shows one line of a prompt at most; the rest need not be kept.
 pub const PROMPT_CHARS: usize = 200;
-/// The bytes before where a reading stopped, kept to tell the file is still the one read.
-const MARK_BYTES: usize = 64;
 
 /// A session from Claude Code's prompt history.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -175,47 +174,21 @@ pub(crate) fn read_history(lines: &[&str]) -> Vec<HistorySession> {
     sessions.newest_first()
 }
 
-/// Which file a reading was made of.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct FileId {
-    path: String,
-    dev: u64,
-    ino: u64,
-}
-
 /// What a history reading stopped at, and what it found until there. This is what is kept on
 /// disk between runs.
 #[derive(Debug, Serialize, Deserialize)]
 struct Reading {
-    file: FileId,
-    offset: u64,
-    /// The bytes just before `offset`.
-    mark: Vec<u8>,
+    #[serde(flatten)]
+    at: Position,
     sessions: Sessions,
 }
 
 impl Reading {
     fn start(file: FileId) -> Self {
         Self {
-            file,
-            offset: 0,
-            mark: Vec::new(),
+            at: Position::start(file),
             sessions: Sessions::default(),
         }
-    }
-
-    /// Tells whether an open history is the file this reading stopped in, grown since.
-    fn continues(&self, file: &mut File, meta: &Metadata, id: &FileId) -> bool {
-        if self.file != *id || meta.len() < self.offset || self.mark.len() > MARK_BYTES {
-            return false;
-        }
-        let Some(from) = self.offset.checked_sub(self.mark.len() as u64) else {
-            return false;
-        };
-        let mut found = vec![0; self.mark.len()];
-        file.seek(SeekFrom::Start(from)).is_ok()
-            && file.read_exact(&mut found).is_ok()
-            && found == self.mark
     }
 
     /// Parses the lines that are complete in `raw`, the bytes read from `offset` on.
@@ -230,8 +203,7 @@ impl Reading {
         for line in complete[..last_newline].split(|&b| b == b'\n') {
             self.sessions.add_line(line);
         }
-        self.offset += complete.len() as u64;
-        self.mark = complete[complete.len().saturating_sub(MARK_BYTES)..].to_vec();
+        self.at.advance(complete);
     }
 }
 
@@ -340,11 +312,7 @@ impl HistoryReader {
         let path = self.config_dir().join(HISTORY);
         let mut file = File::open(&path).ok()?;
         let meta = file.metadata().ok()?;
-        let id = FileId {
-            path: path.to_string_lossy().into_owned(),
-            dev: meta.dev(),
-            ino: meta.ino(),
-        };
+        let id = FileId::of(&path, &meta);
         let stamp = Stamp {
             id: id.clone(),
             mtime: (meta.mtime(), meta.mtime_nsec()),
@@ -357,14 +325,14 @@ impl HistoryReader {
             .reading
             .take()
             .or_else(|| self.load_stored())
-            .filter(|r| r.continues(&mut file, &meta, &id))
+            .filter(|r| r.at.continues(&mut file, &meta, &id))
             .unwrap_or_else(|| Reading::start(id));
-        file.seek(SeekFrom::Start(reading.offset)).ok()?;
+        file.seek(SeekFrom::Start(reading.at.offset)).ok()?;
         let mut raw = Vec::new();
         file.read_to_end(&mut raw).ok()?;
-        let before = reading.offset;
+        let before = reading.at.offset;
         reading.add(&raw);
-        if self.stored && reading.offset != before {
+        if self.stored && reading.at.offset != before {
             self.save(&reading);
         }
         let sessions = reading.sessions.newest_first();

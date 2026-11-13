@@ -153,6 +153,9 @@ impl Reader {
                 today,
                 &mut estimate,
             );
+            if let Some(split) = &mut self.split {
+                split.save();
+            }
             self.key = Some(key);
         }
         &self.totals
@@ -440,7 +443,7 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::claude::history::HistorySession;
-    use crate::claude::spend::ModelSpend;
+    use crate::claude::spend::{ModelSpend, STORED_SPEND};
     use crate::claude::transcript::transcript_path_in;
     use crate::core::journal::{Days, JournalEvent, SessionTotals};
     use crate::ui::usage::{day_summary, working_hours_in, Day, Reader, Totals};
@@ -592,6 +595,21 @@ mod tests {
             ]
         );
         assert_eq!(t.today, 10.0);
+    }
+
+    #[test]
+    fn the_split_keeps_its_readings_for_the_next_process() {
+        let dir = TempDir::new().unwrap();
+        let config = TempDir::new().unwrap();
+        let state = TempDir::new().unwrap();
+        log(dir.path(), 0, &usage(now(), "a", 2.0, 0, 0));
+        let main = transcript_path_in(config.path(), "a", "/w/api");
+        fs::create_dir_all(main.parent().unwrap()).unwrap();
+        fs::write(&main, "{}\n").unwrap();
+        let split = ModelSpend::in_dirs(config.path().into(), state.path().into());
+        let mut r = reader(&dir).split_models(split);
+        r.totals_in(&[session("a", "/w/api")], 0, now(), &tz());
+        assert!(state.path().join(STORED_SPEND).exists());
     }
 
     #[test]
