@@ -160,10 +160,11 @@ impl Landing {
     /// Searching, Esc ends the search and clears it, and keys other than Enter go to the folder
     /// list. Enter opens a disk folder of Open another folder or a create row at once, as the
     /// Alt+n panel does; on a folder of New folder it picks the parent and the search goes on,
-    /// its text cleared for the name; on an entry it opens or closes its tree and the search
-    /// goes on; elsewhere it ends the search. Otherwise `/` starts a search, `q` ends the
-    /// server, Esc clears the search, Backspace with nothing typed does in a tree what ← does,
-    /// and the arrows and Enter go to the list, Enter opening a window.
+    /// its text cleared for the name; on an entry it closes it and the search goes on;
+    /// elsewhere it ends the search. Otherwise `/` starts a search, `n` and `o` open or
+    /// close New folder and Open another folder, `q` ends the server, Esc clears the search,
+    /// Backspace with nothing typed does in a tree what ← does, and the arrows, Enter and the
+    /// entries' Ctrl keys go to the list, Enter opening a window.
     fn key(&mut self, key: &KeyEvent) -> bool {
         if self.searching {
             match key.code {
@@ -187,6 +188,12 @@ impl Landing {
         };
         match typed {
             picker::Key::Char('/') => self.searching = true,
+            picker::Key::Char('n') => {
+                self.picker.key(picker::Key::Entry(Root::New));
+            }
+            picker::Key::Char('o') => {
+                self.picker.key(picker::Key::Entry(Root::Open));
+            }
             picker::Key::Char('q') => {
                 self.tmux.run(&["kill-server"]);
             }
@@ -229,7 +236,7 @@ impl Landing {
             // The text stays, filtering the list; the walk read for it does not
             _ => {
                 self.searching = false;
-                self.picker.disk.forget_search();
+                self.picker.forget_walks();
             }
         }
     }
@@ -238,7 +245,7 @@ impl Landing {
     fn end_search(&mut self) {
         self.searching = false;
         self.picker.end_search();
-        self.picker.disk.forget_search();
+        self.picker.forget_walks();
     }
 
     /// Reads again what is stale.
@@ -257,9 +264,9 @@ impl Landing {
         // ends, so typing on does not read the whole tree again; text left after it ended
         // reads its walk anew
         if stale.records || stale.history {
-            self.picker.disk.forget_folders();
+            self.picker.forget_folders();
             if !self.searching {
-                self.picker.disk.forget_search();
+                self.picker.forget_walks();
             }
         }
     }
@@ -425,7 +432,7 @@ mod tests {
     #[test]
     fn enter_while_searching_opens_a_disk_folder_at_once() {
         let (_t, home, mut page, calls, mut runtime) = home_page();
-        press(&mut page, &mut runtime, &[KeyCode::Down, KeyCode::Enter]);
+        press(&mut page, &mut runtime, &[KeyCode::Char('o')]);
         search(&mut page, &mut runtime, "pro");
         assert_eq!(page.picker.selected().unwrap().kind, RowKind::Dir);
         press(&mut page, &mut runtime, &[KeyCode::Enter]);
@@ -441,7 +448,7 @@ mod tests {
     #[test]
     fn enter_while_searching_on_a_create_row_creates_and_starts() {
         let (t, home, mut page, calls, mut runtime) = home_page();
-        press(&mut page, &mut runtime, &[KeyCode::Down, KeyCode::Enter]);
+        press(&mut page, &mut runtime, &[KeyCode::Char('o')]);
         search(&mut page, &mut runtime, "notes");
         assert_eq!(page.picker.selected().unwrap().kind, RowKind::Create);
         press(&mut page, &mut runtime, &[KeyCode::Enter]);
@@ -457,7 +464,7 @@ mod tests {
     #[test]
     fn enter_on_a_new_folder_match_picks_the_parent_and_keeps_searching() {
         let (_t, home, mut page, calls, mut runtime) = home_page();
-        press(&mut page, &mut runtime, &[KeyCode::Enter]);
+        press(&mut page, &mut runtime, &[KeyCode::Char('n')]);
         search(&mut page, &mut runtime, "pro");
         let picked = page.picker.selected().unwrap();
         assert_eq!((picked.kind, picked.root), (RowKind::Dir, Some(Root::New)));
@@ -579,7 +586,7 @@ mod tests {
         page.shell.history = HistoryReader::with_dirs(false, config, state);
         page.shell.usage = Reader::in_dir(t.path().join("journal"));
         page.records = Box::new(|_| Vec::new());
-        press(&mut page, &mut runtime, &[KeyCode::Down, KeyCode::Enter]);
+        press(&mut page, &mut runtime, &[KeyCode::Char('o')]);
         let listed = |page: &mut Landing, name: &str| {
             let shown = page.picker.shown();
             shown
@@ -610,7 +617,7 @@ mod tests {
         page.shell.history = HistoryReader::with_dirs(false, config, state);
         page.shell.usage = Reader::in_dir(t.path().join("journal"));
         page.records = Box::new(|_| Vec::new());
-        press(&mut page, &mut runtime, &[KeyCode::Down, KeyCode::Enter]);
+        press(&mut page, &mut runtime, &[KeyCode::Char('o')]);
         let found = |page: &mut Landing| -> Vec<String> {
             let shown = page.picker.shown();
             let hits = shown.into_iter().filter(|r| r.kind == RowKind::Dir);
@@ -623,7 +630,7 @@ mod tests {
         page.reload(NOW);
         assert_eq!(found(&mut page), ["projects"], "the walk is kept");
         press(&mut page, &mut runtime, &[KeyCode::Esc]);
-        page.picker.cursor = 1;
+        page.picker.cursor = 0;
         search(&mut page, &mut runtime, "pro");
         let mut hits = found(&mut page);
         hits.sort();
@@ -642,7 +649,7 @@ mod tests {
         page.shell.history = HistoryReader::with_dirs(false, config, state);
         page.shell.usage = Reader::in_dir(t.path().join("journal"));
         page.records = Box::new(|_| Vec::new());
-        press(&mut page, &mut runtime, &[KeyCode::Down, KeyCode::Enter]);
+        press(&mut page, &mut runtime, &[KeyCode::Char('o')]);
         search(&mut page, &mut runtime, "w");
         while page.picker.selected().unwrap().kind != RowKind::Folder {
             press(&mut page, &mut runtime, &[KeyCode::Down]);
@@ -665,22 +672,22 @@ mod tests {
     #[test]
     fn escape_while_searching_forgets_where_the_search_started() {
         let (_t, _, mut page, _, mut runtime) = home_page();
-        press(&mut page, &mut runtime, &[KeyCode::Enter]);
+        press(&mut page, &mut runtime, &[KeyCode::Char('n')]);
         search(&mut page, &mut runtime, "pro");
         assert!(page.picker.anchor.is_some());
         press(&mut page, &mut runtime, &[KeyCode::Esc]);
         assert_eq!(page.picker.anchor, None);
-        page.picker.cursor = 4;
+        page.picker.cursor = 3;
         assert_eq!(page.picker.selected().unwrap().kind, RowKind::Folder);
         let keys = [KeyCode::Char('/'), KeyCode::Backspace];
         press(&mut page, &mut runtime, &keys);
-        assert_eq!(page.picker.cursor, 4);
+        assert_eq!(page.picker.cursor, 3);
     }
 
     #[test]
     fn backspace_outside_a_search_closes_like_left() {
         let (_t, _, mut page, _, mut runtime) = home_page();
-        press(&mut page, &mut runtime, &[KeyCode::Enter]);
+        press(&mut page, &mut runtime, &[KeyCode::Char('n')]);
         assert!(page.picker.open.contains(&Root::New));
         press(&mut page, &mut runtime, &[KeyCode::Down, KeyCode::Right]);
         assert_eq!(page.picker.dirs.len(), 1);
@@ -692,25 +699,59 @@ mod tests {
     }
 
     #[test]
-    fn enter_on_an_entry_while_searching_toggles_it() {
+    fn enter_on_an_entry_while_searching_closes_it() {
         let (_t, _, mut page, calls, mut runtime) = home_page();
-        press(
-            &mut page,
-            &mut runtime,
-            &[KeyCode::Char('/'), KeyCode::Enter],
-        );
-        assert!(page.picker.open.contains(&Root::New));
-        assert!(page.searching);
-        press(&mut page, &mut runtime, &[KeyCode::Enter]);
-        assert!(!page.picker.open.contains(&Root::New));
+        let keys = [KeyCode::Char('n'), KeyCode::Char('/'), KeyCode::Enter];
+        press(&mut page, &mut runtime, &keys);
+        assert!(page.picker.open.is_empty());
         assert!(page.searching);
         assert_eq!(calls.calls(), Vec::<Vec<String>>::new());
     }
 
     #[test]
+    fn n_and_o_open_and_close_the_entries_outside_a_search() {
+        for (c, root) in [('n', Root::New), ('o', Root::Open)] {
+            let (_t, _, mut page, calls, mut runtime) = home_page();
+            press(&mut page, &mut runtime, &[KeyCode::Char(c)]);
+            assert_eq!(page.picker.open, vec![root]);
+            let row = page.picker.selected().unwrap();
+            assert_eq!((row.kind, row.root), (RowKind::Root, Some(root)));
+            assert_eq!(page.picker.query, "");
+            press(&mut page, &mut runtime, &[KeyCode::Char(c)]);
+            assert!(page.picker.open.is_empty());
+            assert_eq!(page.picker.selected().unwrap().path, "/w/api");
+            assert_eq!(calls.calls(), Vec::<Vec<String>>::new());
+        }
+    }
+
+    #[test]
+    fn n_is_typed_while_searching_and_ctrl_n_opens_new_folder() {
+        let (_t, home, mut page, _, mut runtime) = home_page();
+        let keys = [KeyCode::Char('/'), KeyCode::Char('n'), KeyCode::Char('o')];
+        press(&mut page, &mut runtime, &keys);
+        assert_eq!(page.picker.query, "no");
+        assert!(page.picker.open.is_empty());
+        let ctrl = |c| Msg::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL));
+        page.handle(ctrl('n'), NOW, &mut runtime);
+        assert_eq!(page.picker.open, vec![Root::New]);
+        assert!(page.searching);
+        // The text typed searches the tree opened: "no" names a folder to create
+        assert_eq!(page.picker.anchor, Some((Root::New, home.clone())));
+        let row = page.picker.selected().unwrap();
+        assert_eq!(
+            (row.kind, row.path),
+            (RowKind::Create, format!("{home}/no"))
+        );
+        // Outside a search too
+        press(&mut page, &mut runtime, &[KeyCode::Esc]);
+        page.handle(ctrl('o'), NOW, &mut runtime);
+        assert_eq!(page.picker.open, vec![Root::Open, Root::New]);
+    }
+
+    #[test]
     fn enter_on_a_folder_starts_a_session_there() {
         let (mut page, calls, mut runtime) = page();
-        let keys = [KeyCode::Down, KeyCode::Down, KeyCode::Down, KeyCode::Enter];
+        let keys = [KeyCode::Down, KeyCode::Enter];
         press(&mut page, &mut runtime, &keys);
         assert_eq!(calls.calls(), [["new-window", "-c", "/w/web", "claude"]]);
     }
@@ -718,13 +759,7 @@ mod tests {
     #[test]
     fn right_opens_a_folders_sessions_and_enter_resumes_one() {
         let (mut page, calls, mut runtime) = page();
-        let keys = [
-            KeyCode::Down,
-            KeyCode::Down,
-            KeyCode::Right,
-            KeyCode::Down,
-            KeyCode::Enter,
-        ];
+        let keys = [KeyCode::Right, KeyCode::Down, KeyCode::Enter];
         press(&mut page, &mut runtime, &keys);
         assert!(calls.ran(&["new-window", "-c", "/w/api", "claude --resume s1"]));
     }

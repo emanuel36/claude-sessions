@@ -307,10 +307,13 @@ pub fn quits(key: &KeyEvent) -> bool {
     key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('c' | 'q'))
 }
 
-/// The key the folder list takes for a key press, if any: arrows, Enter, Backspace, and a
-/// character typed with no modifier but Shift.
+/// The key the folder list takes for a key press, if any: arrows, Enter, Backspace, Ctrl+n and
+/// Ctrl+o for the entries, and a character typed with no modifier but Shift.
 pub fn picker_key(key: &KeyEvent) -> Option<picker::Key> {
+    let ctrl = key.modifiers == KeyModifiers::CONTROL;
     Some(match key.code {
+        KeyCode::Char('n') if ctrl => picker::Key::Entry(picker::Root::New),
+        KeyCode::Char('o') if ctrl => picker::Key::Entry(picker::Root::Open),
         KeyCode::Up => picker::Key::Up,
         KeyCode::Down => picker::Key::Down,
         KeyCode::Left => picker::Key::Left,
@@ -397,7 +400,7 @@ mod tests {
     use crate::core::paths::ERROR_LOG;
     use crate::term::tmux::fake::FakeTmux;
     use crate::ui::pane::{open, open_with, own_window, picker_key, quits, sight, LogOnce, Sight};
-    use crate::ui::picker::{Key, Row, RowKind};
+    use crate::ui::picker::{Key, Root, Row, RowKind};
     use crate::ui::runtime::Msg;
 
     /// Answers each call with the next of `answers`, then with nothing.
@@ -515,6 +518,9 @@ mod tests {
         let ctrl = KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL);
         let alt = KeyEvent::new(KeyCode::Char('w'), KeyModifiers::ALT);
         assert_eq!((picker_key(&ctrl), picker_key(&alt)), (None, None));
+        let ctrl = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
+        assert_eq!(picker_key(&ctrl('n')), Some(Key::Entry(Root::New)));
+        assert_eq!(picker_key(&ctrl('o')), Some(Key::Entry(Root::Open)));
         assert_eq!(picker_key(&key(KeyCode::Tab)), None);
         assert_eq!(picker_key(&key(KeyCode::Esc)), None);
     }

@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use cst::ui::landing;
-use cst::ui::picker::{self, Folder, Picker};
+use cst::ui::picker::{self, Folder, Picker, Root};
 use cst::ui::search::Searchable;
 use cst::ui::sidebar::{column, Entry, Run, Stats};
 use ratatui::style::{Color, Modifier, Style};
@@ -40,6 +40,12 @@ struct ListFixture {
     /// The sessions of any folder that the typed text searches.
     #[serde(default)]
     sessions: Vec<SessionFixture>,
+    /// The entries open: `new` for New folder, `open` for Open another folder.
+    #[serde(default)]
+    open: Vec<String>,
+    /// The home folder the entries' trees start in, else the process's.
+    #[serde(default)]
+    home: Option<String>,
 }
 
 /// One session the search can find.
@@ -64,6 +70,16 @@ impl ListFixture {
         p.cursor = self.cursor;
         p.expanded = self.expanded.into_iter().collect();
         p.scroll = self.scroll;
+        p.open = (self.open.iter())
+            .map(|name| match name.as_str() {
+                "new" => Root::New,
+                "open" => Root::Open,
+                other => panic!("no entry {other}"),
+            })
+            .collect();
+        if let Some(home) = self.home {
+            p.home = home;
+        }
         p.sessions = self
             .sessions
             .into_iter()
@@ -210,9 +226,9 @@ fn screens_match_python() {
         assert_eq!(actual.len(), expected.len(), "{name}: line count");
         checked += 1;
     }
-    // Every fixture is compared: 7 sidebar, 5 landing and 5 panel
+    // Every fixture is compared: 7 sidebar, 6 landing and 5 panel
     assert_eq!(checked, fixtures.len(), "fixtures checked");
-    assert_eq!(checked, 17, "fixtures checked");
+    assert_eq!(checked, 18, "fixtures checked");
 }
 
 #[test]

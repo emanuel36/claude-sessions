@@ -66,7 +66,8 @@ pub struct Folder {
     pub sessions: Vec<Session>,
 }
 
-/// An entry to the disk, at the top of the list; each opens its own tree of the home folder.
+/// An entry to the disk, opened by its key; while open it heads the list with its own tree of
+/// the home folder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Root {
     /// Picks the parent of a folder to create.
@@ -74,9 +75,6 @@ pub enum Root {
     /// Opens a folder Claude never ran in.
     Open,
 }
-
-/// The entries to the disk, in list order.
-const ROOTS: [Root; 2] = [Root::New, Root::Open];
 
 /// By folder, when a Claude session last ran in or below it.
 type Recent = HashMap<String, f64>;
@@ -152,6 +150,8 @@ pub enum Key {
     Backspace,
     /// Types a character into the search.
     Char(char),
+    /// Opens an entry to the disk, or closes it.
+    Entry(Root),
 }
 
 /// What the user did in the list: the search, the selected row and the open folders.
@@ -170,10 +170,10 @@ pub struct Picker {
     pub is_dir: Box<dyn Fn(&str) -> bool>,
     /// The home folder, where the trees start.
     pub home: String,
-    /// The folders read from disk.
-    pub disk: Disk,
-    /// The entries showing their tree.
-    pub open: BTreeSet<Root>,
+    /// The folders read from disk, by entry: New folder's, then Open another folder's.
+    disks: [Disk; 2],
+    /// The entries on show, each with its tree, the last opened first.
+    pub open: Vec<Root>,
     /// The tree folders showing their subfolders, by entry.
     pub dirs: BTreeSet<(Root, String)>,
     /// While typing in a tree: the entry and the folder searched below.
@@ -184,9 +184,9 @@ pub struct Picker {
     pub found_shown: usize,
     /// How many of the sessions found are scrolled past.
     found_scroll: usize,
-    /// Where the cursor was when the first character was typed in a tree, to go back to once
-    /// the text is cleared.
-    typed_at: usize,
+    /// The row the cursor was on when the first character was typed in a tree, to go back to
+    /// once the text is cleared.
+    typed_at: Option<Row>,
     /// By folder, when a Claude session last ran in or below it, with the history it was read
     /// from.
     recent: RefCell<(Option<History>, Rc<Recent>)>,
@@ -212,16 +212,31 @@ impl Picker {
             home: paths::home(&paths::process_env)
                 .to_string_lossy()
                 .into_owned(),
-            disk: Disk::default(),
-            open: BTreeSet::new(),
+            disks: Default::default(),
+            open: Vec::new(),
             dirs: BTreeSet::new(),
             anchor: None,
             sessions: Vec::new(),
             found_shown: SHOWN,
             found_scroll: 0,
-            typed_at: 0,
+            typed_at: None,
             recent: RefCell::default(),
         }
+    }
+
+    /// The folders read from disk for `root`'s tree.
+    fn disk(&self, root: Root) -> &Disk {
+        &self.disks[root as usize]
+    }
+
+    /// Forgets each folder's subfolders read for the trees, keeping the searches' walks.
+    pub fn forget_folders(&self) {
+        self.disks.iter().for_each(Disk::forget_folders);
+    }
+
+    /// Forgets the searches' walks and matches in the trees.
+    pub fn forget_walks(&self) {
+        self.disks.iter().for_each(Disk::forget_search);
     }
 
     /// The folder searched below under `root`, while the text typed in its tree is not blank.
@@ -230,16 +245,14 @@ impl Picker {
         (*anchored == root && !self.query.trim().is_empty()).then_some(dir.as_str())
     }
 
-    /// An entry's row, then its tree when open, or the search below one of its folders.
+    /// An open entry's row, then its tree, or the search below one of its folders.
     fn root_rows(&self, root: Root) -> Vec<Row> {
-        let open = self.open.contains(&root);
         let searched = self.searched(root);
         // An entry's `branch` carries its hint
-        let hint = match (searched, open, root) {
-            (_, false, _) => String::new(),
-            (Some(dir), true, _) => format!("in {}/", tilde(dir, &self.home)),
-            (None, true, Root::New) => "pick the parent, then type the name".to_owned(),
-            (None, true, Root::Open) => "type to search below".to_owned(),
+        let hint = match (searched, root) {
+            (Some(dir), _) => format!("in {}/", tilde(dir, &self.home)),
+            (None, Root::New) => "pick the parent, then type the name".to_owned(),
+            (None, Root::Open) => "type to search below".to_owned(),
         };
         let mut out = vec![Row {
             kind: RowKind::Root,
@@ -254,7 +267,6 @@ impl Picker {
             ..Row::default()
         }];
         match searched {
-            _ if !open => {}
             Some(dir) => self.search_rows(root, dir, &mut out),
             None => self.tree_rows(root, &self.home, "", &mut out),
         }
@@ -277,8 +289,9 @@ impl Picker {
             Vec::new()
         } else {
             let recent = self.recent();
-            self.disk.search(dir, text, &|path| {
-                self.disk.usage(path, recent.get(path).copied())
+            let disk = self.disk(root);
+            disk.search(dir, text, &|path| {
+                disk.usage(path, recent.get(path).copied())
             })
         };
         // Only a name relative to `dir` stays below it: no `~`, `/`, `.` or `..` lead out
@@ -331,10 +344,11 @@ impl Picker {
     /// * `out`: where the rows go.
     fn tree_rows(&self, root: Root, dir: &str, prefix: &str, out: &mut Vec<Row>) {
         let recent = self.recent();
-        let mut names = self.disk.children(dir);
+        let disk = self.disk(root);
+        let mut names = disk.children(dir);
         names.sort_by_cached_key(|name| {
             let path = tree::join(dir, name);
-            self.disk.usage(&path, recent.get(&path).copied())
+            disk.usage(&path, recent.get(&path).copied())
         });
         let count = names.len();
         for (i, name) in names.into_iter().enumerate() {
@@ -369,12 +383,12 @@ impl Picker {
     }
 
     /// The entry and the folder that text typed on `row` searches below: the folder under the
-    /// cursor if it is open, else the one holding it (the home folder on an open entry).
-    /// `None` on a history row or a closed entry: the text then only filters the history.
+    /// cursor if it is open, else the one holding it (the home folder on an entry). `None` on a
+    /// history row: the text then only filters the history.
     pub fn anchor_of(&self, row: &Row) -> Option<(Root, String)> {
         let root = row.root?;
         let dir = match row.kind {
-            RowKind::Root if self.open.contains(&root) => self.home.clone(),
+            RowKind::Root => self.home.clone(),
             RowKind::Dir if self.dirs.contains(&(root, row.path.clone())) => row.path.clone(),
             RowKind::Dir => Path::new(&row.path)
                 .parent()
@@ -394,7 +408,9 @@ impl Picker {
     /// Opens an entry and every folder between the home folder and `path`, so its tree shows
     /// `path`.
     fn reveal(&mut self, root: Root, path: &str) {
-        self.open.insert(root);
+        if !self.open.contains(&root) {
+            self.open.insert(0, root);
+        }
         let home = Path::new(&self.home);
         let mut at = Path::new(path).parent();
         while let Some(dir) = at.filter(|d| d.starts_with(home) && *d != home) {
@@ -403,12 +419,60 @@ impl Picker {
         }
     }
 
+    /// Opens a closed entry on top of the list, the cursor on its row; text already typed then
+    /// searches its tree, as if typed on its row. Closes an open one, as
+    /// [`Picker::close_entry`] does.
+    fn toggle(&mut self, root: Root) {
+        if self.open.contains(&root) {
+            let row = self.selected();
+            self.close_entry(root, row.as_ref());
+            return;
+        }
+        self.open.insert(0, root);
+        let typed = !self.query.is_empty();
+        if typed {
+            self.anchor = Some((root, self.home.clone()));
+            self.found_scroll = 0;
+        }
+        let shown = self.shown();
+        let entry = shown
+            .iter()
+            .position(|r| r.kind == RowKind::Root && r.root == Some(root));
+        if typed {
+            self.typed_at = entry.and_then(|i| shown.get(i)).cloned();
+        }
+        let at = if typed {
+            self.typing_cursor(&shown)
+        } else {
+            None
+        };
+        self.cursor = at.or(entry).unwrap_or(0);
+    }
+
+    /// Takes an entry and its tree off the list and drops the folders read for it, so it opens
+    /// anew; text typed in its tree goes on filtering the history. The cursor stays on `row`,
+    /// the row it was on, if still listed, else goes to the other entry, else to the first
+    /// history row.
+    fn close_entry(&mut self, root: Root, row: Option<&Row>) {
+        self.open.retain(|&r| r != root);
+        self.disk(root).clear();
+        if self.anchor.as_ref().is_some_and(|(r, _)| *r == root) {
+            self.anchor = None;
+            self.typed_at = None;
+        }
+        let shown = self.shown();
+        self.cursor = row
+            .and_then(|row| shown.iter().position(|r| same_row(r, row)))
+            .or_else(|| shown.iter().position(|r| r.kind == RowKind::Root))
+            .or_else(|| shown.iter().position(|r| r.root.is_none()))
+            .unwrap_or(0);
+    }
+
     /// Left in a tree: closes an open folder, else moves to the folder holding it, or to the
-    /// entry; on an entry, closes its tree and drops the folders read, so it opens anew.
+    /// entry; on an entry, closes it.
     fn close(&mut self, root: Root, row: &Row) {
         if row.kind == RowKind::Root {
-            self.open.remove(&root);
-            self.disk.clear();
+            self.close_entry(root, Some(row));
             return;
         }
         if self.dirs.remove(&(root, row.path.clone())) {
@@ -454,13 +518,13 @@ impl Picker {
             .collect()
     }
 
-    /// The rows on show: the entries, each followed by its tree when open, then the history: a
-    /// typed path, the sessions found and the folders. The cursor is kept on one of them.
+    /// The rows on show: the open entries, each followed by its tree, then the history: a typed
+    /// path, the sessions found and the folders. The cursor is kept on one of them.
     pub fn shown(&mut self) -> Vec<Row> {
         // Sessions that went away under the same text must not leave the block scrolled past them
         let last_start = self.found().len().saturating_sub(self.found_shown);
         self.found_scroll = self.found_scroll.min(last_start);
-        let mut out: Vec<Row> = ROOTS.iter().flat_map(|&r| self.root_rows(r)).collect();
+        let mut out: Vec<Row> = self.open.iter().flat_map(|&r| self.root_rows(r)).collect();
         let mut history = rows(
             &self.folders,
             &self.query,
@@ -484,16 +548,16 @@ impl Picker {
 
     /// Applies a key; returns the row to open on Enter, else `None`.
     pub fn key(&mut self, key: Key) -> Option<Row> {
+        if let Key::Entry(root) = key {
+            self.toggle(root);
+            return None;
+        }
         let row = self.selected();
         let kind = row.as_ref().map(|r| r.kind);
         let root = row.as_ref().and_then(|r| r.root);
         match (key, root) {
             (Key::Enter, Some(root)) if kind == Some(RowKind::Root) => {
-                if self.open.remove(&root) {
-                    self.disk.clear();
-                } else {
-                    self.open.insert(root);
-                }
+                self.close_entry(root, row.as_ref());
             }
             // In the new-folder tree, Enter on a folder picks it as the parent: it opens there,
             // the cursor on it, ready for the name
@@ -504,9 +568,6 @@ impl Picker {
                     self.dirs.insert((Root::New, row.path.clone()));
                     self.select_dir(Root::New, &row.path);
                 }
-            }
-            (Key::Right, Some(root)) if kind == Some(RowKind::Root) => {
-                self.open.insert(root);
             }
             // On a match, opens the tree down to it and the match itself, and leaves the search
             (Key::Right, Some(root))
@@ -572,6 +633,8 @@ impl Picker {
                 }
             }
             Key::Backspace | Key::Char(_) => self.typed(key, row.as_ref()),
+            // [`Picker::key`] toggles the entries before any row is read
+            Key::Entry(_) => {}
         }
         self.shown();
         None
@@ -586,26 +649,32 @@ impl Picker {
         if let Key::Char(c) = key {
             if self.query.is_empty() {
                 self.anchor = row.and_then(|r| self.anchor_of(r));
-                self.typed_at = self.cursor;
+                self.typed_at = row.cloned();
             }
             self.query.push(c);
         } else {
             self.query.pop();
             if self.query.is_empty() && self.anchor.take().is_some() {
-                self.cursor = self.typed_at;
+                // Back on that row wherever it is now: rows may have come above it since
+                if let Some(at) = self.typed_at.take() {
+                    self.select(|r| same_row(r, &at));
+                }
                 return;
             }
         }
-        self.after_typing();
+        let shown = self.shown();
+        if let Some(i) = self.typing_cursor(&shown) {
+            self.cursor = i;
+        }
     }
 
-    /// The cursor after a key typed into the search: on the typed path's row when listed, else
-    /// as [`Picker::tree_cursor`] puts it in a searched tree; with no tree searched, on the first
-    /// folder, else the first session found, else the first history row.
-    fn after_typing(&mut self) {
-        let shown = self.shown();
+    /// Where the cursor goes after a key typed into the search: on the typed path's row when
+    /// listed, else as [`Picker::tree_cursor`] puts it in a searched tree; with no tree
+    /// searched, on the first folder, else the first session found, else the first history
+    /// row.
+    fn typing_cursor(&self, shown: &[Row]) -> Option<usize> {
         // A typed path that exists is what the text names, wherever it was typed
-        let at = shown
+        shown
             .iter()
             .position(|r| r.kind == RowKind::Path)
             .or_else(|| match self.anchor.as_ref().map(|(root, _)| *root) {
@@ -613,11 +682,8 @@ impl Picker {
                     .iter()
                     .find_map(|&kind| shown.iter().position(|r| r.kind == kind))
                     .or_else(|| shown.iter().position(|r| r.root.is_none())),
-                Some(root) => self.tree_cursor(root, &shown),
-            });
-        if let Some(i) = at {
-            self.cursor = i;
-        }
+                Some(root) => self.tree_cursor(root, shown),
+            })
     }
 
     /// Where the cursor goes in `root`'s search: on a match one level down whose name starts
@@ -695,6 +761,13 @@ impl Picker {
         }
         false
     }
+}
+
+/// Whether two rows are the same line of the list, whatever their tree lines, hint, marks or
+/// scroll mark.
+fn same_row(a: &Row, b: &Row) -> bool {
+    let key = |r: &Row| (r.kind, r.root, r.folder, r.session);
+    key(a) == key(b) && a.path == b.path && a.id == b.id
 }
 
 /// Tells whether a folder's path holds every word of the query, ignoring case.
@@ -884,20 +957,16 @@ fn cut(mut line: Line<'static>, width: usize) -> Line<'static> {
     line
 }
 
-/// An entry to the disk: a grey arrow, a green `+` for a new folder, its name in bold and, when
-/// open, its hint in grey.
+/// An open entry to the disk: a grey arrow, a green `+` for a new folder, its name in bold and
+/// its hint in grey.
 fn root_line(row: &Row, width: usize) -> Line<'static> {
-    // Only an open entry has a hint
-    let open = !row.branch.is_empty();
-    let mut line = styled(&[(if open { " ▾ " } else { " ▸ " }, SOFT)]);
+    let mut line = styled(&[(" ▾ ", SOFT)]);
     if row.root == Some(Root::New) {
         push(&mut line, "+ ", GREEN);
     }
     push(&mut line, row.label.clone(), STRONG);
-    if open {
-        push(&mut line, "  ", INK);
-        push(&mut line, row.branch.clone(), INACTIVE);
-    }
+    push(&mut line, "  ", INK);
+    push(&mut line, row.branch.clone(), INACTIVE);
     cut(line, width)
 }
 
@@ -1182,6 +1251,33 @@ pub fn search_box(
     ]
 }
 
+/// The keys that open the entries wherever characters are typed into the search, New folder's
+/// first.
+pub const ENTRY_KEYS: [&str; 2] = ["Ctrl+n", "Ctrl+o"];
+
+/// What the keys of New folder and Open another folder do, as `(key, what it does)`: open the
+/// entry, or close it while it is open.
+///
+/// # Arguments
+/// * `keys`: the keys of New folder and Open another folder, in that order.
+/// * `picker`: what is open.
+pub fn entry_hints(keys: [&'static str; 2], picker: &Picker) -> [(&'static str, &'static str); 2] {
+    let does = |root, open, close| {
+        if picker.open.contains(&root) {
+            close
+        } else {
+            open
+        }
+    };
+    [
+        (keys[0], does(Root::New, "new folder", "close new folder")),
+        (
+            keys[1],
+            does(Root::Open, "open folder", "close open folder"),
+        ),
+    ]
+}
+
 /// What the keys do on the selected row, as `(key, what it does)`, ending with Esc. ← in a
 /// tree is offered only while nothing is typed, as it does nothing then.
 ///
@@ -1192,10 +1288,7 @@ pub fn hints(row: Option<&Row>, picker: &Picker) -> Vec<(&'static str, &'static 
     let left = picker.query.is_empty();
     let mut keys = match row {
         Some(r) => match (r.kind, r.root) {
-            (RowKind::Root, Some(root)) if picker.open.contains(&root) => {
-                vec![(if left { "Enter/←" } else { "Enter" }, "close")]
-            }
-            (RowKind::Root, _) => vec![("Enter/→", "open")],
+            (RowKind::Root, _) => vec![(if left { "Enter/←" } else { "Enter" }, "close")],
             (RowKind::Dir, Some(Root::New)) if left => {
                 vec![("Enter", "pick as parent"), ("←", "back")]
             }
@@ -1235,7 +1328,7 @@ pub fn hints_line(keys: &[(&str, &str)], width: usize) -> Line<'static> {
 }
 
 /// The Alt+n panel as `height` lines of `width` columns: the search box, a blank line, the list
-/// and what the keys do on the selected row.
+/// and what the keys do: on the selected row, Esc, then the entries' keys.
 pub fn screen(picker: &mut Picker, now: f64, width: u16, height: u16) -> Vec<Line<'static>> {
     let shown = picker.shown();
     let height = usize::from(height);
@@ -1253,7 +1346,10 @@ pub fn screen(picker: &mut Picker, now: f64, width: u16, height: u16) -> Vec<Lin
     while lines.len() < height.saturating_sub(1) {
         lines.push(Line::default());
     }
-    lines.push(hints_line(&hints(shown.get(picker.cursor), picker), width));
+    // The entries' keys last: a line too long loses them first
+    let mut keys = hints(shown.get(picker.cursor), picker);
+    keys.extend(entry_hints(ENTRY_KEYS, picker));
+    lines.push(hints_line(&keys, width));
     lines
         .into_iter()
         .map(|line| {
@@ -1327,9 +1423,9 @@ mod tests {
 
     use crate::ui::line::{cell_len, cells};
     use crate::ui::picker::{
-        command, dir_line, hints, hints_line, hit_line, keys_line, list_lines, placeholder, rows,
-        screen, search_box, session_line, tilde, Folder, Key, Picker, Root, Row, RowKind, Session,
-        WIDTH,
+        command, dir_line, entry_hints, hints, hints_line, hit_line, keys_line, list_lines,
+        placeholder, rows, screen, search_box, session_line, tilde, Folder, Key, Picker, Root, Row,
+        RowKind, Session, ENTRY_KEYS, WIDTH,
     };
     use crate::ui::search::Searchable;
     use crate::ui::words::{CLAUDE, GREEN, INACTIVE, INK, PERMISSION, SOFT, SUBTLE};
@@ -1372,12 +1468,6 @@ mod tests {
         let mut p = Picker::new(Box::new(move |_| is_dir));
         p.folders = folders();
         p
-    }
-
-    /// Moves the cursor past the two entries, onto the first history row.
-    fn past_entries(p: &mut Picker) {
-        p.key(Key::Down);
-        p.key(Key::Down);
     }
 
     fn set(paths: &[&str]) -> BTreeSet<String> {
@@ -1434,13 +1524,12 @@ mod tests {
     #[test]
     fn a_folders_sessions_scroll_past_the_last_and_back() {
         let mut p = picker(false);
-        past_entries(&mut p);
         p.key(Key::Right);
         for _ in 0..7 {
             p.key(Key::Down);
         }
         // Two steps past the fifth session scroll by two; the cursor stays on the last line
-        assert_eq!(p.cursor, 7);
+        assert_eq!(p.cursor, 5);
         assert_eq!(p.scroll, HashMap::from([("/w/api".to_owned(), 2)]));
         let shown = p.shown();
         assert_eq!(
@@ -1457,7 +1546,7 @@ mod tests {
         for _ in 0..6 {
             p.key(Key::Up);
         }
-        assert_eq!(p.cursor, 3);
+        assert_eq!(p.cursor, 1);
         assert_eq!(p.scroll, HashMap::from([("/w/api".to_owned(), 1)]));
         p.key(Key::Left);
         assert!(p.scroll.is_empty() && p.expanded.is_empty());
@@ -1494,7 +1583,6 @@ mod tests {
         // query, and "w" keeps both folders
         p.query = "w".into();
         p.expanded = set(&["/w/api"]);
-        past_entries(&mut p);
         let lines = screen(&mut p, NOW, WIDTH as u16 + 1, 19);
         assert_eq!(lines.len(), 19);
         let text: Vec<String> = lines.iter().map(plain).collect();
@@ -1505,20 +1593,17 @@ mod tests {
         assert!(text[0].starts_with('╭') && text[2].starts_with('╰'));
         assert!(text[1].starts_with("│ ❯ w▌"), "{}", text[1]);
         assert_eq!(text[3], "");
-        // The two entries come first, closed, a rule under them
-        assert_eq!(text[4], "  ▸ + New folder…");
-        assert_eq!(text[5], "  ▸ Open another folder…");
-        assert_eq!(text[6].trim(), "─".repeat(WIDTH - 2));
-        assert!(text[7].starts_with("❯ ▾ api") && text[7].ends_with("1m ago"));
-        assert_eq!(text[8], "    41 sessions · $12.50 7d");
-        assert!(text[9].starts_with("      ├ task 0") && text[9].ends_with("$1.50"));
-        assert!(text[11].starts_with("      ├ task 2") && text[11].contains("2h"));
+        // The closed entries are not listed: the history comes first
+        assert!(text[4].starts_with("❯ ▾ api") && text[4].ends_with("1m ago"));
+        assert_eq!(text[5], "    41 sessions · $12.50 7d");
+        assert!(text[6].starts_with("      ├ task 0") && text[6].ends_with("$1.50"));
+        assert!(text[8].starts_with("      ├ task 2") && text[8].contains("2h"));
         // More sessions scroll into view below: a mark, no closing branch yet
-        assert!(text[13].starts_with("      ▼ task 4"), "{}", text[13]);
-        assert_eq!(text[14].trim(), "─".repeat(WIDTH - 2));
+        assert!(text[10].starts_with("      ▼ task 4"), "{}", text[10]);
+        assert_eq!(text[11].trim(), "─".repeat(WIDTH - 2));
         // No spend this week: no spend part
-        assert!(text[15].starts_with("  ▸ web"));
-        assert_eq!(text[16], "    1 session");
+        assert!(text[12].starts_with("  ▸ web"));
+        assert_eq!(text[13], "    1 session");
         // The hints of the open folder, cut at this narrow width
         assert_eq!(text[18], " Enter to new session · ← to close · Esc to can…");
     }
@@ -1607,15 +1692,13 @@ mod tests {
     #[test]
     fn nothing_matches_only_when_no_row_at_all_matches() {
         let (_t, mut p, _) = home_picker();
-        p.key(Key::Down);
-        p.key(Key::Right);
+        p.key(Key::Entry(Root::Open));
         // A folder on disk matches, no history folder does
         type_text(&mut p, "Music");
         assert!(!says_nothing_matches(&mut p));
         // Neither a folder on disk nor a history folder, and no create row
         let (_t, mut p, _) = home_picker();
-        p.key(Key::Down);
-        p.key(Key::Right);
+        p.key(Key::Entry(Root::Open));
         type_text(&mut p, "~zz");
         assert!(!below(&mut p, Root::Open)
             .iter()
@@ -1623,8 +1706,7 @@ mod tests {
         assert!(says_nothing_matches(&mut p));
         // A tree open but not searched: its folders match nothing
         let (_t, mut p, _) = home_picker();
-        p.key(Key::Down);
-        p.key(Key::Right);
+        p.key(Key::Entry(Root::Open));
         p.key(Key::Down);
         p.key(Key::Down);
         p.key(Key::Down);
@@ -1638,7 +1720,6 @@ mod tests {
     #[test]
     fn the_picker_moves_opens_and_types() {
         let mut p = picker(false);
-        past_entries(&mut p);
         assert_eq!(p.key(Key::Right), None);
         assert!(p.expanded.contains("/w/api"));
         p.key(Key::Down);
@@ -1646,10 +1727,10 @@ mod tests {
         assert_eq!(opened.session, Some(0));
         assert_eq!(p.folders[0].sessions[0].id, "s0");
         p.key(Key::Left);
-        assert_eq!(p.cursor, 2);
+        assert_eq!(p.cursor, 0);
         assert!(p.expanded.is_empty());
         p.key(Key::Char('w'));
-        assert_eq!((p.query.as_str(), p.cursor), ("w", 2));
+        assert_eq!((p.query.as_str(), p.cursor), ("w", 0));
         let selected = p.selected().unwrap();
         assert_eq!(command(&selected, &p.folders), ["-c", "/w/api", "claude"]);
         p.key(Key::Backspace);
@@ -1743,43 +1824,173 @@ mod tests {
     fn closing_an_entry_drops_the_folder_cache() {
         let (t, mut p, _) = home_picker();
         let listed = |p: &mut Picker| tree(p, Root::Open).iter().any(|(l, _)| l == "Later/");
-        // Left closes the entry, as Enter does
-        for close in [Key::Left, Key::Enter] {
-            p.cursor = 1;
-            p.key(Key::Right);
+        // Left closes the entry, as Enter and its key do
+        for close in [Key::Left, Key::Enter, Key::Entry(Root::Open)] {
+            p.key(Key::Entry(Root::Open));
             assert!(!listed(&mut p));
             let made = t.path().join("Later");
             fs::create_dir(&made).unwrap();
             assert!(!listed(&mut p), "read once and kept while open");
             p.key(close);
-            p.key(Key::Right);
+            p.key(Key::Entry(Root::Open));
             assert!(listed(&mut p), "{close:?}");
-            p.key(Key::Left);
+            p.key(Key::Entry(Root::Open));
             fs::remove_dir(&made).unwrap();
         }
     }
 
     #[test]
-    fn the_two_entries_come_first_and_the_cursor_starts_on_new_folder() {
+    fn the_entries_are_hidden_and_the_cursor_starts_on_the_first_folder() {
         let (_t, mut p, _) = home_picker();
-        let shown = p.shown();
-        let first: Vec<_> = shown[..2].iter().map(|r| (r.kind, r.root)).collect();
+        assert!(p.shown().iter().all(|r| r.root.is_none()));
+        let first = p.selected().unwrap();
         assert_eq!(
-            first,
-            [
-                (RowKind::Root, Some(Root::New)),
-                (RowKind::Root, Some(Root::Open))
-            ]
+            (first.kind, first.path.as_str()),
+            (RowKind::Folder, "/w/api")
         );
-        assert_eq!(shown[2].kind, RowKind::Folder);
-        assert_eq!(p.cursor, 0);
     }
 
     #[test]
-    fn right_opens_an_entry_as_a_tree_of_the_home_folder() {
+    fn an_entry_key_opens_the_entry_on_top_with_the_cursor_on_it() {
+        for root in [Root::New, Root::Open] {
+            let (_t, mut p, _) = home_picker();
+            // Wherever the cursor was
+            p.key(Key::Down);
+            assert_eq!(p.key(Key::Entry(root)), None);
+            let shown = p.shown();
+            assert_eq!((shown[0].kind, shown[0].root), (RowKind::Root, Some(root)));
+            assert_eq!(p.cursor, 0);
+            assert_eq!(tree(&mut p, root).len(), 3);
+        }
+        // The last opened goes on top of the other
         let (_t, mut p, _) = home_picker();
+        p.key(Key::Entry(Root::Open));
+        p.key(Key::Entry(Root::New));
+        assert_eq!(p.open, [Root::New, Root::Open]);
+        let entries: Vec<_> = (p.shown().into_iter())
+            .filter(|r| r.kind == RowKind::Root)
+            .map(|r| r.root)
+            .collect();
+        assert_eq!(entries, [Some(Root::New), Some(Root::Open)]);
+        assert_eq!(p.cursor, 0);
+        p.key(Key::Entry(Root::New));
+        p.key(Key::Entry(Root::New));
+        assert_eq!(p.open, [Root::New, Root::Open]);
+    }
+
+    #[test]
+    fn an_entry_key_again_takes_the_entry_off_the_list() {
+        let (_t, mut p, _) = home_picker();
+        p.key(Key::Entry(Root::Open));
         p.key(Key::Down);
         p.key(Key::Right);
+        p.key(Key::Entry(Root::Open));
+        assert!(p.open.is_empty());
+        assert!(p.shown().iter().all(|r| r.root.is_none()));
+        assert_eq!(p.selected().unwrap().path, "/w/api");
+    }
+
+    #[test]
+    fn closing_an_entry_keeps_the_cursor_on_its_row_else_on_the_other_entry() {
+        let (_t, mut p, _) = home_picker();
+        // On a history row, which stays listed
+        p.key(Key::Entry(Root::Open));
+        p.key(Key::Entry(Root::New));
+        let web = p.shown().iter().position(|r| r.path == "/w/web").unwrap();
+        p.cursor = web;
+        p.key(Key::Entry(Root::Open));
+        assert_eq!(p.selected().unwrap().path, "/w/web");
+        // On the closed entry's row: to the other entry
+        p.key(Key::Entry(Root::Open));
+        p.key(Key::Enter);
+        assert_eq!(p.open, [Root::New]);
+        let row = p.selected().unwrap();
+        assert_eq!((row.kind, row.root), (RowKind::Root, Some(Root::New)));
+        // In its tree, with no other entry: to the first history row
+        p.key(Key::Down);
+        p.key(Key::Entry(Root::New));
+        assert_eq!(p.selected().unwrap().path, "/w/api");
+    }
+
+    #[test]
+    fn closing_an_entry_keeps_the_folders_read_for_the_other() {
+        let (t, mut p, _) = home_picker();
+        let listed = |p: &mut Picker, root| tree(p, root).iter().any(|(l, _)| l == "Later/");
+        p.key(Key::Entry(Root::New));
+        p.key(Key::Entry(Root::Open));
+        fs::create_dir(t.path().join("Later")).unwrap();
+        p.key(Key::Entry(Root::Open));
+        p.key(Key::Entry(Root::Open));
+        assert!(listed(&mut p, Root::Open), "read anew once reopened");
+        assert!(!listed(&mut p, Root::New), "kept while open");
+    }
+
+    #[test]
+    fn opening_an_entry_with_text_typed_searches_its_tree() {
+        let (_t, mut p, home) = home_picker();
+        type_text(&mut p, "Doc");
+        assert_eq!(p.anchor, None);
+        p.key(Key::Entry(Root::Open));
+        assert_eq!(p.anchor, Some((Root::Open, home.clone())));
+        let shown = p.shown();
+        assert_eq!(shown[0].branch, "in ~/");
+        let row = p.selected().unwrap();
+        assert_eq!((row.kind, row.label.as_str()), (RowKind::Dir, "Documents"));
+        // Clearing the text goes back to the entry, as when typed on it
+        for _ in 0..3 {
+            p.key(Key::Backspace);
+        }
+        assert_eq!((p.query.as_str(), &p.anchor), ("", &None));
+        let row = p.selected().unwrap();
+        assert_eq!((row.kind, row.root), (RowKind::Root, Some(Root::Open)));
+        // Under New folder the text names the folder to create
+        let (_t, mut p, home) = home_picker();
+        type_text(&mut p, "Meu-Projeto");
+        p.key(Key::Entry(Root::New));
+        let row = p.selected().unwrap();
+        assert_eq!(
+            (row.kind, row.path),
+            (RowKind::Create, format!("{home}/Meu-Projeto"))
+        );
+        // ← does nothing while text is typed in a tree
+        p.key(Key::Left);
+        assert_eq!(p.selected().unwrap().kind, RowKind::Create);
+        assert_eq!(p.open, [Root::New]);
+    }
+
+    #[test]
+    fn clearing_the_text_finds_its_row_after_rows_came_above_it() {
+        let (_t, mut p, home) = home_picker();
+        p.key(Key::Entry(Root::New));
+        p.key(Key::Down);
+        p.key(Key::Right);
+        type_text(&mut p, "x");
+        assert_eq!(p.anchor, Some((Root::New, format!("{home}/Documents"))));
+        // Rows come above the tree searched
+        p.open.insert(0, Root::Open);
+        p.key(Key::Backspace);
+        let row = p.selected().unwrap();
+        assert_eq!(
+            (row.kind, row.root, row.path),
+            (RowKind::Dir, Some(Root::New), format!("{home}/Documents"))
+        );
+    }
+
+    #[test]
+    fn closing_the_entry_searched_leaves_the_text_to_the_history() {
+        let (_t, mut p, _) = home_picker();
+        p.key(Key::Entry(Root::Open));
+        type_text(&mut p, "a");
+        assert!(p.anchor.is_some());
+        p.key(Key::Entry(Root::Open));
+        assert_eq!((p.query.as_str(), &p.anchor), ("a", &None));
+        assert_eq!(p.selected().unwrap().path, "/w/api");
+    }
+
+    #[test]
+    fn an_entry_opens_as_a_tree_of_the_home_folder() {
+        let (_t, mut p, _) = home_picker();
+        p.key(Key::Entry(Root::Open));
         assert_eq!(
             tree(&mut p, Root::Open),
             pairs(&[("Documents/", "├ "), ("Music/", "├ "), ("workspace/", "└ ")])
@@ -1798,8 +2009,7 @@ mod tests {
             spend: 0.0,
             sessions: Vec::new(),
         });
-        p.key(Key::Down);
-        p.key(Key::Right);
+        p.key(Key::Entry(Root::Open));
         assert_eq!(tree(&mut p, Root::Open)[0].0, "workspace/");
     }
 
@@ -1816,8 +2026,7 @@ mod tests {
                 sessions: Vec::new(),
             });
         }
-        p.key(Key::Down);
-        p.key(Key::Right);
+        p.key(Key::Entry(Root::Open));
         assert_eq!(tree(&mut p, Root::Open)[0].0, "Music/");
         // A reload: the same folders, one used again since
         let count = p.folders.len();
@@ -1830,8 +2039,7 @@ mod tests {
     #[test]
     fn a_second_shown_reads_no_folder_change_again() {
         let (t, mut p, _) = home_picker();
-        p.key(Key::Down);
-        p.key(Key::Right);
+        p.key(Key::Entry(Root::Open));
         assert_eq!(tree(&mut p, Root::Open)[0].0, "Documents/");
         // Were the change read again, Music would now come first
         let later = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
@@ -1839,7 +2047,7 @@ mod tests {
         music.set_modified(later).unwrap();
         assert_eq!(tree(&mut p, Root::Open)[0].0, "Documents/");
         p.key(Key::Left);
-        p.key(Key::Right);
+        p.key(Key::Entry(Root::Open));
         assert_eq!(
             tree(&mut p, Root::Open)[0].0,
             "Music/",
@@ -1850,7 +2058,7 @@ mod tests {
     #[test]
     fn right_on_a_folder_opens_it_and_left_closes_it() {
         let (_t, mut p, home) = home_picker();
-        for key in [Key::Down, Key::Right, Key::Down, Key::Down, Key::Down] {
+        for key in [Key::Entry(Root::Open), Key::Down, Key::Down, Key::Down] {
             p.key(key);
         }
         assert_eq!(p.selected().unwrap().label, "workspace/");
@@ -1880,20 +2088,19 @@ mod tests {
     }
 
     #[test]
-    fn enter_on_an_entry_toggles_it() {
+    fn enter_on_an_entry_closes_it() {
         let (_t, mut p, _) = home_picker();
-        assert_eq!(p.key(Key::Enter), None);
-        assert_eq!(p.open, BTreeSet::from([Root::New]));
-        assert_eq!(tree(&mut p, Root::New).len(), 3);
+        p.key(Key::Entry(Root::New));
         assert_eq!(p.key(Key::Enter), None);
         assert!(p.open.is_empty());
         assert!(tree(&mut p, Root::New).is_empty());
+        assert_eq!(p.selected().unwrap().path, "/w/api");
     }
 
     #[test]
     fn enter_on_an_open_another_folder_row_returns_it() {
         let (_t, mut p, home) = home_picker();
-        for key in [Key::Down, Key::Right, Key::Down, Key::Down] {
+        for key in [Key::Entry(Root::Open), Key::Down, Key::Down] {
             p.key(key);
         }
         let row = p.key(Key::Enter).unwrap();
@@ -1911,7 +2118,7 @@ mod tests {
     #[test]
     fn enter_on_a_new_folder_row_picks_it_as_parent() {
         let (_t, mut p, home) = home_picker();
-        p.key(Key::Right);
+        p.key(Key::Entry(Root::New));
         p.key(Key::Down);
         assert_eq!(p.key(Key::Enter), None);
         let documents = format!("{home}/Documents");
@@ -1929,10 +2136,7 @@ mod tests {
 
     /// Opens `root` and, in its tree, `Documents/`, leaving the cursor on it.
     fn open_documents(p: &mut Picker, root: Root) {
-        if root == Root::Open {
-            p.key(Key::Down);
-        }
-        p.key(Key::Right);
+        p.key(Key::Entry(root));
         p.key(Key::Down);
         assert_eq!(p.selected().unwrap().label, "Documents/");
         p.key(Key::Right);
@@ -1948,7 +2152,7 @@ mod tests {
     }
 
     #[test]
-    fn typing_on_a_closed_entry_filters_the_history() {
+    fn typing_with_no_entry_open_filters_the_history() {
         let (_t, mut p, _) = home_picker();
         type_text(&mut p, "api");
         assert_eq!(p.anchor, None);
@@ -1965,7 +2169,7 @@ mod tests {
     #[test]
     fn typing_in_the_tree_searches_below_the_current_folder() {
         let (_t, mut p, home) = home_picker();
-        for key in [Key::Down, Key::Right, Key::Down, Key::Down, Key::Down] {
+        for key in [Key::Entry(Root::Open), Key::Down, Key::Down, Key::Down] {
             p.key(key);
         }
         assert_eq!(p.selected().unwrap().label, "workspace/");
@@ -2021,7 +2225,7 @@ mod tests {
                 std::path::Path::new(&path).is_dir()
             });
             // The cursor on the open new-folder entry
-            p.key(Key::Enter);
+            p.key(Key::Entry(Root::New));
             type_text(&mut p, &typed);
             let row = p.key(Key::Enter).unwrap();
             assert_eq!((row.kind, row.path), (RowKind::Path, typed));
@@ -2118,8 +2322,7 @@ mod tests {
     #[test]
     fn right_on_a_match_opens_the_tree_down_to_it() {
         let (_t, mut p, home) = home_picker();
-        p.key(Key::Down);
-        p.key(Key::Right);
+        p.key(Key::Entry(Root::Open));
         type_text(&mut p, "vtp");
         assert_eq!(p.anchor, Some((Root::Open, home.clone())));
         assert_eq!(p.selected().unwrap().label, "workspace/vtp");
@@ -2141,7 +2344,7 @@ mod tests {
     #[test]
     fn clearing_the_text_returns_to_the_tree() {
         let (_t, mut p, _) = home_picker();
-        for key in [Key::Down, Key::Right, Key::Down, Key::Down, Key::Down] {
+        for key in [Key::Entry(Root::Open), Key::Down, Key::Down, Key::Down] {
             p.key(key);
         }
         let before = (tree(&mut p, Root::Open), p.cursor);
@@ -2157,7 +2360,6 @@ mod tests {
     #[test]
     fn the_selected_row_gets_a_lavender_pointer_not_a_bar() {
         let mut p = picker(false);
-        past_entries(&mut p);
         let shown = p.shown();
         let lines = list_lines(&p, &shown, NOW, 20, WIDTH);
         let at = lines.iter().position(|l| plain(l).contains("api")).unwrap();
@@ -2182,16 +2384,24 @@ mod tests {
     #[test]
     fn an_open_entry_shows_its_hint() {
         let (_t, mut p, _) = home_picker();
+        p.key(Key::Entry(Root::Open));
+        p.key(Key::Entry(Root::New));
         p.key(Key::Down);
-        p.key(Key::Right);
+        p.key(Key::Down);
+        p.key(Key::Down);
+        p.key(Key::Down);
         let shown = p.shown();
-        let lines = list_lines(&p, &shown, NOW, 20, WIDTH);
-        assert_eq!(plain(&lines[0]), "  ▸ + New folder…");
+        let lines = list_lines(&p, &shown, NOW, 20, 80);
         assert_eq!(
-            plain(&lines[1]),
+            plain(&lines[0]),
+            "  ▾ + New folder…  pick the parent, then type the name"
+        );
+        // Below New folder's tree, with no rule between the entries
+        assert_eq!(
+            plain(&lines[4]),
             "❯ ▾ Open another folder…  type to search below"
         );
-        let hint = lines[1].spans.last().unwrap();
+        let hint = lines[4].spans.last().unwrap();
         assert_eq!(
             (hint.content.as_ref(), hint.style),
             ("type to search below", INACTIVE)
@@ -2288,7 +2498,7 @@ mod tests {
     fn the_placeholder_offers_a_name_once_a_tree_is_open() {
         let (_t, mut p, _) = home_picker();
         assert_eq!(placeholder(&p), "Search folders…");
-        p.key(Key::Right);
+        p.key(Key::Entry(Root::New));
         assert_eq!(
             placeholder(&p),
             "Search folders, or type a new folder's name…"
@@ -2307,8 +2517,7 @@ mod tests {
     #[test]
     fn hints_follow_the_selected_row() {
         let (_t, mut p, _) = home_picker();
-        p.key(Key::Down);
-        p.key(Key::Right);
+        p.key(Key::Entry(Root::Open));
         p.key(Key::Down);
         assert_eq!(
             hint_texts(&mut p),
@@ -2321,26 +2530,72 @@ mod tests {
         );
         p.key(Key::Up);
         assert_eq!(joined(&mut p), " Enter/← to close · Esc to cancel");
-        p.key(Key::Left);
-        assert_eq!(joined(&mut p), " Enter/→ to open · Esc to cancel");
-        p.key(Key::Right);
         p.key(Key::Down);
         type_text(&mut p, "zz-new");
         assert_eq!(p.selected().unwrap().kind, RowKind::Create);
         assert!(joined(&mut p).contains("Enter to create & start"));
         let (_t, mut p, _) = home_picker();
-        p.key(Key::Right);
+        p.key(Key::Entry(Root::New));
         p.key(Key::Down);
         assert!(joined(&mut p).contains("Enter to pick as parent · ← to back"));
+    }
+
+    /// The panel's last line, `width` columns wide.
+    fn panel_footer(p: &mut Picker, width: u16) -> String {
+        plain(screen(p, NOW, width, 20).last().unwrap())
+    }
+
+    #[test]
+    fn the_panel_footer_ends_with_esc_then_the_entry_keys() {
+        // As wide as the Alt+n popup: a folder's keys and Esc whole, the entries' cut
         let mut p = picker(false);
-        past_entries(&mut p);
-        assert!(joined(&mut p).contains("Enter to new session · → to sessions"));
+        assert_eq!(
+            panel_footer(&mut p, 75),
+            " Enter to new session · → to sessions · Esc to cancel · Ctrl+n to new fol…"
+        );
+        assert_eq!(
+            panel_footer(&mut p, 120),
+            " Enter to new session · → to sessions · Esc to cancel · Ctrl+n to new folder · \
+             Ctrl+o to open folder"
+        );
+        // On an entry and in its tree too
+        let (_t, mut p, _) = home_picker();
+        p.key(Key::Entry(Root::New));
+        assert_eq!(
+            panel_footer(&mut p, 120),
+            " Enter/← to close · Esc to cancel · Ctrl+n to close new folder · Ctrl+o to open \
+             folder"
+        );
+        p.key(Key::Down);
+        assert!(panel_footer(&mut p, 120).ends_with(
+            "← to back · Esc to cancel · Ctrl+n to close new folder · Ctrl+o to open folder"
+        ));
+    }
+
+    #[test]
+    fn an_open_entrys_key_says_it_closes_it() {
+        let (_t, mut p, _) = home_picker();
+        p.key(Key::Entry(Root::New));
+        assert_eq!(
+            entry_hints(ENTRY_KEYS, &p),
+            [("Ctrl+n", "close new folder"), ("Ctrl+o", "open folder")]
+        );
+        // On a history row too
+        p.key(Key::Entry(Root::Open));
+        p.cursor = p.shown().iter().position(|r| r.path == "/w/api").unwrap();
+        assert!(panel_footer(&mut p, 160)
+            .ends_with("Esc to cancel · Ctrl+n to close new folder · Ctrl+o to close open folder"));
+        p.key(Key::Entry(Root::New));
+        assert_eq!(
+            entry_hints(["n", "o"], &p),
+            [("n", "new folder"), ("o", "close open folder")]
+        );
     }
 
     #[test]
     fn left_is_hinted_only_while_nothing_is_typed() {
         let (_t, mut p, _) = home_picker();
-        p.key(Key::Right);
+        p.key(Key::Entry(Root::New));
         type_text(&mut p, "Doc");
         assert_eq!(p.selected().unwrap().label, "Documents");
         assert_eq!(
@@ -2353,7 +2608,7 @@ mod tests {
         assert_eq!(hint_texts(&mut p), ["Enter to close", "Esc to cancel"]);
         // An open folder of the tree, the text filtering the history only
         let (_t, mut p, _) = home_picker();
-        for key in [Key::Right, Key::Down, Key::Right] {
+        for key in [Key::Entry(Root::New), Key::Down, Key::Right] {
             p.key(key);
         }
         p.query = "x".into();
@@ -2576,8 +2831,7 @@ mod tests {
     fn text_typed_in_a_tree_finds_no_sessions() {
         let (_t, mut p, _) = home_picker();
         p.sessions = linkedin_picker().sessions;
-        p.key(Key::Down);
-        p.key(Key::Right);
+        p.key(Key::Entry(Root::Open));
         type_text(&mut p, "linkedin");
         assert!(p.anchor.is_some());
         assert!(p.found().is_empty());

@@ -3,9 +3,6 @@
 [{"text": "│", "fg": "idx:244", "bg": "default", "bold": false}, {"text": " ❯ ", "fg": "rgb:#d77757", "bg": "default", "bold": false}, {"text": "/home/dev/work▌                            ", "fg": "default", "bg": "default", "bold": false}, {"text": "│", "fg": "idx:244", "bg": "default", "bold": false}],
 [{"text": "╰──────────────────────────────────────────────╯", "fg": "idx:244", "bg": "default", "bold": false}],
 [{"text": " ", "fg": "default", "bg": "default", "bold": false}],
-[{"text": " ", "fg": "default", "bg": "default", "bold": false}, {"text": " ▸ ", "fg": "idx:244", "bg": "default", "bold": false}, {"text": "+ ", "fg": "idx:2", "bg": "default", "bold": false}, {"text": "New folder…", "fg": "idx:15", "bg": "default", "bold": true}],
-[{"text": " ", "fg": "default", "bg": "default", "bold": false}, {"text": " ▸ ", "fg": "idx:244", "bg": "default", "bold": false}, {"text": "Open another folder…", "fg": "idx:15", "bg": "default", "bold": true}],
-[{"text": " ", "fg": "default", "bg": "default", "bold": false}, {"text": " ──────────────────────────────────────────────", "fg": "idx:238", "bg": "default", "bold": false}],
 [{"text": "❯", "fg": "rgb:#b1b9f9", "bg": "default", "bold": true}, {"text": "   + ", "fg": "idx:2", "bg": "default", "bold": false}, {"text": "open /home/dev/work", "fg": "rgb:#b1b9f9", "bg": "default", "bold": false}],
 [{"text": " ", "fg": "default", "bg": "default", "bold": false}, {"text": " ──────────────────────────────────────────────", "fg": "idx:238", "bg": "default", "bold": false}],
 [{"text": " ", "fg": "default", "bg": "default", "bold": false}, {"text": " ▸ ", "fg": "idx:244", "bg": "default", "bold": false}, {"text": "claude-sessions", "fg": "idx:15", "bg": "default", "bold": true}, {"text": "                       ", "fg": "default", "bg": "default", "bold": false}, {"text": "2m ago", "fg": "idx:244", "bg": "default", "bold": false}],
@@ -14,5 +11,8 @@
 [{"text": " ", "fg": "default", "bg": "default", "bold": false}, {"text": " ▸ ", "fg": "idx:244", "bg": "default", "bold": false}, {"text": "vehicle-api", "fg": "idx:15", "bg": "default", "bold": true}, {"text": "                           ", "fg": "default", "bg": "default", "bold": false}, {"text": "3h ago", "fg": "idx:244", "bg": "default", "bold": false}],
 [{"text": " ", "fg": "default", "bg": "default", "bold": false}, {"text": "   6 sessions · $18.75 7d", "fg": "idx:244", "bg": "default", "bold": false}],
 [{"text": " ", "fg": "default", "bg": "default", "bold": false}],
-[{"text": " ", "fg": "default", "bg": "default", "bold": false}, {"text": "Enter to start here", "fg": "rgb:#999999", "bg": "default", "bold": false}, {"text": " · ", "fg": "rgb:#505050", "bg": "default", "bold": false}, {"text": "Esc to cancel", "fg": "rgb:#999999", "bg": "default", "bold": false}]
+[{"text": " ", "fg": "default", "bg": "default", "bold": false}],
+[{"text": " ", "fg": "default", "bg": "default", "bold": false}],
+[{"text": " ", "fg": "default", "bg": "default", "bold": false}],
+[{"text": " ", "fg": "default", "bg": "default", "bold": false}, {"text": "Enter to start here", "fg": "rgb:#999999", "bg": "default", "bold": false}, {"text": " · ", "fg": "rgb:#505050", "bg": "default", "bold": false}, {"text": "Esc to cancel", "fg": "rgb:#999999", "bg": "default", "bold": false}, {"text": " · ", "fg": "rgb:#505050", "bg": "default", "bold": false}, {"text": "Ctrl+n t", "fg": "rgb:#999999", "bg": "default", "bold": false}, {"text": "…", "fg": "idx:240", "bg": "default", "bold": false}]
 ]
