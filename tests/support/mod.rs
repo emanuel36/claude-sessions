@@ -293,7 +293,8 @@ impl TmuxApp {
             "list-panes",
             "-a",
             "-F",
-            "#{pane_id} #{pane_pid} dead=#{pane_dead} status=#{pane_dead_status}",
+            "#{pane_id} #{pane_pid} dead=#{pane_dead} status=#{pane_dead_status} \
+             signal=#{pane_dead_signal}",
         ]);
         let log = fs::read_to_string(self.env.state_dir().join("errors.log")).unwrap_or_default();
         let screen = text(&["capture-pane", "-p", "-t", &self.pane]);
@@ -319,6 +320,25 @@ impl TmuxApp {
             .tmux
             .run(&["display-message", "-p", "-t", &self.pane, format]);
         out.trim().to_owned()
+    }
+
+    /// The exit code of `pid`, the pane's process, once it has exited: tmux's, or the kernel's
+    /// while tmux has yet to reap it (tmux 3.4 can leave it a zombie for seconds).
+    pub fn exit_code(&self, pid: &str) -> Option<String> {
+        let status = self.format("#{pane_dead_status}");
+        if !status.is_empty() {
+            return Some(status);
+        }
+        // Field 52 of a zombie's stat is its wait status; the fields after the name start at 3
+        let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+        let (_, fields) = stat.rsplit_once(')')?;
+        let fields: Vec<&str> = fields.split_whitespace().collect();
+        if fields.first() != Some(&"Z") {
+            return None;
+        }
+        let wait: i32 = fields.get(52 - 3)?.parse().ok()?;
+        // Exited normally: no signal in the low bits, the code in the next byte
+        (wait & 0x7f == 0).then(|| ((wait >> 8) & 0xff).to_string())
     }
 
     /// The process the pane runs, checked to be `cst` itself.
