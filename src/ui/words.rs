@@ -198,18 +198,36 @@ pub fn bar(pct: f64, cells: usize) -> Vec<Span<'static>> {
         .collect()
 }
 
+/// The units [`age`] counts in: below each limit (seconds), the unit's length and suffix. Each
+/// limit is a whole number of the next unit, so a change of unit falls on a multiple of it.
+const AGE_UNITS: [(f64, f64, &str); 4] = [
+    (3600.0, 60.0, "m"),
+    (86400.0, 3600.0, "h"),
+    (100.0 * 86400.0, 86400.0, "d"),
+    (f64::INFINITY, 7.0 * 86400.0, "w"),
+];
+
+/// The unit's length and suffix [`age`] uses for something `seconds` old.
+fn age_unit(seconds: f64) -> (f64, &'static str) {
+    AGE_UNITS
+        .iter()
+        .find(|(limit, ..)| seconds < *limit)
+        .map_or((7.0 * 86400.0, "w"), |&(_, unit, suffix)| (unit, suffix))
+}
+
 /// How long ago, in four cells at most: `5m`, `3h`, `12d` or `40w`.
 pub fn age(timestamp: f64, now: f64) -> String {
     let seconds = (now - timestamp).max(0.0);
-    if seconds < 3600.0 {
-        format!("{}m", (floor_div(seconds, 60.0) as i64).max(1))
-    } else if seconds < 86400.0 {
-        format!("{}h", floor_div(seconds, 3600.0) as i64)
-    } else if seconds < 100.0 * 86400.0 {
-        format!("{}d", floor_div(seconds, 86400.0) as i64)
-    } else {
-        format!("{}w", floor_div(seconds, 7.0 * 86400.0) as i64)
-    }
+    let (unit, suffix) = age_unit(seconds);
+    // Under a minute still reads `1m`; past it every unit counts one at least
+    format!("{}{suffix}", (floor_div(seconds, unit) as i64).max(1))
+}
+
+/// The unit [`age`] counts in for something `seconds` old: its text changes only when a whole
+/// one more of it has passed. Each unit is a whole number of the one before, so the text holds
+/// from one multiple of the period to the next.
+pub fn age_period(seconds: f64) -> f64 {
+    age_unit(seconds).0
 }
 
 /// An integer with a comma between thousands, as `4,210`.
@@ -234,8 +252,8 @@ mod tests {
 
     use crate::ui::line::cells;
     use crate::ui::words::{
-        age, bar, bar_style, fit, floor_div, money, next_tick, remaining, span, thousands,
-        waiting_label, CLAUDE, CURRENT, ERROR, MASCOT, STRONG, SUBTLE, WARNING,
+        age, age_period, bar, bar_style, fit, floor_div, money, next_tick, remaining, span,
+        thousands, waiting_label, CLAUDE, CURRENT, ERROR, MASCOT, STRONG, SUBTLE, WARNING,
     };
 
     fn near(a: f64, b: f64, eps: f64) -> bool {
@@ -358,6 +376,42 @@ mod tests {
         assert_eq!(age(now - 12.0 * 86400.0, now), "12d");
         assert_eq!(age(now - 99.0 * 86400.0, now), "99d");
         assert_eq!(age(now - 280.0 * 86400.0, now), "40w");
+    }
+
+    #[test]
+    fn age_period_is_the_unit_age_counts_in() {
+        assert_eq!(age_period(-10.0), 60.0);
+        assert_eq!(age_period(3599.0), 60.0);
+        assert_eq!(age_period(3600.0), 3600.0);
+        assert_eq!(age_period(86399.0), 3600.0);
+        assert_eq!(age_period(86400.0), 86400.0);
+        assert_eq!(age_period(100.0 * 86400.0 - 1.0), 86400.0);
+        assert_eq!(age_period(100.0 * 86400.0), 7.0 * 86400.0);
+    }
+
+    #[test]
+    fn age_holds_until_its_period_ends() {
+        let since = 1_000_000.0;
+        let olds = [
+            -30.0,
+            5.0,
+            61.0,
+            3599.0,
+            3600.0,
+            5000.0,
+            9e4,
+            99.5 * 86400.0,
+            3e7,
+        ];
+        for seconds in olds {
+            let period = age_period(seconds);
+            let end = since + period * ((seconds / period).floor() + 1.0);
+            assert_eq!(
+                age(since, since + seconds),
+                age(since, end - 0.001),
+                "{seconds}"
+            );
+        }
     }
 
     #[test]

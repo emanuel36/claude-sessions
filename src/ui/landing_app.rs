@@ -21,7 +21,7 @@ use crate::ui::landing;
 use crate::ui::pane::{
     self, open, own_window, picker_key, App, Shell, Step, Visible, WINDOW_PAUSE,
 };
-use crate::ui::picker::{self, Folder, Picker, Root, RowKind};
+use crate::ui::picker::{self, Picker, Root, RowKind};
 use crate::ui::runtime::{signal, Msg, Runtime, Schedule, Screen, Signal};
 use crate::ui::sidebar::Stats;
 use crate::ui::usage::Reader;
@@ -61,16 +61,33 @@ fn open_sessions(records: &[Record]) -> (usize, HashSet<String>) {
     (opened, records.iter().map(|r| r.id.clone()).collect())
 }
 
-/// The start times of what changes by the minute: the folders' and sessions' ages and the
-/// quota resets, and every whole minute for the date and today's figures.
-fn labels(folders: &[Folder], stats: &Stats) -> Vec<f64> {
+/// The start times of what changes by the minute: every whole minute for the date and today's
+/// figures, and the quota resets. The ages wake on their own (see [`ages`]).
+fn labels(stats: &Stats) -> Vec<f64> {
     // From the epoch, a label changes on every whole minute
     let minutes = std::iter::once(0.0);
-    let ages = folders
+    let resets = stats.limits.values().map(|q| q.resets_at);
+    minutes.chain(resets).collect()
+}
+
+/// The times the page shows as ages: when each folder and each of its sessions was last used,
+/// and each session found that is on show.
+///
+/// Most are days or weeks old; waking every minute after each of them, as a label does, woke
+/// the page about 15 times a second with a long history.
+fn ages(picker: &mut Picker) -> Vec<f64> {
+    let folders = picker
+        .folders
         .iter()
         .flat_map(|f| std::iter::once(f.last).chain(f.sessions.iter().map(|s| s.last)));
-    let resets = stats.limits.values().map(|q| q.resets_at);
-    minutes.chain(ages).chain(resets).collect()
+    let mut out: Vec<f64> = folders.collect();
+    let found = picker
+        .shown()
+        .into_iter()
+        .filter(|r| r.kind == RowKind::Hit);
+    let hits = found.filter_map(|r| r.session.and_then(|i| picker.sessions.get(i)));
+    out.extend(hits.map(|s| s.last));
+    out
 }
 
 /// The landing page between two wake-ups: what it last read and when it must wake up.
@@ -314,7 +331,8 @@ impl App for Landing {
             return;
         }
         self.reload(now);
-        self.shell.schedule.labels = labels(&self.picker.folders, &self.shell.stats);
+        self.shell.schedule.labels = labels(&self.shell.stats);
+        self.shell.schedule.ages = ages(&mut self.picker);
         self.draw(now, screen);
     }
 }
@@ -332,7 +350,7 @@ mod tests {
     use crate::core::state::Record;
     use crate::term::tmux::fake::FakeTmux;
     use crate::ui::folders::Scan;
-    use crate::ui::landing_app::{labels, open_sessions, Landing};
+    use crate::ui::landing_app::{ages, labels, open_sessions, Landing};
     use crate::ui::pane::{App, LogOnce, Step, Visible};
     use crate::ui::picker::{Folder, Picker, Root, RowKind, Session};
     use crate::ui::runtime::{Msg, Runtime};
@@ -823,7 +841,7 @@ mod tests {
     }
 
     #[test]
-    fn labels_are_ages_resets_and_the_minute() {
+    fn labels_are_resets_and_the_minute() {
         let stats = Stats {
             limits: BTreeMap::from([(
                 "five_hour".to_owned(),
@@ -834,7 +852,35 @@ mod tests {
             )]),
             ..Stats::default()
         };
-        let got = labels(&folders(), &stats);
-        assert_eq!(got, [0.0, NOW, NOW - 60.0, NOW - 9.0, NOW + 3600.0]);
+        let got = labels(&stats);
+        assert_eq!(got, [0.0, NOW + 3600.0]);
+    }
+
+    #[test]
+    fn ages_are_the_folders_and_their_sessions() {
+        let (mut page, _, _) = page();
+        assert_eq!(ages(&mut page.picker), [NOW, NOW - 60.0, NOW - 9.0]);
+    }
+
+    #[test]
+    fn ages_add_the_sessions_found_on_show_only() {
+        let (mut page, _, mut runtime) = page();
+        page.picker.sessions = linkedin_sessions(12, "/w/cv");
+        let other = Searchable::new(
+            "o".into(),
+            "Other".into(),
+            "/w/cv".into(),
+            NOW - 5.0,
+            false,
+            true,
+            &[],
+        );
+        page.picker.sessions.push(other);
+        assert_eq!(ages(&mut page.picker).len(), 3);
+        search(&mut page, &mut runtime, "linkedin");
+        let got = ages(&mut page.picker);
+        // The folders, then the first 10 of the 12 found; the session not found is not there
+        assert_eq!(got.len(), 3 + 10);
+        assert!(!got.contains(&(NOW - 5.0)), "{got:?}");
     }
 }
