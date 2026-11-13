@@ -33,8 +33,10 @@ fn panel_escape_exits() {
     let Some(panel) = start() else { return };
     panel.assert_shows("alpha-proj", START);
     panel.send("Escape");
+    // tmux marks the pane dead when its output closes and sets the status only once it reaps
+    // the process, so wait for the status
     if !panel.within(Duration::from_secs(2), || {
-        panel.format("#{pane_dead}") == "1"
+        !panel.format("#{pane_dead_status}").is_empty()
     }) {
         panel.fail("the panel still runs after Esc");
     }
