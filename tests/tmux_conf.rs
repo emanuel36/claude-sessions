@@ -112,6 +112,11 @@ impl Server {
         )
     }
 
+    /// Whether the server's tmux is 3.3 or newer, by the same test as the conf's `%if`.
+    fn since_3_3(&self) -> bool {
+        !self.format("t:", "#{popup-border-lines}").is_empty()
+    }
+
     fn format(&self, target: &str, format: &str) -> String {
         self.run(&["display-message", "-p", "-t", target, format])
             .trim()
@@ -264,15 +269,19 @@ fn conf_loads_without_errors_on_tmux() {
         let line = format!("{hook}[0] run-shell -b \"cst layout\"");
         assert!(hooks.contains(&line), "{hook}: {hooks}");
     }
-    for hook in [
-        "window-resized",
-        "pane-exited",
-        "window-renamed",
-        "window-unlinked",
-    ] {
+    for hook in ["pane-exited", "window-renamed", "window-unlinked"] {
         let line = format!("{hook}[0] run-shell \"cst layout\"");
         assert!(hooks.contains(&line), "{hook}: {hooks}");
     }
+    // tmux 3.2 has no window-resized; window-layout-changed stands in, only while a sidebar is
+    // off its width
+    let resized = if server.since_3_3() {
+        "window-resized[0] run-shell \"cst layout\""
+    } else {
+        "window-layout-changed[0] if-shell -F \"#{E:@cs-sidebar-off}\" \
+         \"run-shell \\\"cst layout\\\"\""
+    };
+    assert!(hooks.contains(resized), "{hooks}");
     let new_window = "after-new-window[0] run-shell -b \"cst layout #{window_id}\"";
     assert!(hooks.contains(new_window), "{hooks}");
     // The Python commands are all gone
@@ -302,6 +311,12 @@ fn scheme_a_keys() {
     );
     assert!(keys.contains("M-Down run-shell -b \"cst step down #{window_id}\""));
     assert!(keys.contains("M-n display-popup") && keys.contains("cst new --pick"));
+    // tmux 3.2 has no popup title
+    assert_eq!(
+        keys.contains("-T \" New session \""),
+        server.since_3_3(),
+        "{keys}"
+    );
     assert!(keys.contains("M-c confirm-before") && keys.contains("close #{window_name}? (y/n)"));
     assert!(keys.contains("cst close #{window_id}"));
     for gone in [
@@ -328,7 +343,12 @@ fn conf_hooks_and_mouse() {
     assert!(hooks.contains("after-new-window") && hooks.contains("cst layout"));
     assert!(hooks.contains("after-split-window"));
     // A window hook, so it is listed among the window options
-    let resized = server.run(&["show-hooks", "-gw", "window-resized"]);
+    let hook = if server.since_3_3() {
+        "window-resized"
+    } else {
+        "window-layout-changed"
+    };
+    let resized = server.run(&["show-hooks", "-gw", hook]);
     assert!(resized.contains("cst layout"));
     let click = server.run(&["list-keys", "-T", "root", "MouseDown1Pane"]);
     assert!(click.contains("@cs-sidebar"));
@@ -424,6 +444,44 @@ fn sidebars_keep_their_width_in_windows_resized_while_hidden() {
             server.panes()
         );
     }
+}
+
+#[test]
+fn the_sidebar_on_screen_keeps_its_width_when_the_terminal_resizes() {
+    let Some(server) = Server::start() else {
+        return;
+    };
+    let mut client = Client::attach(&server);
+    let sidebar = server.sidebar_of("t:");
+    for (cols, rows) in [(200, 50), (120, 40), (220, 50)] {
+        client.resize(cols, rows);
+        // The client sends the resize on its own: wait for the window to take it
+        let resized = || server.format(&sidebar, "#{window_width}") == cols.to_string();
+        assert!(within(WAIT, resized), "never resized to {cols}x{rows}");
+        let fits = || server.format(&sidebar, "#{pane_width}") == SIDEBAR_WIDTH.to_string();
+        assert!(within(WAIT, fits), "at {cols}x{rows}:\n{}", server.panes());
+    }
+}
+
+#[test]
+fn a_window_too_narrow_for_the_sidebar_settles() {
+    let Some(server) = Server::start() else {
+        return;
+    };
+    let sidebar = server.sidebar_of("t:");
+    server.run(&["resize-window", "-t", "t:", "-x", "25", "-y", "20"]);
+    // Panics if the hooks keep setting each other off
+    server.settle();
+    server.run(&["resize-window", "-t", "t:", "-x", "120", "-y", "20"]);
+    let fits = || server.format(&sidebar, "#{pane_width}") == SIDEBAR_WIDTH.to_string();
+    assert!(within(WAIT, fits), "{}", server.panes());
+}
+
+#[test]
+fn tmux_3_2_fallback_checks_the_sidebar_width_of_cst() {
+    let conf = fs::read_to_string(CONF).expect("read the conf");
+    let check = format!("#{{!=:#{{pane_width}},{SIDEBAR_WIDTH}}}");
+    assert!(conf.contains(&check), "the conf does not check {check}");
 }
 
 /// Opens a session window, `before` and `after` windows on either side of it, and ends the

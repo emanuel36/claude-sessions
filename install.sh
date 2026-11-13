@@ -15,14 +15,14 @@ fail() {
 fetch() { curl --connect-timeout 10 --max-time 300 "$@"; }
 
 check_tmux() {
-    command -v tmux >/dev/null 2>&1 || fail "tmux 3.3 or later is needed; install it first"
-    # `tmux -V` prints e.g. "tmux 3.8", "tmux 3.3a", "tmux next-3.4" or, built from git,
+    command -v tmux >/dev/null 2>&1 || fail "tmux 3.2 or later is needed; install it first"
+    # `tmux -V` prints e.g. "tmux 3.8", "tmux 3.2a", "tmux next-3.4" or, built from git,
     # "tmux master"
     version=$(tmux -V)
     case "$version" in *master*) return ;; esac
     echo "$version" | sed -n 's/^tmux[^0-9]*\([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1 \2/p' \
-        | awk '{ ok = $1 > 3 || ($1 == 3 && $2 >= 3) } END { exit !ok }' \
-        || fail "tmux 3.3 or later is needed; this is $version"
+        | awk '{ ok = $1 > 3 || ($1 == 3 && $2 >= 2) } END { exit !ok }' \
+        || fail "tmux 3.2 or later is needed; this is $version"
 }
 
 # The release's name for this machine's architecture

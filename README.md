@@ -49,7 +49,7 @@ session, and the day's and week's statistics.
 
 ## Get started
 
-Needs Linux (x86_64 or arm64), tmux 3.3 or newer and Claude Code.
+Needs Linux (x86_64 or arm64), tmux 3.2 or newer and Claude Code.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/emanuel36/claude-sessions/main/install.sh | sh

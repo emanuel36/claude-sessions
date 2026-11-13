@@ -88,7 +88,7 @@ pub enum Sight {
 /// tmux says so with F12 and F11. A pane believed hidden that gets a key the user typed, a
 /// click, a resize or a layout change is on screen all the same: tmux's word was lost.
 ///
-/// A resize is such a proof because tmux (3.1 on; tmux.conf requires 3.3) resizes a window
+/// A resize is such a proof because tmux (3.1 on; tmux.conf requires 3.2) resizes a window
 /// only when it is current or becomes current, never while it is out of sight.
 pub fn sight(msg: &Msg, visible: bool) -> Sight {
     match msg {
