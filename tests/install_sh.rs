@@ -350,7 +350,7 @@ fn install_sh_keeps_the_python_version_when_settings_are_malformed() {
 #[test]
 fn install_sh_refuses_old_tmux() {
     let rig = Rig::new();
-    rig.fake_tmux("tmux 3.2", false);
+    rig.fake_tmux("tmux 3.1c", false);
     publish(&rig.release(), "v9.9.9", &release_binary("x"), None);
 
     let out = rig.run(&[]);
@@ -358,10 +358,23 @@ fn install_sh_refuses_old_tmux() {
     assert_exit(&out, 1);
     let err = text(&out.stderr);
     assert!(
-        err.contains("tmux 3.3 or later is needed; this is tmux 3.2"),
+        err.contains("tmux 3.2 or later is needed; this is tmux 3.1c"),
         "{err}"
     );
     assert!(!rig.installed().exists());
+}
+
+#[test]
+fn install_sh_accepts_tmux_3_2() {
+    let rig = Rig::new();
+    rig.fake_tmux("tmux 3.2a", false);
+    let asset = release_binary("release v9.9.9");
+    publish(&rig.release(), "v9.9.9", &asset, None);
+
+    let out = rig.run(&[]);
+
+    assert_exit(&out, 0);
+    assert!(fs::read(rig.installed()).expect("read cst") == asset);
 }
 
 #[test]

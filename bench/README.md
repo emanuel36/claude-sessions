@@ -5,7 +5,7 @@
 over a `/bin/true` floor and their peak RSS, then the CPU, memory and tmux clients of a real
 sidebar, shown and hidden, in a private tmux server. Each result line ends in `PASS` or `FAIL`,
 and the script exits 1 when one fails; it takes about four minutes. It needs
-[hyperfine](https://github.com/sharkdp/hyperfine) (or its path in `HYPERFINE`), tmux 3.3 or
+[hyperfine](https://github.com/sharkdp/hyperfine) (or its path in `HYPERFINE`), tmux 3.2 or
 newer, GNU time at `/usr/bin/time` and cargo; `CST_BENCH_SECONDS` shortens the 60 s sidebar
 samples for a quick try. The hook and status line are timed from a copy of the binary on tmpfs
 (`$XDG_RUNTIME_DIR` or `/dev/shm`): on a disk where something keeps evicting a freshly built
