@@ -121,7 +121,7 @@ mod tests {
     use crate::term::tmux::fake::FakeTmux;
     use crate::ui::pane::{App, Step};
     use crate::ui::panel_app::Panel;
-    use crate::ui::picker::{Folder, Picker, RowKind, Session};
+    use crate::ui::picker::{Folder, Picker, Root, RowKind, Session};
     use crate::ui::runtime::{Msg, Runtime};
 
     const NOW: f64 = 1_700_000_000.0;
@@ -159,22 +159,27 @@ mod tests {
     /// A panel over two folders, `/w/api` and `/w/web` being the only folders on disk; the
     /// steps of its last key and its tmux calls.
     fn drive(codes: &[KeyCode]) -> (Panel, Vec<Step>, FakeTmux) {
+        let keys: Vec<KeyEvent> = codes
+            .iter()
+            .map(|&code| KeyEvent::new(code, KeyModifiers::NONE))
+            .collect();
+        drive_keys(&keys)
+    }
+
+    /// [`drive`] with keys that may carry modifiers.
+    fn drive_keys(keys: &[KeyEvent]) -> (Panel, Vec<Step>, FakeTmux) {
         let calls = FakeTmux::silent();
         let mut picker = Picker::new(Box::new(|p| p == "/w/api" || p == "/w/web"));
         picker.folders = folders();
         let mut panel = Panel::new(Box::new(calls.clone()), picker);
         let mut runtime = Runtime::headless().unwrap();
-        let steps = codes
+        let steps = keys
             .iter()
-            .map(|&code| {
-                let key = KeyEvent::new(code, KeyModifiers::NONE);
-                panel.handle(Msg::Key(key), NOW, &mut runtime)
-            })
+            .map(|&key| panel.handle(Msg::Key(key), NOW, &mut runtime))
             .collect();
         (panel, steps, calls)
     }
 
-    /// Down, the key that also moves past the two entries at the top.
     const DOWN: KeyCode = KeyCode::Down;
 
     fn chars(text: &str) -> Vec<KeyCode> {
@@ -183,14 +188,14 @@ mod tests {
 
     #[test]
     fn enter_on_a_folder_starts_a_session_there() {
-        let (_, steps, calls) = drive(&[DOWN, DOWN, DOWN, KeyCode::Enter]);
+        let (_, steps, calls) = drive(&[DOWN, KeyCode::Enter]);
         assert_eq!(calls.calls(), [["new-window", "-c", "/w/web", "claude"]]);
-        assert_eq!(steps, [Step::Draw, Step::Draw, Step::Draw, Step::Quit]);
+        assert_eq!(steps, [Step::Draw, Step::Quit]);
     }
 
     #[test]
     fn right_opens_the_sessions_and_enter_resumes_one() {
-        let (_, _, calls) = drive(&[DOWN, DOWN, KeyCode::Right, DOWN, KeyCode::Enter]);
+        let (_, _, calls) = drive(&[KeyCode::Right, DOWN, KeyCode::Enter]);
         assert_eq!(
             calls.calls(),
             [["new-window", "-c", "/w/api", "claude --resume s1"]]
@@ -199,9 +204,9 @@ mod tests {
 
     #[test]
     fn left_from_a_session_goes_back_to_its_folder_and_closes_it() {
-        let keys = [DOWN, DOWN, KeyCode::Right, DOWN, DOWN, KeyCode::Left];
+        let keys = [KeyCode::Right, DOWN, DOWN, KeyCode::Left];
         let (panel, _, _) = drive(&keys);
-        assert_eq!(panel.picker.cursor, 2);
+        assert_eq!(panel.picker.cursor, 0);
         assert!(panel.picker.expanded.is_empty());
     }
 
@@ -224,6 +229,27 @@ mod tests {
         let (mut panel, _, _) = drive(&keys);
         assert_eq!(panel.picker.selected().unwrap().kind, RowKind::Folder);
         assert!(panel.picker.expanded.is_empty());
+    }
+
+    #[test]
+    fn ctrl_n_and_ctrl_o_open_and_close_the_entries() {
+        let ctrl = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
+        for (c, root) in [('n', Root::New), ('o', Root::Open)] {
+            let (mut panel, steps, _) = drive_keys(&[ctrl(c)]);
+            assert_eq!(steps, [Step::Draw]);
+            assert_eq!(panel.picker.open, vec![root]);
+            let row = panel.picker.selected().unwrap();
+            assert_eq!((row.kind, row.root), (RowKind::Root, Some(root)));
+            let (panel, _, _) = drive_keys(&[ctrl(c), ctrl(c)]);
+            assert!(panel.picker.open.is_empty());
+        }
+    }
+
+    #[test]
+    fn plain_n_and_o_filter() {
+        let (panel, _, _) = drive(&[KeyCode::Char('n'), KeyCode::Char('o')]);
+        assert_eq!(panel.picker.query, "no");
+        assert!(panel.picker.open.is_empty());
     }
 
     #[test]

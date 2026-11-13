@@ -42,16 +42,29 @@ pub fn header(opened: usize, now: f64) -> Vec<Line<'static>> {
 }
 
 /// What the keys do on the landing page: those of the selected row, as in the Alt+n panel,
-/// then `/` and `q`, which only this page takes. Esc here only clears a search, so the panel's
+/// then `/` and `q`, which only this page takes, then the keys that open the entries, last as
+/// a line too long loses them first. Esc here only clears a search, so the panel's
 /// `Esc to cancel` is left out.
 ///
 /// # Arguments
 /// * `row`: the selected row, if any.
 /// * `picker`: what is open, to tell whether → opens or ← closes.
-pub fn footer(row: Option<&Row>, picker: &Picker) -> Vec<(&'static str, &'static str)> {
+/// * `searching`: whether characters type into the search, so the entries take Ctrl+n and
+///   Ctrl+o rather than `n` and `o`.
+pub fn footer(
+    row: Option<&Row>,
+    picker: &Picker,
+    searching: bool,
+) -> Vec<(&'static str, &'static str)> {
     let mut keys = picker::hints(row, picker);
     keys.retain(|&(key, _)| key != "Esc");
     keys.extend([("/", "search"), ("q", "quit")]);
+    let entries = if searching {
+        picker::ENTRY_KEYS
+    } else {
+        ["n", "o"]
+    };
+    keys.extend(picker::entry_hints(entries, picker));
     keys
 }
 
@@ -165,7 +178,7 @@ pub fn screen(
         .collect();
     lines.push(Line::default());
     let keys_width = width.saturating_sub(1 + margin.len());
-    let keys = footer(shown.get(picker.cursor), picker);
+    let keys = footer(shown.get(picker.cursor), picker, searching);
     lines.push(indented(hints_line(&keys, keys_width)));
     lines.truncate(height);
     lines
@@ -184,7 +197,7 @@ mod tests {
     use crate::claude::statusline::Quota;
     use crate::ui::landing::{footer, header, screen, GAP, LIST_MAX};
     use crate::ui::line::{pad_right, plain, row_text, truncate, width_of};
-    use crate::ui::picker::{self, hints_line, Folder, Key, Picker, Session};
+    use crate::ui::picker::{self, hints_line, Folder, Key, Picker, Root, Session};
     use crate::ui::sidebar::{self, panel_lines, Stats, PANEL_CONTENT, PANEL_WIDTH};
     use crate::ui::usage::{Day, Totals};
 
@@ -301,24 +314,37 @@ mod tests {
         let mut p = picker();
         // The footer sits under the list, which the statistics' width pushes right
         let last = |p: &mut Picker| {
-            let lines = texts(&screen(p, false, 0, &stats(), now(), 100, 20));
+            let lines = texts(&screen(p, false, 0, &stats(), now(), 120, 20));
             lines[19].trim_start().to_owned()
         };
-        assert_eq!(last(&mut p), "Enter/→ to open · / to search · q to quit");
-        p.cursor = 2;
         assert_eq!(
             last(&mut p),
-            "Enter to new session · → to sessions · / to search · q to quit"
+            "Enter to new session · → to sessions · / to search · q to quit · n to new folder · o \
+             to open folder"
         );
         let row = p.selected();
         assert_eq!(
-            footer(row.as_ref(), &p),
+            footer(row.as_ref(), &p, false),
             [
                 ("Enter", "new session"),
                 ("→", "sessions"),
                 ("/", "search"),
-                ("q", "quit")
+                ("q", "quit"),
+                ("n", "new folder"),
+                ("o", "open folder")
             ]
+        );
+        // While searching, n and o are typed: the entries take their Ctrl keys
+        let keys = footer(row.as_ref(), &p, true);
+        assert_eq!(
+            keys[4..],
+            [("Ctrl+n", "new folder"), ("Ctrl+o", "open folder")]
+        );
+        // On an entry, its own keys only
+        p.key(Key::Entry(Root::New));
+        assert_eq!(
+            last(&mut p),
+            "Enter/← to close · / to search · q to quit · n to close new folder · o to open folder"
         );
     }
 
@@ -333,9 +359,7 @@ mod tests {
             }],
             ..folder(long_title)
         }];
-        for key in [Key::Down, Key::Down, Key::Right] {
-            p.key(key);
-        }
+        p.key(Key::Right);
         let width = 140;
         // The list and the statistics together, centred
         let margin = (usize::from(width) - LIST_MAX - GAP - PANEL_WIDTH) / 2;
@@ -345,16 +369,15 @@ mod tests {
             .collect();
         assert_eq!(lines.len(), 30);
         assert!(lines[5].starts_with("│ ❯ / to search"), "{}", lines[5]);
-        assert!(lines[8].starts_with("  ▸ + New folder…"), "{}", lines[8]);
-        assert!(lines[11].starts_with("❯ ▾ api"), "{}", lines[11]);
+        assert!(lines[8].starts_with("❯ ▾ api"), "{}", lines[8]);
         assert!(
-            lines[12].starts_with("    3 sessions · $12.50 7d"),
+            lines[9].starts_with("    3 sessions · $12.50 7d"),
             "{}",
-            lines[12]
+            lines[9]
         );
         // The list stops at its widest, the statistics right after it
-        assert_eq!(lines[13].chars().count(), LIST_MAX, "{}", lines[13]);
-        assert!(lines[13].contains("a session title long enough"));
+        assert_eq!(lines[10].chars().count(), LIST_MAX, "{}", lines[10]);
+        assert!(lines[10].contains("a session title long enough"));
         let stats_at = LIST_MAX + GAP;
         assert!(from(&lines[0], stats_at).trim().starts_with("• Usage"));
         assert!(
@@ -368,7 +391,7 @@ mod tests {
     fn a_narrow_screen_shows_the_list_alone() {
         let lines = texts(&screen(&mut picker(), false, 2, &stats(), now(), 60, 30));
         assert!(!lines.iter().any(|line| line.contains("Today")));
-        assert!(lines[11].starts_with("  ▸ api"), "{}", lines[11]);
+        assert!(lines[8].starts_with("❯ ▸ api"), "{}", lines[8]);
     }
 
     #[test]
@@ -399,7 +422,7 @@ mod tests {
 
     #[test]
     fn a_footer_too_long_is_cut_with_an_ellipsis() {
-        let line = hints_line(&footer(None, &picker()), 20);
+        let line = hints_line(&footer(None, &picker(), false), 20);
         assert_eq!(plain(&line), " / to search · q to…");
     }
 
@@ -444,11 +467,7 @@ mod tests {
         p.query = "zzz".into();
         let lines = texts(&screen(&mut p, true, 0, &stats(), now(), 60, 14));
         assert!(lines[5].starts_with("│ ❯ zzz▌ "), "{}", lines[5]);
-        assert_eq!(
-            lines[8..10],
-            ["❯ ▸ + New folder…", "  ▸ Open another folder…"]
-        );
-        assert_eq!(lines[11], "    nothing matches");
+        assert_eq!(lines[8], "    nothing matches");
     }
 
     fn arb_folders() -> impl proptest::strategy::Strategy<Value = Vec<Folder>> {

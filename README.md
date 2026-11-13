@@ -42,7 +42,9 @@ session, and the day's and week's statistics.
 | Alt+↑ / Alt+↓ | Previous / next session, most urgent first |
 | Alt+n | New-session panel: pick a folder, resume a session, or search |
 | Alt+c | Close the current session, after a confirmation |
+| Ctrl+n / Ctrl+o | New-session panel and landing page: show or hide New folder / Open another folder |
 | / | Landing page: search |
+| n / o | Landing page: show or hide New folder / Open another folder |
 | q | Landing page: end `cst` and every session in it |
 
 ## Get started
