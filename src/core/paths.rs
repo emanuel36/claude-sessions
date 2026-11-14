@@ -82,11 +82,7 @@ pub fn write_atomic(path: &Path, data: &[u8], mode: Option<u32>) -> io::Result<(
     let (mut file, tmp) = create_temp(dir)?;
     let result = (|| {
         file.write_all(data)?;
-        let mode = match mode {
-            Some(mode) => Some(mode),
-            None => fs::metadata(path).ok().map(|m| m.mode()),
-        };
-        if let Some(mode) = mode {
+        if let Some(mode) = mode.or_else(|| fs::metadata(path).ok().map(|m| m.mode())) {
             file.set_permissions(fs::Permissions::from_mode(mode & 0o7777))?;
         }
         fs::rename(&tmp, path)
@@ -132,24 +128,20 @@ pub(crate) fn log_error_with(env: Lookup<'_>, what: &dyn Display) {
 }
 
 fn runtime_dir_with(env: Lookup<'_>, tmp: &Path, uid: u32) -> io::Result<PathBuf> {
-    if let Some(dir) = var(env, "CST_RUNTIME_DIR") {
-        make_private(&dir)?;
-        return Ok(dir);
-    }
-    if let Some(runtime) = var(env, "XDG_RUNTIME_DIR") {
-        let dir = runtime.join("cst");
-        make_private(&dir)?;
-        return Ok(dir);
-    }
-    let dir = tmp.join(format!("cst-{uid}"));
+    let chosen = var(env, "CST_RUNTIME_DIR")
+        .or_else(|| var(env, "XDG_RUNTIME_DIR").map(|runtime| runtime.join("cst")));
+    let in_tmp = chosen.is_none();
+    let dir = chosen.unwrap_or_else(|| tmp.join(format!("cst-{uid}")));
     make_private(&dir)?;
-    // lstat: a symlink planted there would lead the records into a folder someone else picked
-    let meta = fs::symlink_metadata(&dir)?;
-    if !meta.is_dir() || meta.uid() != uid || meta.mode() & 0o022 != 0 {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            format!("{} is not a private folder of this user", dir.display()),
-        ));
+    if in_tmp {
+        // lstat: a symlink planted there would lead the records into a folder someone else picked
+        let meta = fs::symlink_metadata(&dir)?;
+        if !meta.is_dir() || meta.uid() != uid || meta.mode() & 0o022 != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!("{} is not a private folder of this user", dir.display()),
+            ));
+        }
     }
     Ok(dir)
 }
@@ -178,27 +170,26 @@ fn config_dir_with(env: Lookup<'_>) -> PathBuf {
 }
 
 fn log_error_in(dir: &Path, what: &dyn Display) {
+    let write = || -> io::Result<()> {
+        fs::create_dir_all(dir)?;
+        let path = dir.join(ERROR_LOG);
+        let full = fs::metadata(&path).is_ok_and(|m| m.len() > LOG_BYTES);
+        let mut options = OpenOptions::new();
+        options.write(true).create(true).mode(0o600);
+        // A symlink planted in its place must not make the hook write somewhere else
+        options.custom_flags(OFlags::NOFOLLOW.bits() as i32);
+        if full {
+            options.truncate(true);
+        } else {
+            options.append(true);
+        }
+        let stamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+        options
+            .open(path)?
+            .write_all(format!("{stamp} {what}\n").as_bytes())
+    };
     // Errors while logging an error have nowhere to go
-    let _ = try_log_error(dir, what);
-}
-
-fn try_log_error(dir: &Path, what: &dyn Display) -> io::Result<()> {
-    fs::create_dir_all(dir)?;
-    let path = dir.join(ERROR_LOG);
-    let full = fs::metadata(&path).is_ok_and(|m| m.len() > LOG_BYTES);
-    let mut options = OpenOptions::new();
-    options.write(true).create(true).mode(0o600);
-    // A symlink planted in its place must not make the hook write somewhere else
-    options.custom_flags(OFlags::NOFOLLOW.bits() as i32);
-    if full {
-        options.truncate(true);
-    } else {
-        options.append(true);
-    }
-    let stamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
-    options
-        .open(path)?
-        .write_all(format!("{stamp} {what}\n").as_bytes())
+    let _ = write();
 }
 
 #[cfg(test)]

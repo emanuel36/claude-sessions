@@ -238,10 +238,9 @@ pub fn apply_event(record: Option<&Record>, event: &Event, now: f64) -> Record {
     let mut r = record
         .cloned()
         .unwrap_or_else(|| new_record(&event.session_id));
-    // The agents (the main one, or a subagent) waiting on the user, each with what it waits
-    // for. Hooks of parallel tools and subagents interleave, so one agent's tool call must not
-    // hide another agent's open prompt.
-    let mut pending = std::mem::take(&mut r.pending);
+    // `r.pending` holds the agents (the main one, or a subagent) waiting on the user, each with
+    // what it waits for. Hooks of parallel tools and subagents interleave, so one agent's tool
+    // call must not hide another agent's open prompt.
     let agent = event
         .agent_id
         .as_deref()
@@ -262,7 +261,7 @@ pub fn apply_event(record: Option<&Record>, event: &Event, now: f64) -> Record {
         "SessionStart" => {
             // A compaction restarts the context in the middle of a turn: nothing else changes
             if event.source.as_deref() != Some("compact") {
-                pending.clear();
+                r.pending.clear();
                 r.status = Status::Idle;
                 r.background = 0;
             }
@@ -270,25 +269,25 @@ pub fn apply_event(record: Option<&Record>, event: &Event, now: f64) -> Record {
         "UserPromptSubmit" => {
             // The next Stop counts the background tasks again; until then the turn can be
             // interrupted
-            pending.clear();
+            r.pending.clear();
             r.status = Status::Working;
             r.background = 0;
         }
         "PreToolUse" => {
-            done_waiting(&mut pending, agent);
+            done_waiting(&mut r.pending, agent);
             if event
                 .tool_name
                 .as_deref()
                 .is_some_and(|t| ASKING_TOOLS.contains(&t))
             {
-                wait(&mut pending, agent, Waiting::Input);
+                wait(&mut r.pending, agent, Waiting::Input);
             }
             r.status = Status::Working;
         }
-        "PermissionRequest" => wait(&mut pending, agent, Waiting::Permission),
+        "PermissionRequest" => wait(&mut r.pending, agent, Waiting::Permission),
         "PostToolUse" | "PostToolUseFailure" => {
-            done_waiting(&mut pending, agent);
-            done_waiting(&mut pending, NOTIFIED);
+            done_waiting(&mut r.pending, agent);
+            done_waiting(&mut r.pending, NOTIFIED);
             r.status = Status::Working;
         }
         "Notification" => {
@@ -299,29 +298,25 @@ pub fn apply_event(record: Option<&Record>, event: &Event, now: f64) -> Record {
                 Some("elicitation_dialog") => Some(Waiting::Input),
                 _ => None,
             };
-            if let (Some(kind), true) = (kind, pending.is_empty()) {
-                wait(&mut pending, NOTIFIED, kind);
+            if let (Some(kind), true) = (kind, r.pending.is_empty()) {
+                wait(&mut r.pending, NOTIFIED, kind);
             }
         }
-        "SubagentStop" => done_waiting(&mut pending, agent),
+        "SubagentStop" => done_waiting(&mut r.pending, agent),
         "Stop" => {
-            pending.clear();
-            let running: Vec<&BackgroundTask> = event
-                .background_tasks
-                .iter()
-                .filter(|t| {
+            r.pending.clear();
+            let running = || {
+                event.background_tasks.iter().filter(|t| {
                     t.status
                         .as_deref()
                         .is_none_or(|s| !FINISHED_TASKS.contains(&s))
                 })
-                .collect();
-            r.background = u32::try_from(running.len()).unwrap_or(u32::MAX);
-            r.status = if running.is_empty() {
+            };
+            let count = running().count();
+            r.background = u32::try_from(count).unwrap_or(u32::MAX);
+            r.status = if count == 0 {
                 Status::Done
-            } else if running
-                .iter()
-                .all(|t| t.kind.as_deref() == Some(SHELL_TASK))
-            {
+            } else if running().all(|t| t.kind.as_deref() == Some(SHELL_TASK)) {
                 Status::Shell
             } else {
                 Status::Working
@@ -329,14 +324,14 @@ pub fn apply_event(record: Option<&Record>, event: &Event, now: f64) -> Record {
         }
         "StopFailure" => {
             // A failed turn is over too
-            pending.clear();
+            r.pending.clear();
             r.status = Status::Done;
         }
         _ => {}
     }
 
-    if !pending.is_empty() {
-        r.status = if pending.iter().any(|p| p.kind == Waiting::Permission) {
+    if !r.pending.is_empty() {
+        r.status = if r.pending.iter().any(|p| p.kind == Waiting::Permission) {
             Status::Permission
         } else {
             Status::Input
@@ -345,7 +340,6 @@ pub fn apply_event(record: Option<&Record>, event: &Event, now: f64) -> Record {
         // The last open prompt went away (a subagent stopped) and the turn goes on
         r.status = Status::Working;
     }
-    r.pending = pending;
     r.updated_at = now;
     // Hooks keep coming while a session waits (notifications, subagents), so how long it has
     // been in its status is kept apart from when it last changed
@@ -377,17 +371,12 @@ pub fn mark_interrupted(r: &Record, now: f64) -> Record {
 
 /// The project folder's name, which names the session everywhere; `?` when there is none.
 pub fn project(r: &Record) -> &str {
-    let name = r
-        .cwd
+    r.cwd
         .trim_end_matches('/')
         .rsplit('/')
         .next()
-        .unwrap_or_default();
-    if name.is_empty() {
-        "?"
-    } else {
-        name
-    }
+        .filter(|name| !name.is_empty())
+        .unwrap_or("?")
 }
 
 /// When the session entered its current status.

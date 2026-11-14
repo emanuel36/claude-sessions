@@ -68,10 +68,21 @@ fn parse_start(stat: &[u8]) -> Option<u64> {
 }
 
 /// The session id of a record's file name; `None` for any other file.
-fn record_id(name: Option<&str>) -> Option<&str> {
-    let name = name.filter(|&n| n != LIMITS_FILE)?;
+fn record_id(name: &str) -> Option<&str> {
+    if name == LIMITS_FILE {
+        return None;
+    }
     name.strip_suffix(RECORD_SUFFIX)
         .filter(|id| is_session_id(id))
+}
+
+/// The names of the files in `dir` that are valid UTF-8; none if it cannot be read.
+fn file_names(dir: &Path) -> impl Iterator<Item = String> {
+    fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| e.file_name().into_string().ok())
 }
 
 /// Removes the lock an ended session left behind, once no hook can still be waiting on it.
@@ -97,6 +108,13 @@ fn record_path(dir: &Path, id: &str) -> io::Result<PathBuf> {
     Ok(dir.join(format!("{id}{RECORD_SUFFIX}")))
 }
 
+/// The lock file of the record at `record`.
+fn lock_path(record: &Path) -> PathBuf {
+    let mut path = record.as_os_str().to_owned();
+    path.push(".lock");
+    path.into()
+}
+
 /// Takes the lock of a session in `dir`, waiting for whoever holds it.
 ///
 /// Hooks of parallel tool calls can overlap, so a read-modify-write of a record goes under it.
@@ -105,13 +123,11 @@ fn record_path(dir: &Path, id: &str) -> io::Result<PathBuf> {
 ///
 /// Fails if the id is not a [`is_session_id`], or the lock file cannot be opened or locked.
 pub(crate) fn lock_in(dir: &Path, id: &str) -> io::Result<Lock> {
-    let mut path = record_path(dir, id)?.into_os_string();
-    path.push(".lock");
     let file = OpenOptions::new()
         .append(true)
         .create(true)
         .mode(0o600)
-        .open(path)?;
+        .open(lock_path(&record_path(dir, id)?))?;
     loop {
         match flock(&file, FlockOperation::LockExclusive) {
             Ok(()) => return Ok(Lock { _file: file }),
@@ -176,9 +192,7 @@ pub(crate) fn remove_in(dir: &Path, id: &str, keep_lock: bool, journal: Sink<'_>
         Err(e) => paths::log_error(&format_args!("store: cannot remove {id}: {e}")),
     }
     if !keep_lock {
-        let mut lock = path.into_os_string();
-        lock.push(".lock");
-        match fs::remove_file(&lock) {
+        match fs::remove_file(lock_path(&path)) {
             Err(e) if e.kind() != io::ErrorKind::NotFound => {
                 paths::log_error(&format_args!("store: cannot remove lock of {id}: {e}"));
             }
@@ -193,12 +207,8 @@ pub(crate) fn remove_in(dir: &Path, id: &str, keep_lock: bool, journal: Sink<'_>
 /// without a `SessionEnd`, and would otherwise linger until the process exits. The lock stays,
 /// as on `SessionEnd`: a hook of the old session may be waiting on it.
 pub(crate) fn remove_replaced_in(dir: &Path, r: &Record, journal: Sink<'_>) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let Some(id) = record_id(name.to_str()) else {
+    for name in file_names(dir) {
+        let Some(id) = record_id(&name) else {
             continue;
         };
         if id == r.id {
@@ -221,13 +231,7 @@ pub(crate) fn remove_replaced_in(dir: &Path, r: &Record, journal: Sink<'_>) {
 /// Records of dead processes are deleted, and so are the locks ended sessions left behind.
 /// `now` is the current time as a Unix timestamp.
 pub(crate) fn load_all_in(dir: &Path, now: f64, journal: Sink<'_>) -> Vec<Record> {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return Vec::new();
-    };
-    let names: HashSet<String> = entries
-        .flatten()
-        .filter_map(|e| e.file_name().into_string().ok())
-        .collect();
+    let names: HashSet<String> = file_names(dir).collect();
     let mut records = Vec::new();
     for name in &names {
         if let Some(record) = name.strip_suffix(".lock") {
@@ -235,7 +239,7 @@ pub(crate) fn load_all_in(dir: &Path, now: f64, journal: Sink<'_>) -> Vec<Record
                 drop_stale_lock(&dir.join(name), now);
             }
         }
-        let Some(id) = record_id(Some(name)) else {
+        let Some(id) = record_id(name) else {
             continue;
         };
         let Some(record) = read_in(dir, id) else {
