@@ -314,7 +314,7 @@ pub fn step(window: &str, offset: i32, records: &[Record], socket: &str, t: &dyn
 
 /// Tells the sidebar or landing page of the window just shown, the one `pane` is in, that it is
 /// on screen, and the one of the window shown before that it is not.
-pub fn show(pane: &str, t: &dyn Runner) {
+fn show(pane: &str, t: &dyn Runner) {
     let panes = tmux::panes(t);
     let Some(current) = panes.iter().find(|p| p.pane_id == pane) else {
         return;
@@ -335,7 +335,7 @@ pub fn show(pane: &str, t: &dyn Runner) {
 }
 
 /// `cst focus --pane P --socket S`: a window came on screen. Tells the sidebars and landing
-/// page as [`show`] does, then marks the finished session in `pane` seen.
+/// page as `show` does, then marks the finished session in `pane` seen.
 ///
 /// Never fails: tmux shows a failed command's output over the pane, so errors go to the log.
 pub fn focus(pane: &str, socket: &str, now: f64) {

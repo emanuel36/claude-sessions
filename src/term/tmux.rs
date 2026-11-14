@@ -16,9 +16,9 @@ use crate::process::run_capped;
 /// A hook makes up to 5 tmux calls; together they must stay under its 10 s timeout.
 pub const TIMEOUT: Duration = Duration::from_secs(1);
 /// `claude stop` gets longer: it talks to Claude's daemon.
-pub const STOP_TIMEOUT: Duration = Duration::from_secs(10);
+const STOP_TIMEOUT: Duration = Duration::from_secs(10);
 /// Long enough for a session's title; the sidebar fits it to its own width.
-pub const WINDOW_NAME_LEN: usize = 60;
+const WINDOW_NAME_LEN: usize = 60;
 /// The tmux socket (`-L`) cst's own server listens on.
 pub const SOCKET: &str = "claude";
 /// Columns of the sidebar pane; tmux's border makes it 30.
@@ -227,7 +227,7 @@ fn attach_args(argv: &[String]) -> Option<&[String]> {
 }
 
 /// Tells whether a command line is `claude attach` on the session, by its id or a prefix.
-pub fn attaches(argv: &[String], session_id: &str) -> bool {
+fn attaches(argv: &[String], session_id: &str) -> bool {
     attach_args(argv).is_some_and(|after| {
         after
             .iter()
@@ -251,10 +251,6 @@ fn stop_session(id: &str) {
     run_capped(cmd, STOP_TIMEOUT);
 }
 
-fn is_number(s: &str) -> bool {
-    !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())
-}
-
 /// Returns the panes of the tmux server `t` talks to.
 ///
 /// Lines tmux did not format as asked are skipped.
@@ -271,9 +267,6 @@ pub(crate) fn parse_pane(line: &str) -> Option<Pane> {
     let [pane_id, window_id, index, window_index, sidebar, landing, name] = f[..] else {
         return None;
     };
-    if !is_number(index) || !is_number(window_index) {
-        return None;
-    }
     Some(Pane {
         pane_id: pane_id.to_owned(),
         window_id: window_id.to_owned(),
@@ -349,7 +342,7 @@ pub fn window_entries(panes: &[Pane]) -> Vec<(String, u32, String)> {
 /// Names a window after its session's title, or its project folder until it has one.
 ///
 /// The name is cut to [`WINDOW_NAME_LEN`] terminal cells, ending in `…`.
-pub fn window_name(r: &Record, title: &str) -> String {
+fn window_name(r: &Record, title: &str) -> String {
     let title = title.split_whitespace().collect::<Vec<_>>().join(" ");
     let name = if title.is_empty() {
         state::project(r)
@@ -473,7 +466,7 @@ fn close_window_with(window_id: &str, t: &dyn Runner, procs: &dyn Procs, stop: &
 /// The session window to show when one closes: the next one by index, else the one before.
 ///
 /// Session windows are those with a sidebar; `None` when the closing one is the last of them.
-pub fn next_session_window(window_id: &str, panes: &[Pane]) -> Option<String> {
+fn next_session_window(window_id: &str, panes: &[Pane]) -> Option<String> {
     let with_sidebar: std::collections::HashSet<&str> = panes
         .iter()
         .filter(|p| p.sidebar)
