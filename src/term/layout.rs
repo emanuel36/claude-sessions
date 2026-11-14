@@ -16,10 +16,10 @@ const MAIN_PERCENT: u32 = 60;
 const TEAM_PANES: usize = 3;
 /// Narrowest window that is arranged: below it the columns would be unusable.
 const MIN_WIDTH: u32 = 80;
-/// What [`arrange_teams`] asks for: one row per pane, with its place in the window.
-const TEAM_FORMAT: &str = "#{window_id}\t#{window_width}\t#{window_height}\t#{pane_id}\t\
-    #{@cs-sidebar}\t#{@cs-landing}\t#{window_zoomed_flag}\t#{pane_left}\t#{pane_top}\t\
-    #{pane_width}\t#{pane_height}";
+/// What `cst layout` lists of each pane ahead of [`tmux::PANES_FORMAT`]: whether its window is
+/// its session's active one, the window's size and zoom, and the pane's place in it.
+const PLACE_FORMAT: &str = "#{window_active}\t#{window_width}\t#{window_height}\t\
+    #{window_zoomed_flag}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}";
 
 /// Tells a sidebar or landing page its window came on screen.
 pub const SHOWN: &str = "F12";
@@ -31,9 +31,6 @@ pub const LAYOUT: &str = "F10";
 /// is shown.
 pub const LAST_WINDOW: &str = "@cs-last-window";
 
-/// The sidebar and landing panes of the windows on screen.
-const ON_SCREEN: &str = "#{&&:#{window_active},#{||:#{@cs-sidebar},#{@cs-landing}}}";
-
 /// `cst layout [WINDOW]`: puts the sidebar in `window` if given, closes the windows where only
 /// a sidebar is left, arranges the windows with teammates, fits every sidebar to its width and
 /// tells the panes on screen.
@@ -44,72 +41,125 @@ pub fn layout(window: Option<&str>, t: &dyn Runner) {
     if let Some(window) = window {
         tmux::add_sidebar(window, t);
     }
-    for window in lone_sidebars(&tmux::panes(t)) {
-        tmux::close_window(&window, t);
+    let mut listing = list(&["-a"], t);
+    let lone = lone_sidebars(&listing.panes);
+    for window in &lone {
+        tmux::close_window(window, t);
     }
-    arrange_teams(t);
-    tmux::fit_sidebars(t);
-    for pane in t
-        .run(&["list-panes", "-a", "-f", ON_SCREEN, "-F", "#{pane_id}"])
-        .lines()
-    {
-        send(pane, LAYOUT, t);
+    // Closing a window takes its panes away and may bring another window on screen
+    if !lone.is_empty() {
+        listing = list(&["-a"], t);
     }
+    arrange_teams(&listing, t);
+    tmux::fit_sidebars_in(&listing.panes, t);
+    for (pane, place) in listing.panes.iter().zip(&listing.places) {
+        if place.as_ref().is_some_and(|p| p.active) && (pane.sidebar || pane.landing) {
+            send(&pane.pane_id, LAYOUT, t);
+        }
+    }
+}
+
+/// A pane's place, as [`PLACE_FORMAT`] lists it.
+struct Place {
+    /// Whether the pane's window is its session's active one.
+    active: bool,
+    /// Whether a pane of the window is zoomed.
+    zoomed: bool,
+    /// The window's width and height in cells.
+    window: [u32; 2],
+    /// The pane's left, top, width and height in cells.
+    cells: [u32; 4],
+}
+
+/// Panes and, at the same index, their places.
+#[derive(Default)]
+struct Listing {
+    panes: Vec<Pane>,
+    places: Vec<Option<Place>>,
+}
+
+/// Lists the panes `scope` names (`-a`, or `-t WINDOW`) with their places.
+fn list(scope: &[&str], t: &dyn Runner) -> Listing {
+    let format = format!("{PLACE_FORMAT}\t{}", tmux::PANES_FORMAT);
+    let mut args = vec!["list-panes"];
+    args.extend_from_slice(scope);
+    args.extend(["-F", &format]);
+    parse(&t.run(&args))
+}
+
+/// The rows of [`list`]; a row whose pane does not parse is left out, and one whose place
+/// does not keeps the pane with no place, so a window is never closed over a bad number.
+fn parse(out: &str) -> Listing {
+    let mut listing = Listing::default();
+    for line in out.lines() {
+        let f: Vec<&str> = line.splitn(9, '\t').collect();
+        let [active, width, height, zoomed, left, top, w, h, rest] = f[..] else {
+            continue;
+        };
+        let Some(pane) = tmux::parse_pane(rest) else {
+            continue;
+        };
+        let nums = [width, height, left, top, w, h].map(|n| n.parse::<u32>().ok());
+        let place = match nums {
+            [Some(width), Some(height), Some(left), Some(top), Some(w), Some(h)] => Some(Place {
+                active: active == "1",
+                zoomed: zoomed == "1",
+                window: [width, height],
+                cells: [left, top, w, h],
+            }),
+            _ => None,
+        };
+        listing.panes.push(pane);
+        listing.places.push(place);
+    }
+    listing
 }
 
 /// A pane's id and place: left, top, width and height in cells.
 type Slot = (u32, [u32; 4]);
 
-/// A window's panes, as [`TEAM_FORMAT`] lists them.
-struct Team {
-    window: String,
+/// A window's panes, split into its sidebar and the rest.
+struct Team<'a> {
+    window: &'a str,
     width: u32,
     height: u32,
+    /// The window has a landing page or a zoomed pane, so it is not arranged.
+    skip: bool,
     sidebar: Option<Slot>,
     panes: Vec<Slot>,
 }
 
-/// The windows with teammates, from the rows of [`TEAM_FORMAT`]. A window with a landing page, a
-/// zoomed pane or no sidebar is left out, and so is a row that does not parse.
-fn teams(listing: &str) -> Vec<Team> {
+/// The windows with teammates in `listing`. A window with a landing page, a zoomed pane or no
+/// sidebar is left out.
+fn teams(listing: &Listing) -> Vec<Team<'_>> {
     let mut teams: Vec<Team> = Vec::new();
-    let mut skipped: Vec<String> = Vec::new();
-    for line in listing.lines() {
-        let f: Vec<&str> = line.split('\t').collect();
-        let [window, width, height, pane, sidebar, landing, zoomed, left, top, w, h] = f[..] else {
+    for (pane, place) in listing.panes.iter().zip(&listing.places) {
+        let (Some(place), Some(id)) = (
+            place,
+            pane.pane_id.strip_prefix('%').and_then(|n| n.parse().ok()),
+        ) else {
             continue;
         };
-        let nums: Option<Vec<u32>> = [width, height, left, top, w, h]
-            .iter()
-            .map(|n| n.parse().ok())
-            .collect();
-        let (Some(n), Some(id)) = (nums, pane.strip_prefix('%').and_then(|n| n.parse().ok()))
-        else {
-            continue;
-        };
-        if !landing.is_empty() || zoomed == "1" {
-            skipped.push(window.to_owned());
-        }
-        if teams.last().is_none_or(|t| t.window != window) {
+        if teams.last().is_none_or(|t| t.window != pane.window_id) {
             teams.push(Team {
-                window: window.to_owned(),
-                width: n[0],
-                height: n[1],
+                window: &pane.window_id,
+                width: place.window[0],
+                height: place.window[1],
+                skip: false,
                 sidebar: None,
                 panes: Vec::new(),
             });
         }
         let team = teams.last_mut().expect("pushed above");
-        let slot = (id, [n[2], n[3], n[4], n[5]]);
-        if sidebar.is_empty() {
-            team.panes.push(slot);
-        } else {
+        team.skip |= pane.landing || place.zoomed;
+        let slot = (id, place.cells);
+        if pane.sidebar {
             team.sidebar = Some(slot);
+        } else {
+            team.panes.push(slot);
         }
     }
-    teams.retain(|t| {
-        t.sidebar.is_some() && t.panes.len() >= TEAM_PANES && !skipped.contains(&t.window)
-    });
+    teams.retain(|t| !t.skip && t.sidebar.is_some() && t.panes.len() >= TEAM_PANES);
     teams
 }
 
@@ -202,8 +252,8 @@ fn slots(team: &Team) -> Vec<Slot> {
 /// cells), and trying again would only repeat that. Claude Code's own `main-vertical` moves
 /// them, which arranges the window again. The places are compared rather than tmux's layout
 /// string, which tmux 3.7 writes in another format than `select-layout` takes.
-fn arrange_teams(t: &dyn Runner) {
-    for team in teams(&t.run(&["list-panes", "-a", "-F", TEAM_FORMAT])) {
+fn arrange_teams(listing: &Listing, t: &dyn Runner) {
+    for team in teams(listing) {
         let Some((sidebar, main, stack)) = team_slots(&team) else {
             continue;
         };
@@ -214,20 +264,20 @@ fn arrange_teams(t: &dyn Runner) {
                 .chain(stack.iter().copied())
                 .collect(),
         );
-        let last = t.run(&["show-option", "-wqv", "-t", &team.window, ARRANGED]);
+        let last = t.run(&["show-option", "-wqv", "-t", team.window, ARRANGED]);
         if now == wanted || now == last.trim() || last.trim() == BUSY {
             continue;
         }
         let layout = layout_string(team.width, team.height, sidebar, main, &stack);
-        t.run(&["set-option", "-w", "-t", &team.window, ARRANGED, BUSY]);
-        t.run(&["select-layout", "-t", &team.window, &layout]);
-        let after = t.run(&["list-panes", "-t", &team.window, "-F", TEAM_FORMAT]);
+        t.run(&["set-option", "-w", "-t", team.window, ARRANGED, BUSY]);
+        t.run(&["select-layout", "-t", team.window, &layout]);
+        let after = list(&["-t", team.window], t);
         let place = teams(&after)
             .first()
             .map(|arranged| places(slots(arranged)));
         match place {
-            Some(place) => t.run(&["set-option", "-w", "-t", &team.window, ARRANGED, &place]),
-            None => t.run(&["set-option", "-wu", "-t", &team.window, ARRANGED]),
+            Some(place) => t.run(&["set-option", "-w", "-t", team.window, ARRANGED, &place]),
+            None => t.run(&["set-option", "-wu", "-t", team.window, ARRANGED]),
         };
     }
 }
@@ -309,7 +359,8 @@ fn send(pane: &str, key: &str, t: &dyn Runner) {
 mod tests {
     use crate::core::state::{new_record, Mux, Record, Status};
     use crate::term::layout::{
-        layout, show, step, team_slots, teams, HIDDEN, LAST_WINDOW, LAYOUT, SHOWN,
+        layout, parse, show, step, team_slots, teams, HIDDEN, LAST_WINDOW, LAYOUT, PLACE_FORMAT,
+        SHOWN,
     };
     use crate::term::tmux::fake::FakeTmux;
 
@@ -322,26 +373,44 @@ mod tests {
 
     /// The landing page @1, sessions @2 and @3 with a sidebar each, and @4 where only the
     /// sidebar is left.
-    fn server() -> String {
-        listing(&[
-            ["%1", "@1", "1", "1", "", "1", "sessions"],
-            ["%2", "@2", "1", "2", "1", "", "api"],
-            ["%3", "@2", "2", "2", "", "", "api"],
-            ["%4", "@3", "1", "3", "1", "", "web"],
-            ["%5", "@3", "2", "3", "", "", "web"],
-            ["%6", "@4", "1", "4", "1", "", "gone"],
-        ])
+    const SERVER: [[&str; 7]; 6] = [
+        ["%1", "@1", "1", "1", "", "1", "sessions"],
+        ["%2", "@2", "1", "2", "1", "", "api"],
+        ["%3", "@2", "2", "2", "", "", "api"],
+        ["%4", "@3", "1", "3", "1", "", "web"],
+        ["%5", "@3", "2", "3", "", "", "web"],
+        ["%6", "@4", "1", "4", "1", "", "gone"],
+    ];
+
+    /// [`SERVER`] as `cst layout` lists it, with the windows in `active` on screen.
+    fn placed(active: &[&str]) -> String {
+        SERVER
+            .iter()
+            .map(|r| {
+                let on = u8::from(active.contains(&r[1]));
+                format!("{on}\t100\t50\t0\t0\t0\t10\t10\t{}", r.join("\t"))
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
-    /// Answers as [`server`], with `last` as the window shown last and `active` as the panes
-    /// that show their window's sidebar or landing page on screen.
-    fn reply(last: &'static str, active: &'static str) -> FakeTmux {
+    /// Answers as [`SERVER`], with `last` as the window shown last and `active` as the windows
+    /// on screen.
+    fn reply(last: &'static str, active: &'static [&'static str]) -> FakeTmux {
         FakeTmux::new(move |args| match args {
-            ["list-panes", "-a", "-F", ..] => server(),
-            ["list-panes", "-a", "-f", ..] => active.into(),
+            ["list-panes", "-a", "-F", f] if f.starts_with(PLACE_FORMAT) => placed(active),
+            ["list-panes", "-a", "-F", ..] => listing(&SERVER),
             ["show-option", ..] => last.into(),
             _ => String::new(),
         })
+    }
+
+    /// How many times the whole server's panes were listed.
+    fn listings(t: &FakeTmux) -> usize {
+        t.calls_to("list-panes")
+            .iter()
+            .filter(|c| c[1] == "-a")
+            .count()
     }
 
     fn sent(t: &FakeTmux) -> Vec<(String, String)> {
@@ -357,7 +426,7 @@ mod tests {
 
     #[test]
     fn layout_adds_a_sidebar_to_a_window_or_fits_them_all() {
-        let t = reply("", "");
+        let t = reply("", &[]);
         layout(Some("@5"), &t);
         let calls = t.calls();
         assert_eq!(calls[0], ["list-panes", "-t", "@5", "-F", "#{@cs-sidebar}"]);
@@ -365,7 +434,7 @@ mod tests {
         assert_eq!(calls[1][6], "@5");
         let fits = t.calls_to("resize-pane");
         assert_eq!(fits.len(), 3);
-        let t = reply("", "");
+        let t = reply("", &[]);
         layout(None, &t);
         assert!(t.calls_to("split-window").is_empty());
         assert_eq!(t.calls_to("resize-pane").len(), 3);
@@ -373,25 +442,18 @@ mod tests {
 
     #[test]
     fn layout_closes_a_window_where_only_the_sidebar_is_left() {
-        let t = reply("", "");
+        let t = reply("", &[]);
         layout(None, &t);
         assert_eq!(t.calls_to("kill-window"), [["kill-window", "-t", "@4"]]);
     }
 
     #[test]
     fn layout_tells_the_panes_on_screen_that_the_layout_changed() {
-        let t = reply("", "%2\n%1");
+        let t = reply("", &["@1", "@2"]);
         layout(None, &t);
-        let ask = &t
-            .calls_to("list-panes")
-            .into_iter()
-            .find(|c| c[2] == "-f")
-            .expect("asks for the panes on screen");
-        assert_eq!(
-            ask[3],
-            "#{&&:#{window_active},#{||:#{@cs-sidebar},#{@cs-landing}}}"
-        );
-        assert_eq!(sent(&t), [pair("%2", LAYOUT), pair("%1", LAYOUT)]);
+        assert_eq!(sent(&t), [pair("%1", LAYOUT), pair("%2", LAYOUT)]);
+        // Once, then again after closing @4
+        assert_eq!(listings(&t), 2);
     }
 
     /// The rows of one window 185 wide and 47 high, each pane as `(id, sidebar, [left, top,
@@ -399,9 +461,10 @@ mod tests {
     fn team_rows(landing: &str, zoomed: &str, panes: &[(&str, &str, [u32; 4])]) -> String {
         panes
             .iter()
-            .map(|(id, sidebar, [l, t, w, h])| {
-                let head = format!("@7\t185\t47\t{id}\t{sidebar}\t{landing}\t{zoomed}");
-                format!("{head}\t{l}\t{t}\t{w}\t{h}")
+            .enumerate()
+            .map(|(i, (id, sidebar, [l, t, w, h]))| {
+                let place = format!("0\t185\t47\t{zoomed}\t{l}\t{t}\t{w}\t{h}");
+                format!("{place}\t{id}\t@7\t{i}\t7\t{sidebar}\t{landing}\tteam")
             })
             .collect::<Vec<_>>()
             .join("\n")
@@ -426,14 +489,15 @@ mod tests {
 
     fn team_server(rows: String) -> FakeTmux {
         FakeTmux::new(move |args| match args {
-            ["list-panes", "-a", "-F", f, ..] if f.starts_with("#{window_id}\t") => rows.clone(),
+            ["list-panes", "-a", "-F", f] if f.starts_with(PLACE_FORMAT) => rows.clone(),
             _ => String::new(),
         })
     }
 
     #[test]
     fn a_team_keeps_the_main_pane_big_and_stacks_the_rest() {
-        let found = teams(&team_rows("", "0", &STACKED));
+        let listed = parse(&team_rows("", "0", &STACKED));
+        let found = teams(&listed);
         let (sidebar, main, stack) = team_slots(&found[0]).expect("a layout");
         assert_eq!(sidebar, (1, PLACED[0].2));
         assert_eq!(main, (2, PLACED[1].2));
@@ -447,6 +511,7 @@ mod tests {
         let select = t.calls_to("select-layout");
         assert_eq!(select.len(), 1);
         assert_eq!(select[0][..3], ["select-layout", "-t", "@7"]);
+        assert_eq!(listings(&t), 1);
         let t = team_server(team_rows("", "0", &PLACED));
         layout(None, &t);
         assert!(t.calls_to("select-layout").is_empty());
@@ -469,9 +534,9 @@ mod tests {
     #[test]
     fn a_window_that_is_not_a_team_is_left_alone() {
         // Only two panes beside the sidebar, a zoomed pane and a landing page
-        assert!(teams(&team_rows("", "0", &STACKED[..3])).is_empty());
-        assert!(teams(&team_rows("", "1", &STACKED)).is_empty());
-        assert!(teams(&team_rows("1", "0", &STACKED)).is_empty());
+        assert!(teams(&parse(&team_rows("", "0", &STACKED[..3]))).is_empty());
+        assert!(teams(&parse(&team_rows("", "1", &STACKED))).is_empty());
+        assert!(teams(&parse(&team_rows("1", "0", &STACKED))).is_empty());
     }
 
     fn at(id: &str, status: Status, pane: &str) -> Record {
@@ -492,24 +557,24 @@ mod tests {
             at("b", Status::Permission, "%5"),
             at("a", Status::Done, "%3"),
         ];
-        let t = reply("", "");
+        let t = reply("", &[]);
         step("@3", 1, &records, "/s", &t);
         assert_eq!(t.calls_to("select-window"), [["select-window", "-t", "@2"]]);
-        let t = reply("", "");
+        let t = reply("", &[]);
         step("@3", -1, &records, "/s", &t);
         assert_eq!(t.calls_to("select-window"), [["select-window", "-t", "@2"]]);
     }
 
     #[test]
     fn step_without_sessions_selects_nothing() {
-        let t = reply("", "");
+        let t = reply("", &[]);
         step("@3", 1, &[], "/s", &t);
         assert!(t.calls_to("select-window").is_empty());
     }
 
     #[test]
     fn show_hides_the_window_shown_before_and_shows_this_one() {
-        let t = reply("@3", "");
+        let t = reply("@3", &[]);
         show("%3", &t);
         assert_eq!(sent(&t), [pair("%4", HIDDEN), pair("%2", SHOWN)]);
         assert_eq!(
@@ -524,7 +589,7 @@ mod tests {
 
     #[test]
     fn show_on_the_window_already_shown_only_shows_it() {
-        let t = reply("@2", "");
+        let t = reply("@2", &[]);
         show("%2", &t);
         assert_eq!(sent(&t), [pair("%2", SHOWN)]);
         assert!(t.calls_to("set-option").is_empty());
@@ -532,7 +597,7 @@ mod tests {
 
     #[test]
     fn show_wakes_the_landing_page_and_skips_a_window_with_neither() {
-        let t = reply("", "");
+        let t = reply("", &[]);
         show("%1", &t);
         assert_eq!(sent(&t), [pair("%1", SHOWN)]);
         // A window shown before that has no sidebar any more gets nothing
@@ -552,7 +617,7 @@ mod tests {
 
     #[test]
     fn show_for_a_pane_that_is_gone_does_nothing() {
-        let t = reply("@3", "");
+        let t = reply("@3", &[]);
         show("%99", &t);
         assert!(sent(&t).is_empty());
         assert!(t.calls_to("set-option").is_empty());

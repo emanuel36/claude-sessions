@@ -34,7 +34,7 @@ const HEADLESS: [&str; 3] = ["sdk-cli", "sdk-ts", "sdk-py"];
 const MIN_ID_PREFIX: usize = 8;
 /// Every pane of the server and its window, in one listing; the window's name comes last, as
 /// it may hold a tab.
-const PANES_FORMAT: &str = "#{pane_id}\t#{window_id}\t#{pane_index}\t#{window_index}\t\
+pub(crate) const PANES_FORMAT: &str = "#{pane_id}\t#{window_id}\t#{pane_index}\t#{window_index}\t\
                             #{@cs-sidebar}\t#{@cs-landing}\t#{window_name}";
 /// The frames of Claude Code's spinner, which starts the line of a running turn; on Linux
 /// and in Ghostty one frame is drawn as `*`.
@@ -261,25 +261,28 @@ fn is_number(s: &str) -> bool {
 pub fn panes(t: &dyn Runner) -> Vec<Pane> {
     t.run(&["list-panes", "-a", "-F", PANES_FORMAT])
         .lines()
-        .filter_map(|line| {
-            let f: Vec<&str> = line.splitn(7, '\t').collect();
-            let [pane_id, window_id, index, window_index, sidebar, landing, name] = f[..] else {
-                return None;
-            };
-            if !is_number(index) || !is_number(window_index) {
-                return None;
-            }
-            Some(Pane {
-                pane_id: pane_id.to_owned(),
-                window_id: window_id.to_owned(),
-                index: index.parse().ok()?,
-                window_index: window_index.parse().ok()?,
-                sidebar: !sidebar.is_empty(),
-                landing: !landing.is_empty(),
-                window_name: name.to_owned(),
-            })
-        })
+        .filter_map(parse_pane)
         .collect()
+}
+
+/// A line of [`PANES_FORMAT`] as a [`Pane`]; `None` when tmux did not format it as asked.
+pub(crate) fn parse_pane(line: &str) -> Option<Pane> {
+    let f: Vec<&str> = line.splitn(7, '\t').collect();
+    let [pane_id, window_id, index, window_index, sidebar, landing, name] = f[..] else {
+        return None;
+    };
+    if !is_number(index) || !is_number(window_index) {
+        return None;
+    }
+    Some(Pane {
+        pane_id: pane_id.to_owned(),
+        window_id: window_id.to_owned(),
+        index: index.parse().ok()?,
+        window_index: window_index.parse().ok()?,
+        sidebar: !sidebar.is_empty(),
+        landing: !landing.is_empty(),
+        window_name: name.to_owned(),
+    })
 }
 
 /// Groups live session records into the windows of the tmux server at `socket`, most urgent
@@ -523,8 +526,13 @@ pub fn add_sidebar_running(window_id: &str, command: &str, t: &dyn Runner) {
 
 /// Resizes every sidebar pane back to its width, after a split or a terminal resize.
 pub fn fit_sidebars(t: &dyn Runner) {
+    fit_sidebars_in(&panes(t), t);
+}
+
+/// [`fit_sidebars`] on the sidebars among `panes`, already listed.
+pub(crate) fn fit_sidebars_in(panes: &[Pane], t: &dyn Runner) {
     let width = SIDEBAR_WIDTH.to_string();
-    for pane in panes(t).iter().filter(|p| p.sidebar) {
+    for pane in panes.iter().filter(|p| p.sidebar) {
         t.run(&["resize-pane", "-t", &pane.pane_id, "-x", &width]);
     }
 }
