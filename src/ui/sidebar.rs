@@ -41,7 +41,7 @@ const DETAIL_ROOM: usize = CONTENT - ELBOW_CELLS;
 /// A blank line, the mascot (3) and a blank line: the mascot level with Claude Code's own.
 const HEAD: i64 = 5;
 /// Lines of a session entry whose name fits one line, not counting the blank line between
-/// entries; a longer name adds one (see [`entry_height`]).
+/// entries; a longer name adds one (see [`Laid::height`]).
 const ENTRY: usize = 2;
 /// The cells kept for the waiting time beside a name: `59m` or `12h`.
 const LABEL_CELLS: usize = 3;
@@ -327,11 +327,6 @@ fn split_name(entry: &Entry) -> (String, String) {
     (name[..at].to_owned(), name[at..].trim_start().to_owned())
 }
 
-/// The lines of a session entry: two, or three when its name goes on to a second line.
-fn entry_height(entry: &Entry) -> usize {
-    ENTRY + usize::from(!split_name(entry).1.is_empty())
-}
-
 /// A `⎿` field, or `–` for an unknown one.
 fn or_dash(text: String) -> String {
     if text.is_empty() {
@@ -347,7 +342,8 @@ fn or_dash(text: String) -> String {
 /// time; a name too long for it goes on under it, cut there with `…`. The `⎿` line has the
 /// cost, Claude's time and the model's family in columns, so they line up across entries.
 /// The current session's lines have a lighter background.
-fn entry_lines(entry: &Entry, current: bool, now: f64) -> Vec<Line<'static>> {
+fn entry_lines(laid: &Laid, current: bool, now: f64) -> Vec<Line<'static>> {
+    let Laid { entry, head, rest } = laid;
     let base = if current { CURRENT } else { Style::new() };
     let status_colour = colour(entry.status);
     let mark_style = status_colour.unwrap_or(INACTIVE);
@@ -358,11 +354,10 @@ fn entry_lines(entry: &Entry, current: bool, now: f64) -> Vec<Line<'static>> {
         (false, Some(_)) => INK,
     };
     let label = waiting(entry, now);
-    let (head, rest) = split_name(entry);
     let mut lines = vec![Bullet {
         mark: &mark,
         mark_style: mark_style.add_modifier(Modifier::BOLD),
-        title: &head,
+        title: head,
         title_style: name_style,
         value: &label,
         value_style: mark_style.add_modifier(Modifier::BOLD),
@@ -373,7 +368,7 @@ fn entry_lines(entry: &Entry, current: bool, now: f64) -> Vec<Line<'static>> {
     if !rest.is_empty() {
         let mut more = start(base);
         push(&mut more, "  ", INK);
-        push(&mut more, words::fit(&rest, CONTENT - 2), name_style);
+        push(&mut more, words::fit(rest, CONTENT - 2), name_style);
         lines.push(more);
     }
 
@@ -759,42 +754,55 @@ pub fn panel_lines(stats: &Stats, now: f64, content: usize, models: bool) -> Vec
         .collect()
 }
 
-/// A row of the session list.
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum Row<'a> {
-    /// The blank line between two entries.
-    Blank,
-    /// The first line of an entry, with its mark.
-    First(&'a Entry),
-    /// The other lines of an entry: the rest of its name, and the `⎿` line.
-    Rest(&'a Entry),
+/// A session entry with its name split for its lines (see [`split_name`]), so a frame splits
+/// each name once.
+struct Laid<'a> {
+    entry: &'a Entry,
+    head: String,
+    rest: String,
 }
 
-/// Lays the sessions out in `room` lines at most.
+impl<'a> Laid<'a> {
+    fn new(entry: &'a Entry) -> Self {
+        let (head, rest) = split_name(entry);
+        Self { entry, head, rest }
+    }
+
+    /// The entry's lines: two, or three when its name goes on to a second line.
+    fn height(&self) -> usize {
+        ENTRY + usize::from(!self.rest.is_empty())
+    }
+}
+
+/// The entries laid out in the order the sidebar lists them.
+fn lay(entries: &[Entry]) -> Vec<Laid<'_>> {
+    ordered(entries).into_iter().map(Laid::new).collect()
+}
+
+/// How many entries fit in `room` lines, a blank line between two.
 ///
 /// An entry that does not fit, and all after it, are left out.
-fn plan(entries: &[Entry], room: i64) -> Vec<Row<'_>> {
-    let mut rows = Vec::new();
-    for entry in ordered(entries) {
-        let before = usize::from(!rows.is_empty());
-        let height = entry_height(entry);
-        if (rows.len() + before + height) as i64 > room {
+fn fitting(laid: &[Laid], room: i64) -> usize {
+    let mut used = 0;
+    let mut shown = 0;
+    for entry in laid {
+        let next = used + usize::from(shown > 0) + entry.height();
+        if next as i64 > room {
             break;
         }
-        if before > 0 {
-            rows.push(Row::Blank);
-        }
-        rows.push(Row::First(entry));
-        rows.extend(std::iter::repeat_n(Row::Rest(entry), height - 1));
+        used = next;
+        shown += 1;
     }
-    rows
+    shown
 }
 
 /// The statistics that fit under the sessions: Today goes when the sessions need its room.
-fn bottom_lines(entries: &[Entry], stats: &Stats, now: f64, height: i64) -> Vec<Line<'static>> {
+fn bottom_lines(laid: &[Laid], stats: &Stats, now: f64, height: i64) -> Vec<Line<'static>> {
     let full = stats_lines(stats, now, true);
-    let shown = |room| plan(entries, room).len();
-    if shown(height - HEAD - full.len() as i64) == shown(height) {
+    // Without a Today block there is nothing to leave out
+    if stats.day.is_none()
+        || fitting(laid, height - HEAD - full.len() as i64) == fitting(laid, height)
+    {
         return full;
     }
     stats_lines(stats, now, false)
@@ -805,13 +813,18 @@ fn bottom_lines(entries: &[Entry], stats: &Stats, now: f64, height: i64) -> Vec<
 /// The blank lines between entries, and entries a short column leaves out, belong to none.
 pub fn entry_at<'a>(entries: &'a [Entry], y: u16, height: u16, stats: &Stats) -> Option<&'a Entry> {
     let height = i64::from(height);
-    let bottom = bottom_lines(entries, stats, 0.0, height).len() as i64;
-    let rows = plan(entries, height - HEAD - bottom);
-    let row = usize::try_from(i64::from(y) - HEAD).ok()?;
-    match rows.get(row)? {
-        Row::First(entry) | Row::Rest(entry) => Some(entry),
-        Row::Blank => None,
+    let laid = lay(entries);
+    let bottom = bottom_lines(&laid, stats, 0.0, height).len() as i64;
+    let shown = fitting(&laid, height - HEAD - bottom);
+    let mut row = usize::try_from(i64::from(y) - HEAD).ok()?;
+    for entry in &laid[..shown] {
+        if row < entry.height() {
+            return Some(entry.entry);
+        }
+        // Past this entry and the blank line after it
+        row = row.checked_sub(entry.height() + 1)?;
     }
+    None
 }
 
 /// The whole column: exactly `height` lines of [`WIDTH`] cells.
@@ -837,15 +850,15 @@ pub fn column(
     lines.push(blank());
 
     let height = i64::from(height);
-    let bottom = bottom_lines(entries, stats, now, height);
+    let laid = lay(entries);
+    let bottom = bottom_lines(&laid, stats, now, height);
     let room = height - HEAD - bottom.len() as i64;
     let mut body = Vec::new();
-    for row in plan(entries, room) {
-        match row {
-            Row::First(entry) => body.extend(entry_lines(entry, entry.window_id == current, now)),
-            Row::Blank => body.push(blank()),
-            Row::Rest(_) => {}
+    for (i, entry) in laid[..fitting(&laid, room)].iter().enumerate() {
+        if i > 0 {
+            body.push(blank());
         }
+        body.extend(entry_lines(entry, entry.entry.window_id == current, now));
     }
     body.extend(runs_lines(runs, now, room - body.len() as i64));
     let filler = usize::try_from(room - body.len() as i64).unwrap_or(0);
@@ -867,9 +880,9 @@ mod tests {
     use crate::term::tmux::Pane;
     use crate::ui::line::{cell_len, plain, row_text};
     use crate::ui::sidebar::{
-        column, entry_at, entry_lines, hbar, hours_lines, load_entries, ordered, panel_lines, plan,
-        runs_lines, spinner, stats_lines, step, today_lines, Entry, Row, Run, Stats, CONTENT,
-        DETAIL_ROOM, PANEL_WIDTH, WIDTH,
+        self, column, entry_at, fitting, hbar, hours_lines, lay, load_entries, ordered,
+        panel_lines, runs_lines, spinner, stats_lines, step, today_lines, Entry, Laid, Run, Stats,
+        CONTENT, DETAIL_ROOM, PANEL_WIDTH, WIDTH,
     };
     use crate::ui::usage::{Day, Totals};
     use crate::ui::words::{
@@ -879,6 +892,10 @@ mod tests {
     /// 2026-11-03 14:07:00 UTC, a Tuesday; a multiple of 5 s, so the spinner is at frame 0.
     const NOW: f64 = 1_793_714_820.0;
     const ELBOW: &str = "  ⎿  ";
+
+    fn entry_lines(entry: &Entry, current: bool, now: f64) -> Vec<Line<'static>> {
+        sidebar::entry_lines(&Laid::new(entry), current, now)
+    }
 
     fn today() -> NaiveDate {
         NaiveDate::from_ymd_opt(2026, 11, 3).unwrap()
@@ -1464,8 +1481,9 @@ mod tests {
     #[test]
     fn a_long_name_that_does_not_fit_leaves_its_entry_out() {
         let long = e("@1", "a name long enough for two lines", Status::Idle, NOW);
-        assert!(plan(std::slice::from_ref(&long), 2).is_empty());
-        assert_eq!(plan(std::slice::from_ref(&long), 3).len(), 3);
+        let laid = lay(std::slice::from_ref(&long));
+        assert_eq!(fitting(&laid, 2), 0);
+        assert_eq!(fitting(&laid, 3), 1);
     }
 
     #[test]
@@ -1584,10 +1602,8 @@ mod tests {
         let first = entries()[0].clone();
         let list = [odd.clone(), notes.clone(), first.clone()];
         assert_eq!(ordered(&list), vec![&first, &odd, &notes]);
-        assert_eq!(
-            plan(std::slice::from_ref(&odd), 10),
-            vec![Row::First(&odd), Row::Rest(&odd)]
-        );
+        let laid = lay(std::slice::from_ref(&odd));
+        assert_eq!((fitting(&laid, 10), laid[0].height()), (1, 2));
     }
 
     #[test]
