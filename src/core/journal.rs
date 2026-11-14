@@ -9,7 +9,7 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
-use chrono::{DateTime, Local, NaiveDate};
+use chrono::{DateTime, Local, NaiveDate, TimeZone};
 use serde::{Deserialize, Serialize};
 
 use crate::core::paths;
@@ -56,15 +56,14 @@ fn day_path(dir: &Path, day: NaiveDate) -> PathBuf {
     dir.join(format!("{day}{SUFFIX}"))
 }
 
-/// The local date of a Unix timestamp, or `None` for one that is not a date.
-fn day_of(t: f64) -> Option<NaiveDate> {
+/// The date of a Unix timestamp in the zone `tz`, or `None` for one that is not a date.
+pub(crate) fn day_of<Tz: TimeZone>(t: f64, tz: &Tz) -> Option<NaiveDate> {
     if !t.is_finite() {
         return None;
     }
-    let secs = t.floor();
-    let nanos = ((t - secs) * 1e9) as u32;
-    let utc = DateTime::from_timestamp(secs as i64, nanos.min(999_999_999))?;
-    Some(utc.with_timezone(&Local).date_naive())
+    // The fraction of a second never changes the date
+    let utc = DateTime::from_timestamp(t.floor() as i64, 0)?;
+    Some(utc.with_timezone(tz).date_naive())
 }
 
 /// Adds an event to the file of its day, and deletes the files of past weeks.
@@ -72,7 +71,7 @@ fn day_of(t: f64) -> Option<NaiveDate> {
 /// Never fails: the hook and the status line call it, and losing an event is better than
 /// breaking them. A failure goes to the error log.
 pub fn append(e: &JournalEvent) {
-    let Some(day) = day_of(e.t) else {
+    let Some(day) = day_of(e.t, &Local) else {
         paths::log_error(&format_args!("journal: event time {} is not a date", e.t));
         return;
     };
@@ -395,7 +394,7 @@ mod tests {
     }
 
     fn put(dir: &Path, e: &JournalEvent) {
-        let day = day_of(e.t).unwrap();
+        let day = day_of(e.t, &Local).unwrap();
         append_in(dir, e, day, day).unwrap();
     }
 
@@ -421,10 +420,10 @@ mod tests {
     #[test]
     fn day_of_is_the_local_date() {
         let day = date(2026, 11, 2);
-        assert_eq!(day_of(noon(day)), Some(day));
-        assert_eq!(day_of(f64::INFINITY), None);
-        assert_eq!(day_of(f64::NAN), None);
-        assert_eq!(day_of(1e300), None);
+        assert_eq!(day_of(noon(day), &Local), Some(day));
+        assert_eq!(day_of(f64::INFINITY, &Local), None);
+        assert_eq!(day_of(f64::NAN, &Local), None);
+        assert_eq!(day_of(1e300, &Local), None);
     }
 
     #[test]
