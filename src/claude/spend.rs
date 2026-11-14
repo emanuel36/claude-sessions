@@ -12,6 +12,7 @@ use std::io::{self, BufRead, BufReader, Seek, SeekFrom};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
+use memchr::memmem;
 use serde::{Deserialize, Serialize};
 
 use crate::claude::transcript::transcript_path_in;
@@ -157,9 +158,7 @@ struct Usage {
 /// several lines, its model and its tokens.
 fn reply_of(line: &[u8]) -> Option<(Option<String>, String, Tokens)> {
     // Most lines carry no usage: skip them before parsing
-    if !line.windows(7).any(|w| w == b"\"usage\"") {
-        return None;
-    }
+    memmem::find(line, b"\"usage\"")?;
     let parsed: Line = serde_json::from_slice(line).ok()?;
     let message = parsed.message?;
     let model = message.model?;
