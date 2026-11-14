@@ -850,7 +850,10 @@ mod tests {
         let f11 = KeyEvent::new(KeyCode::F(11), KeyModifiers::NONE);
         assert_eq!(page.handle(Msg::Key(f11), NOW, &mut runtime), Step::Wait);
         assert_eq!(page.shell.schedule.next_wake(NOW), None);
-        assert!(page.shell.watches.is_empty());
+        assert!(
+            page.shell.watches.watch(&mut runtime, dir.path(), &mut log),
+            "unwatched"
+        );
         assert_eq!(calls.calls(), Vec::<Vec<String>>::new());
     }
 

@@ -220,7 +220,7 @@ pub trait Visible {
         let shell = self.shell_mut();
         shell.schedule.visible = false;
         shell.schedule.dirty = false;
-        shell.watches.clear(runtime);
+        runtime.unwatch_all();
     }
 }
 
