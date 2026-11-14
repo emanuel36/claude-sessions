@@ -78,7 +78,7 @@ pub fn run(app: &mut impl App, runtime: &mut Runtime, screen: &mut Screen) {
 
 /// What a message tells about whether the pane is on screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Sight {
+enum Sight {
     /// It is on screen now.
     Shown,
     /// It left the screen.
@@ -94,7 +94,7 @@ pub enum Sight {
 ///
 /// A resize is such a proof because tmux (3.1 on; tmux.conf requires 3.2) resizes a window
 /// only when it is current or becomes current, never while it is out of sight.
-pub fn sight(msg: &Msg, visible: bool) -> Sight {
+fn sight(msg: &Msg, visible: bool) -> Sight {
     match msg {
         Msg::Key(key) => match signal(key) {
             Some(Signal::Shown) => Sight::Shown,
@@ -239,7 +239,7 @@ impl Shell {
         runtime.unwatch_all();
     }
 
-    /// Shows or hides the pane as `msg` tells ([`sight`]), and says whether it takes `msg`.
+    /// Shows or hides the pane as `msg` tells, and says whether it takes `msg`.
     ///
     /// A hidden pane does no work: the message that hid it, and any that comes while hidden
     /// (such as changes queued before its watches went), is dropped.
@@ -287,7 +287,7 @@ pub fn folders(
 }
 
 /// The tmux window a pane is in.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct OwnWindow {
     /// The window's id, as `@3`.
     pub id: String,

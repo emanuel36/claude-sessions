@@ -88,7 +88,7 @@ impl Stale {
 }
 
 /// The directories the panes read from.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 struct Dirs {
     /// The records and the limits.
     records: PathBuf,

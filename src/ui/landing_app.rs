@@ -159,25 +159,22 @@ impl Landing {
     /// Backspace with nothing typed does in a tree what ← does, and the arrows, Enter and the
     /// entries' Ctrl keys go to the list, Enter opening a window.
     fn key(&mut self, key: &KeyEvent) -> bool {
+        if key.code == KeyCode::Esc {
+            self.end_search();
+            return true;
+        }
         if self.searching {
-            match key.code {
-                KeyCode::Enter => self.enter_searching(),
-                KeyCode::Esc => self.end_search(),
-                _ => match picker_key(key) {
-                    Some(key) => {
-                        self.picker.key(key);
-                    }
-                    None => return false,
-                },
+            if key.code == KeyCode::Enter {
+                self.enter_searching();
+            } else if let Some(key) = picker_key(key) {
+                self.picker.key(key);
+            } else {
+                return false;
             }
             return true;
         }
         let Some(typed) = picker_key(key) else {
-            if key.code != KeyCode::Esc {
-                return false;
-            }
-            self.end_search();
-            return true;
+            return false;
         };
         match typed {
             picker::Key::Char('/') => self.searching = true,
@@ -214,7 +211,7 @@ impl Landing {
     fn enter_searching(&mut self) {
         let row = self.picker.selected();
         match row.as_ref().map(|r| (r.kind, r.root)) {
-            Some((RowKind::Root, _)) => {
+            Some((RowKind::Root, _) | (RowKind::Dir, Some(Root::New))) => {
                 self.picker.key(picker::Key::Enter);
             }
             Some((RowKind::Dir, Some(Root::Open)) | (RowKind::Create | RowKind::Hit, _)) => {
@@ -222,9 +219,6 @@ impl Landing {
                     open(self.tmux.as_ref(), &row, &self.picker.folders);
                 }
                 self.end_search();
-            }
-            Some((RowKind::Dir, Some(Root::New))) => {
-                self.picker.key(picker::Key::Enter);
             }
             // The text stays, filtering the list; the walk read for it does not
             _ => {
