@@ -19,7 +19,7 @@ use crate::term::tmux::{self, Cli, Pane, Runner};
 use crate::ui::pane::{self, own_socket, own_window, App, Shell, Step, Visible, WINDOW_PAUSE};
 use crate::ui::runtime::{signal, Msg, Runtime, Schedule, Screen, Signal};
 use crate::ui::sidebar::{column, entry_at, load_entries, Entry, Run, Stats};
-use crate::ui::watch::interruptible;
+use crate::ui::watch::{interruptible, Stale};
 
 /// Runs the sidebar in the tmux pane this process runs in, until its terminal goes away.
 ///
@@ -239,8 +239,8 @@ impl Sidebar {
         }
     }
 
-    /// Reads again what is stale.
-    fn reload(&mut self, now: f64) {
+    /// Reads again what is stale; returns what that was.
+    fn reload(&mut self, now: f64) -> Stale {
         let stale = std::mem::take(&mut self.shell.stale);
         if stale.panes {
             self.panes = tmux::panes(self.tmux.as_ref());
@@ -254,6 +254,7 @@ impl Sidebar {
             self.runs = runs_of(&self.records);
         }
         self.shell.read_stats(&stale, now, false);
+        stale
     }
 
     /// Draws the column; a failed draw keeps the last screen.
@@ -304,12 +305,21 @@ impl App for Sidebar {
         if !self.shell.prepare(now, runtime) {
             return;
         }
-        self.reload(now);
-        self.track_titles();
+        // A spinner tick reads nothing: what follows from the reads stays as it is
+        let read = self.reload(now);
+        if read.records {
+            self.track_titles();
+            self.shell.schedule.quiet = quiet_deadlines(&self.records, self.records_at);
+        }
+        // A transcript folder not there yet, or dropped and made again, is tried on every
+        // wake: the hook that writes it may not run again soon
         self.watch_transcripts(runtime);
-        self.shell.schedule.animating = animating(&self.entries);
-        self.shell.schedule.labels = labels(&self.entries, &self.runs, &self.shell.stats);
-        self.shell.schedule.quiet = quiet_deadlines(&self.records, self.records_at);
+        if read.records || read.panes {
+            self.shell.schedule.animating = animating(&self.entries);
+        }
+        if read.records || read.panes || read.limits {
+            self.shell.schedule.labels = labels(&self.entries, &self.runs, &self.shell.stats);
+        }
         self.draw(now, screen);
     }
 }
