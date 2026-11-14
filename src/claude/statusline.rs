@@ -106,22 +106,16 @@ pub fn load_limits(now: f64) -> BTreeMap<String, Quota> {
 }
 
 pub(crate) fn load_limits_in(dir: &Path, now: f64) -> BTreeMap<String, Quota> {
-    let Ok(bytes) = fs::read(dir.join(LIMITS_FILE)) else {
-        return BTreeMap::new();
-    };
-    let Ok(saved) = serde_json::from_slice::<Value>(&bytes) else {
-        return BTreeMap::new();
-    };
-    WINDOWS
-        .iter()
-        .filter_map(|name| {
-            let window = saved.get(name)?;
-            let quota = Quota {
-                pct: number(window.get("pct"))?,
-                resets_at: number(window.get("resets_at"))?,
-            };
-            (quota.resets_at > now).then(|| ((*name).to_owned(), quota))
-        })
+    // Entry by entry, so one bad window does not drop the others
+    let saved: BTreeMap<String, Value> = fs::read(dir.join(LIMITS_FILE))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default();
+    saved
+        .into_iter()
+        .filter(|(name, _)| WINDOWS.contains(&name.as_str()))
+        .filter_map(|(name, value)| Some((name, serde_json::from_value::<Quota>(value).ok()?)))
+        .filter(|(_, quota)| quota.resets_at > now)
         .collect()
 }
 
@@ -545,6 +539,18 @@ mod tests {
         let saved = json!({"monthly": {"pct": 1, "resets_at": 900}});
         fs::write(dir.path().join(LIMITS_FILE), saved.to_string()).unwrap();
         assert!(load_limits_in(dir.path(), 0.0).is_empty());
+    }
+
+    #[test]
+    fn load_limits_drops_only_the_window_it_cannot_read() {
+        let dir = TempDir::new().unwrap();
+        let saved = json!({
+            "five_hour": {"pct": 40, "resets_at": 900},
+            "seven_day": {"pct": "40", "resets_at": 900},
+        });
+        fs::write(dir.path().join(LIMITS_FILE), saved.to_string()).unwrap();
+        let loaded = load_limits_in(dir.path(), 0.0);
+        assert_eq!(loaded.keys().collect::<Vec<_>>(), ["five_hour"]);
     }
 
     #[test]

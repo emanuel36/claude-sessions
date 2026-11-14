@@ -260,24 +260,14 @@ impl Titles {
         if !self.stored {
             return HashMap::new();
         }
-        let saved = fs::read(self.state_dir().join(TITLES_FILE))
+        // Entry by entry, so one bad title does not drop the others
+        let saved: HashMap<String, Value> = fs::read(self.state_dir().join(TITLES_FILE))
             .ok()
-            .and_then(|bytes| serde_json::from_slice::<HashMap<String, Value>>(&bytes).ok());
-        let Some(saved) = saved else {
-            return HashMap::new();
-        };
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default();
         saved
             .into_iter()
-            .filter_map(|(id, value)| {
-                let [mtime, title] = value.as_array()?.as_slice() else {
-                    return None;
-                };
-                let mtime = match mtime {
-                    Value::Null => None,
-                    other => Some(other.as_i64()?),
-                };
-                Some((id, (mtime, title.as_str()?.to_owned())))
-            })
+            .filter_map(|(id, value)| Some((id, serde_json::from_value(value).ok()?)))
             .collect()
     }
 
@@ -620,6 +610,21 @@ mod tests {
         fs::write(&path, b"{\"aiTitle\":\"First\"}\n").unwrap();
         let mut titles = Titles::in_dir(true, state);
         assert_eq!(titles.get("a", &path), "First");
+    }
+
+    #[test]
+    fn a_bad_stored_title_drops_only_itself() {
+        let tmp = TempDir::new().unwrap();
+        let state = tmp.path().join("state");
+        fs::create_dir(&state).unwrap();
+        let saved = json!({"a": [5_000_000_000i64, "Kept"], "b": [1.5, "Odd"], "c": "no"});
+        fs::write(state.join(TITLES_FILE), saved.to_string()).unwrap();
+        let path = tmp.path().join("t.jsonl");
+        fs::write(&path, b"{\"aiTitle\":\"Read\"}\n").unwrap();
+        set_mtime(&path, 5);
+        let mut titles = Titles::in_dir(true, state);
+        assert_eq!(titles.get("a", &path), "Kept");
+        assert_eq!(titles.get("b", &path), "Read");
     }
 
     #[test]
