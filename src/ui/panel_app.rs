@@ -33,7 +33,9 @@ pub fn main_panel() -> anyhow::Result<()> {
     let mut app = Panel::new(Box::new(Cli::default()), Picker::default());
     // Reading the history takes a moment on a long one: the search line comes first
     app.update(unix_now(), &mut runtime, &mut screen);
-    (app.picker.folders, app.picker.sessions) = folders(unix_now());
+    let (folders, sessions) = folders(unix_now());
+    app.picker.folders = folders;
+    app.picker.set_sessions(sessions);
     app.update(unix_now(), &mut runtime, &mut screen);
     pane::run(&mut app, &mut runtime, &mut screen);
     Ok(())

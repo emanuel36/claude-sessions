@@ -80,7 +80,7 @@ impl ListFixture {
         if let Some(home) = self.home {
             p.home = home;
         }
-        p.sessions = self
+        let sessions = self
             .sessions
             .into_iter()
             .map(|s| {
@@ -95,6 +95,7 @@ impl ListFixture {
                 )
             })
             .collect();
+        p.set_sessions(sessions);
         p
     }
 }

@@ -85,7 +85,7 @@ fn ages(picker: &mut Picker) -> Vec<f64> {
         .shown()
         .into_iter()
         .filter(|r| r.kind == RowKind::Hit);
-    let hits = found.filter_map(|r| r.session.and_then(|i| picker.sessions.get(i)));
+    let hits = found.filter_map(|r| r.session.and_then(|i| picker.sessions().get(i)));
     out.extend(hits.map(|s| s.last));
     out
 }
@@ -284,7 +284,7 @@ impl Landing {
             costs.unwrap_or(&Default::default()),
             &self.live,
         );
-        self.picker.sessions = self.scan.searchable(&self.live);
+        self.picker.set_sessions(self.scan.searchable(&self.live));
         if let Some(before) = before {
             let at = self
                 .picker
@@ -492,7 +492,7 @@ mod tests {
         let (mut page, calls, mut runtime) = page();
         let t = tempfile::tempdir().unwrap();
         let dir = t.path().join("deleted").to_string_lossy().into_owned();
-        page.picker.sessions = linkedin_sessions(1, &dir);
+        page.picker.set_sessions(linkedin_sessions(1, &dir));
         search(&mut page, &mut runtime, "linkedin");
         assert_eq!(page.picker.selected().unwrap().kind, RowKind::Hit);
         press(&mut page, &mut runtime, &[KeyCode::Enter]);
@@ -507,7 +507,7 @@ mod tests {
     #[test]
     fn the_landing_shows_ten_hits() {
         let (mut page, _, mut runtime) = page();
-        page.picker.sessions = linkedin_sessions(12, "/w/cv");
+        page.picker.set_sessions(linkedin_sessions(12, "/w/cv"));
         search(&mut page, &mut runtime, "linkedin");
         let shown = page.picker.shown();
         assert_eq!(shown.iter().filter(|r| r.kind == RowKind::Hit).count(), 10);
@@ -536,9 +536,9 @@ mod tests {
         page.records = Box::new(|_| Vec::new());
         page.shell.stale.history = true;
         page.reload(NOW);
-        let hits = crate::ui::search::hits(&page.picker.sessions, "linkedin");
+        let hits = crate::ui::search::hits(page.picker.sessions(), "linkedin");
         assert_eq!(hits.len(), 1);
-        assert_eq!(page.picker.sessions[hits[0].index].id, "s9");
+        assert_eq!(page.picker.sessions()[hits[0].index].id, "s9");
     }
 
     #[test]
@@ -900,8 +900,8 @@ mod tests {
     #[test]
     fn ages_add_the_sessions_found_on_show_only() {
         let (mut page, _, mut runtime) = page();
-        page.picker.sessions = linkedin_sessions(12, "/w/cv");
-        let other = Searchable::new(
+        let mut sessions = linkedin_sessions(12, "/w/cv");
+        sessions.push(Searchable::new(
             "o".into(),
             "Other".into(),
             "/w/cv".into(),
@@ -909,8 +909,8 @@ mod tests {
             false,
             true,
             &[],
-        );
-        page.picker.sessions.push(other);
+        ));
+        page.picker.set_sessions(sessions);
         assert_eq!(ages(&mut page.picker).len(), 3);
         search(&mut page, &mut runtime, "linkedin");
         let got = ages(&mut page.picker);

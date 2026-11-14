@@ -3,7 +3,9 @@
 //! The Alt+n panel shows it under a search line; the landing page shows it under its header.
 
 use std::cell::RefCell;
+use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeSet, HashMap};
+use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::rc::Rc;
 
@@ -178,8 +180,11 @@ pub struct Picker {
     pub dirs: BTreeSet<(Root, String)>,
     /// While typing in a tree: the entry and the folder searched below.
     pub anchor: Option<(Root, String)>,
-    /// The sessions of every folder that the typed text searches.
-    pub sessions: Vec<Searchable>,
+    /// The sessions of every folder that the typed text searches; set with
+    /// [`Picker::set_sessions`], which the search cache follows.
+    sessions: Vec<Searchable>,
+    /// How many times the sessions were set.
+    sessions_gen: u64,
     /// How many of the sessions found show at once; the rest scroll into view.
     pub found_shown: usize,
     /// How many of the sessions found are scrolled past.
@@ -190,6 +195,8 @@ pub struct Picker {
     /// By folder, when a Claude session last ran in or below it, with the history it was read
     /// from.
     recent: RefCell<(Option<History>, Rc<Recent>)>,
+    /// The sessions found, with a hash of the text and the sessions' generation.
+    found: RefCell<(Option<u64>, Rc<[Hit]>)>,
 }
 
 impl Default for Picker {
@@ -217,11 +224,24 @@ impl Picker {
             dirs: BTreeSet::new(),
             anchor: None,
             sessions: Vec::new(),
+            sessions_gen: 0,
             found_shown: SHOWN,
             found_scroll: 0,
             typed_at: None,
             recent: RefCell::default(),
+            found: RefCell::default(),
         }
+    }
+
+    /// The sessions the typed text searches.
+    pub fn sessions(&self) -> &[Searchable] {
+        &self.sessions
+    }
+
+    /// Replaces the sessions the typed text searches; the next search looks in them.
+    pub fn set_sessions(&mut self, sessions: Vec<Searchable>) {
+        self.sessions = sessions;
+        self.sessions_gen += 1;
     }
 
     /// The folders read from disk for `root`'s tree.
@@ -488,16 +508,23 @@ impl Picker {
     }
 
     /// The sessions the typed text finds, ranked; none while the text is typed in a tree.
-    pub fn found(&self) -> Vec<Hit> {
-        if self.anchor.is_some() {
-            return Vec::new();
+    /// Searched again only when the text or the sessions change.
+    pub fn found(&self) -> Rc<[Hit]> {
+        if self.anchor.is_some() || self.query.split_whitespace().next().is_none() {
+            return Rc::default();
         }
-        search::hits(&self.sessions, &self.query)
+        let mut state = DefaultHasher::new();
+        (self.sessions_gen, &self.query).hash(&mut state);
+        let key = Some(state.finish());
+        let mut cached = self.found.borrow_mut();
+        if cached.0 != key {
+            *cached = (key, search::hits(&self.sessions, &self.query).into());
+        }
+        Rc::clone(&cached.1)
     }
 
-    /// The rows of the sessions found that are on show.
-    fn hit_rows(&self) -> Vec<Row> {
-        let found = self.found();
+    /// The rows of the sessions `found` that are on show.
+    fn hit_rows(&self, found: &[Hit]) -> Vec<Row> {
         let count = found.len();
         let start = self.found_scroll.min(count);
         let stop = (start + self.found_shown).min(count);
@@ -522,7 +549,8 @@ impl Picker {
     /// path, the sessions found and the folders. The cursor is kept on one of them.
     pub fn shown(&mut self) -> Vec<Row> {
         // Sessions that went away under the same text must not leave the block scrolled past them
-        let last_start = self.found().len().saturating_sub(self.found_shown);
+        let found = self.found();
+        let last_start = found.len().saturating_sub(self.found_shown);
         self.found_scroll = self.found_scroll.min(last_start);
         let mut out: Vec<Row> = self.open.iter().flat_map(|&r| self.root_rows(r)).collect();
         let mut history = rows(
@@ -534,7 +562,7 @@ impl Picker {
         );
         // The sessions found go after a typed path, before the folders
         let at = usize::from(history.first().is_some_and(|r| r.kind == RowKind::Path));
-        history.splice(at..at, self.hit_rows());
+        history.splice(at..at, self.hit_rows(&found));
         out.extend(history);
         self.cursor = self.cursor.min(out.len().saturating_sub(1));
         out
@@ -1416,6 +1444,7 @@ pub fn command(row: &Row, folders: &[Folder]) -> Vec<String> {
 mod tests {
     use std::collections::{BTreeSet, HashMap};
     use std::fs::{self, File};
+    use std::rc::Rc;
     use std::time::{Duration, UNIX_EPOCH};
 
     use ratatui::style::Modifier;
@@ -2655,11 +2684,11 @@ mod tests {
     /// The test picker, searching two LinkedIn sessions of `/w/cv` and one about something else.
     fn linkedin_picker() -> Picker {
         let mut p = picker(false);
-        p.sessions = vec![
+        p.set_sessions(vec![
             searchable("b", "Banner options", "/w/cv", 60.0, &["a linkedin banner"]),
             searchable("x", "Unrelated", "/w/cv", 30.0, &["nothing here"]),
             searchable("a", "Post on LinkedIn", "/w/cv", 7200.0, &["write it"]),
-        ];
+        ]);
         p
     }
 
@@ -2694,6 +2723,22 @@ mod tests {
     }
 
     #[test]
+    fn the_search_is_kept_until_the_text_or_the_sessions_change() {
+        let mut p = linkedin_picker();
+        p.query = "linkedin".into();
+        let first = p.found();
+        assert_eq!(first.len(), 2);
+        assert!(Rc::ptr_eq(&first, &p.found()), "kept");
+        // As many sessions, one of them another
+        let mut sessions = p.sessions().to_vec();
+        sessions[1] = searchable("y", "LinkedIn too", "/w/cv", 10.0, &[]);
+        p.set_sessions(sessions);
+        assert_eq!(p.found().len(), 3);
+        p.query = "banner".into();
+        assert_eq!(p.found().len(), 1);
+    }
+
+    #[test]
     fn a_folder_matching_by_path_keeps_the_cursor() {
         let mut p = picker(false);
         p.folders.push(Folder {
@@ -2704,13 +2749,13 @@ mod tests {
             spend: 0.0,
             sessions: Vec::new(),
         });
-        p.sessions = vec![searchable(
+        p.set_sessions(vec![searchable(
             "s",
             "Build",
             "/w/api",
             60.0,
             &["fix the vtp build"],
-        )];
+        )]);
         type_text(&mut p, "vtp");
         assert_eq!(hit_ids(&mut p), ["s"]);
         let selected = p.selected().unwrap();
@@ -2760,17 +2805,19 @@ mod tests {
     #[test]
     fn the_block_shows_found_shown_hits_and_scrolls() {
         let mut p = picker(false);
-        p.sessions = (0..7)
-            .map(|i| {
-                searchable(
-                    &format!("h{i}"),
-                    "linkedin",
-                    "/w/cv",
-                    f64::from(i) * 60.0,
-                    &[],
-                )
-            })
-            .collect();
+        p.set_sessions(
+            (0..7)
+                .map(|i| {
+                    searchable(
+                        &format!("h{i}"),
+                        "linkedin",
+                        "/w/cv",
+                        f64::from(i) * 60.0,
+                        &[],
+                    )
+                })
+                .collect(),
+        );
         assert_eq!(p.found_shown, 5);
         type_text(&mut p, "linkedin");
         assert_eq!(hit_ids(&mut p), ["h0", "h1", "h2", "h3", "h4"]);
@@ -2802,13 +2849,13 @@ mod tests {
         let all: Vec<Searchable> = (0..7)
             .map(|i| searchable(&format!("h{i}"), "linkedin", "/w/cv", f64::from(i), &[]))
             .collect();
-        p.sessions = all.clone();
+        p.set_sessions(all.clone());
         type_text(&mut p, "linkedin");
         for _ in 0..6 {
             p.key(Key::Down);
         }
         assert_eq!(hit_ids(&mut p), ["h2", "h3", "h4", "h5", "h6"]);
-        p.sessions = all[..2].to_vec();
+        p.set_sessions(all[..2].to_vec());
         assert_eq!(hit_ids(&mut p).len(), 2);
     }
 
@@ -2830,7 +2877,7 @@ mod tests {
     #[test]
     fn text_typed_in_a_tree_finds_no_sessions() {
         let (_t, mut p, _) = home_picker();
-        p.sessions = linkedin_picker().sessions;
+        p.set_sessions(linkedin_picker().sessions);
         p.key(Key::Entry(Root::Open));
         type_text(&mut p, "linkedin");
         assert!(p.anchor.is_some());
