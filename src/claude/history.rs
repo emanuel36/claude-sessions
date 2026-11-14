@@ -59,10 +59,12 @@ impl Sessions {
     }
 
     /// Adds the entry in a history line to its session; a line that is not one is skipped.
-    fn add_line(&mut self, line: &[u8]) {
+    ///
+    /// Returns whether a session changed.
+    fn add_line(&mut self, line: &[u8]) -> bool {
         let line = String::from_utf8_lossy(line);
         let Ok(Value::Object(entry)) = serde_json::from_str::<Value>(&line) else {
-            return;
+            return false;
         };
         let text = |key: &str| {
             entry
@@ -71,10 +73,10 @@ impl Sessions {
                 .filter(|s| !s.is_empty())
         };
         let (Some(id), Some(project)) = (text("sessionId"), text("project")) else {
-            return;
+            return false;
         };
-        let at = match self.index.get(id) {
-            Some(&at) => at,
+        let (at, mut changed) = match self.index.get(id) {
+            Some(&at) => (at, false),
             None => {
                 self.list.push(HistorySession {
                     id: id.to_owned(),
@@ -84,7 +86,7 @@ impl Sessions {
                     prompts: Vec::new(),
                 });
                 self.index.insert(id.to_owned(), self.list.len() - 1);
-                self.list.len() - 1
+                (self.list.len() - 1, true)
             }
         };
         let session = &mut self.list[at];
@@ -93,20 +95,29 @@ impl Sessions {
             .and_then(Value::as_f64)
             .unwrap_or(0.0)
             / 1000.0;
-        session.last = session.last.max(stamp);
-        project.clone_into(&mut session.cwd);
+        if stamp > session.last {
+            session.last = stamp;
+            changed = true;
+        }
+        if session.cwd != project {
+            project.clone_into(&mut session.cwd);
+            changed = true;
+        }
         let prompt = entry.get("display").and_then(Value::as_str).unwrap_or("");
         // A command such as /resume says nothing about the session
         if prompt.is_empty() || prompt.starts_with('/') {
-            return;
+            return changed;
         }
         if session.first_prompt.is_empty() {
             session.first_prompt = prompt.chars().take(PROMPT_CHARS).collect();
+            changed = true;
         }
         let typed = without_placeholders(prompt);
         if !typed.trim().is_empty() {
             session.prompts.push(typed);
+            changed = true;
         }
+        changed
     }
 
     fn newest_first(&self) -> Vec<HistorySession> {
@@ -193,17 +204,20 @@ impl Reading {
 
     /// Parses the lines that are complete in `raw`, the bytes read from `offset` on.
     ///
-    /// A line still being written waits for the next reading.
-    fn add(&mut self, raw: &[u8]) {
+    /// A line still being written waits for the next reading. Returns whether a session
+    /// changed.
+    fn add(&mut self, raw: &[u8]) -> bool {
         let Some(last_newline) = raw.iter().rposition(|&b| b == b'\n') else {
-            return;
+            return false;
         };
         let complete = &raw[..=last_newline];
+        let mut changed = false;
         // Split on newlines only: a prompt may hold other line breaks, such as U+2028
         for line in complete[..last_newline].split(|&b| b == b'\n') {
-            self.sessions.add_line(line);
+            changed |= self.sessions.add_line(line);
         }
         self.at.advance(complete);
+        changed
     }
 }
 
@@ -217,9 +231,12 @@ struct Stamp {
 
 /// The outcome of looking at the history file.
 enum Outcome {
-    /// It is as it was when last read.
+    /// The sessions are as they were when last read.
     Unchanged,
-    Sessions(Vec<HistorySession>),
+    /// The sessions changed since the last reading.
+    Changed(Vec<HistorySession>),
+    /// The sessions of a reading that started over, the same as the last ones or not.
+    Restarted(Vec<HistorySession>),
 }
 
 /// The prompt history, read again only when its file changes.
@@ -269,7 +286,11 @@ impl HistoryReader {
     pub fn load(&mut self) -> &[HistorySession] {
         match self.refresh() {
             Some(Outcome::Unchanged) => {}
-            Some(Outcome::Sessions(sessions)) => self.set(sessions),
+            Some(Outcome::Changed(sessions)) => {
+                self.sessions = sessions;
+                self.generation += 1;
+            }
+            Some(Outcome::Restarted(sessions)) => self.set(sessions),
             None => {
                 self.stamp = None;
                 self.reading = None;
@@ -321,24 +342,32 @@ impl HistoryReader {
         if self.stamp.as_ref() == Some(&stamp) {
             return Some(Outcome::Unchanged);
         }
-        let mut reading = self
+        let in_memory = self.reading.is_some();
+        let continued = self
             .reading
             .take()
             .or_else(|| self.load_stored())
-            .filter(|r| r.at.continues(&mut file, &meta, &id))
-            .unwrap_or_else(|| Reading::start(id));
+            .filter(|r| r.at.continues(&mut file, &meta, &id));
+        let restarted = !(in_memory && continued.is_some());
+        let mut reading = continued.unwrap_or_else(|| Reading::start(id));
         file.seek(SeekFrom::Start(reading.at.offset)).ok()?;
         let mut raw = Vec::new();
         file.read_to_end(&mut raw).ok()?;
         let before = reading.at.offset;
-        reading.add(&raw);
+        let changed = reading.add(&raw);
         if self.stored && reading.at.offset != before {
             self.save(&reading);
         }
-        let sessions = reading.sessions.newest_first();
+        let outcome = if restarted {
+            Outcome::Restarted(reading.sessions.newest_first())
+        } else if changed {
+            Outcome::Changed(reading.sessions.newest_first())
+        } else {
+            Outcome::Unchanged
+        };
         self.stamp = Some(stamp);
         self.reading = Some(reading);
-        Some(Outcome::Sessions(sessions))
+        Some(outcome)
     }
 
     /// The reading kept on disk, or `None` when there is none or it does not parse.
@@ -682,6 +711,10 @@ mod tests {
         assert_eq!(reader.generation(), first);
         // The file grows, but with a line that is not an entry
         env.append("not json\n");
+        reader.load();
+        assert_eq!(reader.generation(), first);
+        // Or with an entry that changes nothing: a command, in the same folder and time
+        env.append(&format!("{}\n", entry("a", "/w/api", 10, "/resume")));
         reader.load();
         assert_eq!(reader.generation(), first);
         // And with one that is
