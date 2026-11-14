@@ -46,15 +46,11 @@ pub fn main_panel() -> anyhow::Result<()> {
 fn folders(now: f64) -> (Vec<Folder>, Vec<Searchable>) {
     let mut history = HistoryReader::new(true);
     history.load();
-    let generation = history.generation();
     let mut usage = Reader::new();
-    let costs = &usage
-        .totals(history.sessions(), generation, now)
-        .per_session;
+    let totals = usage.totals(history.sessions(), history.generation(), now);
     let open: HashSet<String> = hook::live_sessions(now).into_iter().map(|r| r.id).collect();
     let mut scan = Scan::new(Titles::new(true));
-    let folders = scan.load(history.sessions(), generation, costs, &open);
-    (folders, scan.searchable(&open))
+    pane::folders(&history, &mut scan, &totals.per_session, &open)
 }
 
 /// The panel: the folder list, and the server it opens windows in.

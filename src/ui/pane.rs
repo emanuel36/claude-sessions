@@ -2,8 +2,10 @@
 //! learn whether they are on screen and how they log failures; the sidebar and the landing
 //! page also share a [`Shell`]. What they watch is in [`crate::ui::watch`].
 
+use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
 use std::io;
+use std::path::Path;
 use std::thread;
 use std::time::Duration;
 
@@ -13,10 +15,12 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crate::claude::history::HistoryReader;
 use crate::claude::statusline::load_limits;
 use crate::core::paths;
-use crate::core::state::unix_now;
+use crate::core::state::{unix_now, Record};
 use crate::term::tmux::{self, Runner};
+use crate::ui::folders::Scan;
 use crate::ui::picker;
 use crate::ui::runtime::{signal, Msg, Runtime, Schedule, Screen, Signal, Wake};
+use crate::ui::search::Searchable;
 use crate::ui::sidebar::Stats;
 use crate::ui::usage::Reader;
 use crate::ui::watch::{Stale, Watches};
@@ -144,7 +148,7 @@ impl Shell {
         if !self.schedule.visible {
             return false;
         }
-        if self.stats.limits.values().any(|q| q.resets_at <= now) {
+        if resets(&self.stats).any(|at| at <= now) {
             self.stale.limits = true;
         }
         if self.stale.any() {
@@ -196,61 +200,90 @@ impl Shell {
     }
 }
 
-/// A pane tmux shows and hides: the sidebar and the landing page.
-pub trait Visible {
-    /// The pane's [`Shell`].
-    fn shell(&self) -> &Shell;
-    /// The pane's [`Shell`], to change.
-    fn shell_mut(&mut self) -> &mut Shell;
+/// What becomes of a message for a pane tmux shows and hides; see [`Shell::gate`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Gate {
+    /// The pane is hidden, or the message just hid it: it does no work.
+    Dropped,
+    /// The pane is on screen: it takes the message.
+    Take,
+    /// The message just showed the pane: it takes it and draws at once.
+    Shown,
+}
 
-    /// Whether the pane believes itself on screen.
-    fn visible(&self) -> bool {
-        self.shell().schedule.visible
-    }
-
-    /// Comes on screen: everything is read again before the next draw.
-    fn show(&mut self) {
-        let shell = self.shell_mut();
-        shell.schedule.visible = true;
-        shell.stale = Stale::ALL;
-    }
-
-    /// Leaves the screen: no watches, no timer, nothing read until shown again.
-    fn hide(&mut self, runtime: &mut Runtime) {
-        let shell = self.shell_mut();
-        shell.schedule.visible = false;
-        shell.schedule.dirty = false;
-        runtime.unwatch_all();
+impl Gate {
+    /// The step for the message, `take` handling it unless it is dropped.
+    pub fn then(self, take: impl FnOnce() -> Step) -> Step {
+        match self {
+            Gate::Dropped => Step::Wait,
+            Gate::Take => take(),
+            Gate::Shown => match take() {
+                Step::Quit => Step::Quit,
+                Step::Wait | Step::Draw => Step::Draw,
+            },
+        }
     }
 }
 
-/// Takes a message for a pane tmux shows and hides; `take` handles it once the pane is known
-/// to be on screen.
-///
-/// The pane is shown or hidden as the message tells ([`sight`]). A hidden pane does no work:
-/// the message that hid it, and any that comes while hidden (such as changes queued before
-/// its watches went), is dropped. A pane just shown draws at once, whatever `take` returns.
-pub fn gated<A: Visible>(
-    app: &mut A,
-    msg: Msg,
-    runtime: &mut Runtime,
-    take: impl FnOnce(&mut A, Msg, &mut Runtime) -> Step,
-) -> Step {
-    match sight(&msg, app.visible()) {
-        Sight::Shown => {
-            app.show();
-            match take(app, msg, runtime) {
-                Step::Quit => Step::Quit,
-                Step::Wait | Step::Draw => Step::Draw,
-            }
-        }
-        Sight::Hidden => {
-            app.hide(runtime);
-            Step::Wait
-        }
-        Sight::Same if app.visible() => take(app, msg, runtime),
-        Sight::Same => Step::Wait,
+impl Shell {
+    /// Comes on screen: everything is read again before the next draw.
+    pub fn show(&mut self) {
+        self.schedule.visible = true;
+        self.stale = Stale::ALL;
     }
+
+    /// Leaves the screen: no watches, no timer, nothing read until shown again.
+    pub fn hide(&mut self, runtime: &mut Runtime) {
+        self.schedule.visible = false;
+        self.schedule.dirty = false;
+        runtime.unwatch_all();
+    }
+
+    /// Shows or hides the pane as `msg` tells ([`sight`]), and says whether it takes `msg`.
+    ///
+    /// A hidden pane does no work: the message that hid it, and any that comes while hidden
+    /// (such as changes queued before its watches went), is dropped.
+    pub fn gate(&mut self, msg: &Msg, runtime: &mut Runtime) -> Gate {
+        match sight(msg, self.schedule.visible) {
+            Sight::Shown => {
+                self.show();
+                Gate::Shown
+            }
+            Sight::Hidden => {
+                self.hide(runtime);
+                Gate::Dropped
+            }
+            Sight::Same if self.schedule.visible => Gate::Take,
+            Sight::Same => Gate::Dropped,
+        }
+    }
+
+    /// Takes a change at `path` on disk, given the records last read: what it makes stale is
+    /// read again before a redraw.
+    pub fn changed(&mut self, path: &Path, records: &[Record], now: f64) {
+        let touched = self.watches.changed(path, records, now);
+        if touched.any() {
+            self.stale.add(touched);
+            self.schedule.dirty = true;
+        }
+    }
+}
+
+/// When each quota resets (Unix).
+pub fn resets(stats: &Stats) -> impl Iterator<Item = f64> + '_ {
+    stats.limits.values().map(|q| q.resets_at)
+}
+
+/// The folders of `history` that still exist, last used first, and the sessions to search;
+/// those in `live` are open now and not offered to resume. `costs` is each session's spend.
+pub fn folders(
+    history: &HistoryReader,
+    scan: &mut Scan,
+    costs: &HashMap<String, f64>,
+    live: &HashSet<String>,
+) -> (Vec<picker::Folder>, Vec<Searchable>) {
+    let folders = scan.load(history.sessions(), history.generation(), costs, live);
+    (folders, scan.searchable(live))
 }
 
 /// The tmux window a pane is in.

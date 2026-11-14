@@ -18,9 +18,7 @@ use crate::core::state::{unix_now, Record};
 use crate::term::tmux::{Cli, Runner};
 use crate::ui::folders::Scan;
 use crate::ui::landing;
-use crate::ui::pane::{
-    self, open, own_window, picker_key, App, Shell, Step, Visible, WINDOW_PAUSE,
-};
+use crate::ui::pane::{self, open, own_window, picker_key, resets, App, Shell, Step, WINDOW_PAUSE};
 use crate::ui::picker::{self, Picker, Root, RowKind};
 use crate::ui::runtime::{signal, Msg, Runtime, Schedule, Screen, Signal};
 use crate::ui::sidebar::Stats;
@@ -46,7 +44,7 @@ pub fn main_landing() -> anyhow::Result<()> {
     // Only this page shows the spend by model, which reads the transcripts
     app.shell.usage = Reader::new().split_models(ModelSpend::new());
     if current {
-        app.show();
+        app.shell.show();
     }
     app.update(unix_now(), &mut runtime, &mut screen);
     pane::run(&mut app, &mut runtime, &mut screen);
@@ -66,8 +64,7 @@ fn open_sessions(records: &[Record]) -> (usize, HashSet<String>) {
 fn labels(stats: &Stats) -> Vec<f64> {
     // From the epoch, a label changes on every whole minute
     let minutes = std::iter::once(0.0);
-    let resets = stats.limits.values().map(|q| q.resets_at);
-    minutes.chain(resets).collect()
+    minutes.chain(resets(stats)).collect()
 }
 
 /// The times the page shows as ages: when each folder and each of its sessions was last used,
@@ -145,11 +142,7 @@ impl Landing {
             }
             Msg::Changed(path) => {
                 // No transcript is watched: the page shows no session's status
-                let touched = self.shell.watches.changed(&path, &[], now);
-                if touched.any() {
-                    self.shell.stale.add(touched);
-                    self.shell.schedule.dirty = true;
-                }
+                self.shell.changed(&path, &[], now);
                 Step::Wait
             }
         }
@@ -277,14 +270,14 @@ impl Landing {
         let identity = |r: &picker::Row| (r.kind, r.path.clone(), r.id.clone());
         let before = self.picker.selected().map(|r| identity(&r));
         let costs = self.shell.stats.totals.as_ref().map(|t| &t.per_session);
-        let generation = self.shell.history.generation();
-        self.picker.folders = self.scan.load(
-            self.shell.history.sessions(),
-            generation,
+        let (folders, sessions) = pane::folders(
+            &self.shell.history,
+            &mut self.scan,
             costs.unwrap_or(&Default::default()),
             &self.live,
         );
-        self.picker.set_sessions(self.scan.searchable(&self.live));
+        self.picker.folders = folders;
+        self.picker.set_sessions(sessions);
         if let Some(before) = before {
             let at = self
                 .picker
@@ -314,23 +307,14 @@ impl Landing {
     }
 }
 
-impl Visible for Landing {
-    fn shell(&self) -> &Shell {
-        &self.shell
-    }
-
-    fn shell_mut(&mut self) -> &mut Shell {
-        &mut self.shell
-    }
-}
-
 impl App for Landing {
     fn schedule(&self) -> &Schedule {
         &self.shell.schedule
     }
 
     fn handle(&mut self, msg: Msg, now: f64, runtime: &mut Runtime) -> Step {
-        pane::gated(self, msg, runtime, |page, msg, _| page.take(msg, now))
+        let gate = self.shell.gate(&msg, runtime);
+        gate.then(|| self.take(msg, now))
     }
 
     fn update(&mut self, now: f64, runtime: &mut Runtime, screen: &mut Screen) {
@@ -358,7 +342,7 @@ mod tests {
     use crate::term::tmux::fake::FakeTmux;
     use crate::ui::folders::Scan;
     use crate::ui::landing_app::{ages, labels, open_sessions, Landing};
-    use crate::ui::pane::{App, LogOnce, Step, Visible};
+    use crate::ui::pane::{App, LogOnce, Step};
     use crate::ui::picker::{Folder, Picker, Root, RowKind, Session};
     use crate::ui::runtime::{Msg, Runtime};
     use crate::ui::search::Searchable;
@@ -832,7 +816,7 @@ mod tests {
     #[test]
     fn a_key_typed_while_hidden_shows_the_page() {
         let (mut page, _, mut runtime) = page();
-        page.hide(&mut runtime);
+        page.shell.hide(&mut runtime);
         let key = KeyEvent::new(KeyCode::Down, KeyModifiers::NONE);
         assert_eq!(page.handle(Msg::Key(key), NOW, &mut runtime), Step::Draw);
         assert!(page.shell.schedule.visible);
@@ -860,7 +844,7 @@ mod tests {
     #[test]
     fn a_hidden_page_drops_changes_on_disk() {
         let (mut page, _, mut runtime) = page();
-        page.hide(&mut runtime);
+        page.shell.hide(&mut runtime);
         let changed = Msg::Changed(PathBuf::from("/run/cst/s1.json"));
         assert_eq!(page.handle(changed, NOW, &mut runtime), Step::Wait);
         assert!(!page.shell.schedule.visible && !page.shell.schedule.dirty);
