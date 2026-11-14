@@ -24,7 +24,7 @@ use crate::ui::words::{
 /// The sidebar pane's width.
 pub const WIDTH: usize = 29;
 /// The room inside the one-cell padding on each side.
-pub const CONTENT: usize = 27;
+const CONTENT: usize = 27;
 /// The landing page's wide statistics: their width.
 pub const PANEL_WIDTH: usize = 56;
 /// The room inside the landing page's padding.
@@ -63,7 +63,7 @@ const TOP_RANKED: usize = 4;
 /// The cells a ranked name takes.
 const RANKED_NAME: usize = 16;
 /// `⏺` shows as an emoji button in some fonts.
-const BULLET: &str = "•";
+const BULLET: char = '•';
 /// Claude Code's spinner, played forwards and back, one frame per redraw.
 const SPINNER: [char; 10] = ['·', '✢', '✳', '✶', '✻', '✽', '✻', '✶', '✳', '✢'];
 
@@ -133,13 +133,13 @@ pub fn load_entries(records: &[Record], panes: &[Pane], socket: &str) -> Vec<Ent
         .into_iter()
         .filter_map(|(window_id, _, name)| {
             let window = heads.get(window_id.as_str())?;
-            let usage = window.head().usage.clone().unwrap_or_default();
+            let usage = window.head().usage.as_ref();
             Some(Entry {
                 status: window.lead.status,
                 since: state::since(&window.lead),
-                cost: usage.cost,
-                duration: usage.api_duration,
-                model: usage.model,
+                cost: usage.and_then(|u| u.cost),
+                duration: usage.and_then(|u| u.api_duration),
+                model: usage.and_then(|u| u.model.clone()),
                 window_id,
                 name,
             })
@@ -162,7 +162,7 @@ fn urgency(status: Status) -> u8 {
 }
 
 /// The entries in the order the sidebar lists them: by urgency, then by window.
-pub fn ordered(entries: &[Entry]) -> Vec<&Entry> {
+fn ordered(entries: &[Entry]) -> Vec<&Entry> {
     let mut out: Vec<&Entry> = entries.iter().collect();
     // A stable sort keeps the window order within each place
     out.sort_by_key(|e| urgency(e.status));
@@ -203,7 +203,7 @@ fn right(line: &mut Line<'static>, value: &str, style: Style, content: usize) {
 
 /// A `•` line: the mark, a title cut to fit, and a value on the right.
 struct Bullet<'a> {
-    mark: &'a str,
+    mark: char,
     mark_style: Style,
     title: &'a str,
     title_style: Style,
@@ -258,14 +258,14 @@ fn colour(status: Status) -> Option<Style> {
 
 /// The mark of a status at `now`: its shape tells the status apart without the colour, and a
 /// working session's spins.
-fn mark(status: Status, now: f64) -> String {
+fn mark(status: Status, now: f64) -> char {
     match status {
-        Status::Permission => "!".to_owned(),
-        Status::Input => "?".to_owned(),
-        Status::Shell => "◐".to_owned(),
-        Status::Done => "✓".to_owned(),
-        Status::Working => spinner(now).to_string(),
-        Status::Idle | Status::Unknown => "○".to_owned(),
+        Status::Permission => '!',
+        Status::Input => '?',
+        Status::Shell => '◐',
+        Status::Done => '✓',
+        Status::Working => spinner(now),
+        Status::Idle | Status::Unknown => '○',
     }
 }
 
@@ -328,9 +328,9 @@ fn split_name(entry: &Entry) -> (String, String) {
 }
 
 /// A `⎿` field, or `–` for an unknown one.
-fn or_dash(text: String) -> String {
+fn or_dash(text: &str) -> &str {
     if text.is_empty() {
-        "–".to_owned()
+        "–"
     } else {
         text
     }
@@ -355,7 +355,7 @@ fn entry_lines(laid: &Laid, current: bool, now: f64) -> Vec<Line<'static>> {
     };
     let label = waiting(entry, now);
     let mut lines = vec![Bullet {
-        mark: &mark,
+        mark,
         mark_style: mark_style.add_modifier(Modifier::BOLD),
         title: head,
         title_style: name_style,
@@ -372,8 +372,8 @@ fn entry_lines(laid: &Laid, current: bool, now: f64) -> Vec<Line<'static>> {
         lines.push(more);
     }
 
-    let cost = rjust(&or_dash(words::money(entry.cost)), COST_CELLS);
-    let time = rjust(&or_dash(words::span(entry.duration)), TIME_CELLS);
+    let cost = rjust(or_dash(&words::money(entry.cost)), COST_CELLS);
+    let time = rjust(or_dash(&words::span(entry.duration)), TIME_CELLS);
     // A cost or time wider than its column leaves the model less room
     let room = DETAIL_ROOM.saturating_sub(width_of(&cost) + width_of(&time) + 2);
     // Only the family ("Opus" of "Opus 5.5"), and only whole: a cut name says nothing
@@ -386,11 +386,7 @@ fn entry_lines(laid: &Laid, current: bool, now: f64) -> Vec<Line<'static>> {
     let mut detail = elbow(true, base);
     push(&mut detail, cost, INACTIVE);
     push(&mut detail, time, INACTIVE);
-    push(
-        &mut detail,
-        format!("  {}", or_dash(model.to_owned())),
-        INACTIVE,
-    );
+    push(&mut detail, format!("  {}", or_dash(model)), INACTIVE);
     truncate(&mut detail, 1 + CONTENT);
     lines.push(detail);
     lines.into_iter().map(|l| finish(l, CONTENT)).collect()
@@ -476,16 +472,11 @@ fn push_bar(line: &mut Line<'static>, value: f64, top: f64, value_text: &str, co
     push(line, ljust(&hbar(value, top, cells), cells + 1), CLAUDE);
 }
 
-/// An unsigned count with a comma between thousands.
-fn thousands(n: u64) -> String {
-    words::thousands(i64::try_from(n).unwrap_or(i64::MAX))
-}
-
 /// A `⎿` line with the lines added and removed, cut to the content.
 fn changed(added: u64, removed: u64, content: usize) -> Line<'static> {
     let mut line = elbow(true, Style::new());
-    push(&mut line, format!("+{}", thousands(added)), SUCCESS);
-    push(&mut line, format!(" −{}", thousands(removed)), ERROR);
+    push(&mut line, format!("+{}", words::thousands(added)), SUCCESS);
+    push(&mut line, format!(" −{}", words::thousands(removed)), ERROR);
     push(&mut line, " lines", INACTIVE);
     truncate(&mut line, 1 + content);
     line
@@ -720,6 +711,26 @@ fn spaced(blocks: Vec<Vec<Line<'static>>>) -> Vec<Line<'static>> {
     lines
 }
 
+/// Usage, Today (with `today`) and `last`, a blank line between blocks; each line is padded to
+/// `content + 2` cells.
+fn blocks(
+    stats: &Stats,
+    now: f64,
+    content: usize,
+    today: bool,
+    last: Vec<Line<'static>>,
+) -> Vec<Line<'static>> {
+    let mut blocks = vec![usage_lines(&stats.limits, now, content)];
+    if let Some(day) = stats.day.as_ref().filter(|_| today) {
+        blocks.push(today_lines(day, stats.today, content));
+    }
+    blocks.push(last);
+    spaced(blocks)
+        .into_iter()
+        .map(|l| finish(l, content))
+        .collect()
+}
+
 /// The statistics at the bottom, under a blank line and with one between blocks: Usage,
 /// Today and Spend 7d.
 ///
@@ -728,14 +739,10 @@ fn spaced(blocks: Vec<Vec<Line<'static>>>) -> Vec<Line<'static>> {
 /// * `now`: current time as a Unix timestamp.
 /// * `today`: whether to show the Today block; it goes first when room is short.
 pub fn stats_lines(stats: &Stats, now: f64, today: bool) -> Vec<Line<'static>> {
-    let mut blocks = vec![usage_lines(&stats.limits, now, CONTENT)];
-    if let Some(day) = stats.day.as_ref().filter(|_| today) {
-        blocks.push(today_lines(day, stats.today, CONTENT));
-    }
-    blocks.push(chart_lines(&stats.week, CONTENT));
-    std::iter::once(start(Style::new()))
-        .chain(spaced(blocks))
-        .map(|l| finish(l, CONTENT))
+    let blank = finish(start(Style::new()), CONTENT);
+    let chart = chart_lines(&stats.week, CONTENT);
+    std::iter::once(blank)
+        .chain(blocks(stats, now, CONTENT, today, chart))
         .collect()
 }
 
@@ -743,15 +750,13 @@ pub fn stats_lines(stats: &Stats, now: f64, today: bool) -> Vec<Line<'static>> {
 /// last 7 days in one block, by model only with `models`. Each line is padded to
 /// `content + 2` cells.
 pub fn panel_lines(stats: &Stats, now: f64, content: usize, models: bool) -> Vec<Line<'static>> {
-    let mut blocks = vec![usage_lines(&stats.limits, now, content)];
-    if let Some(day) = &stats.day {
-        blocks.push(today_lines(day, stats.today, content));
-    }
-    blocks.push(week_lines(stats, content, models));
-    spaced(blocks)
-        .into_iter()
-        .map(|l| finish(l, content))
-        .collect()
+    blocks(
+        stats,
+        now,
+        content,
+        true,
+        week_lines(stats, content, models),
+    )
 }
 
 /// A session entry with its name split for its lines (see [`split_name`]), so a frame splits

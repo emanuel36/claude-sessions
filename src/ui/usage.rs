@@ -15,11 +15,11 @@ use crate::core::journal::{
 use crate::core::state::{Status, NEEDS_YOU};
 
 /// Days of spend the sidebar shows, today included.
-pub const WEEK_DAYS: u64 = 7;
+const WEEK_DAYS: u64 = 7;
 /// The longest a working session goes without an event and still counts as working, in
 /// seconds. A longer silence is a suspended machine or a session killed mid-turn, which writes
 /// no event to end its turn; the silences of real turns stay well under it.
-pub const MAX_SILENCE: f64 = 3600.0;
+const MAX_SILENCE: f64 = 3600.0;
 
 /// What today's journal adds up to.
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
@@ -56,7 +56,7 @@ pub struct Totals {
     /// What each of the last 7 days cost, oldest first, today last.
     pub days: Vec<(NaiveDate, f64)>,
     /// What each session added from today on, for the lines of the day.
-    pub today_by_session: HashMap<String, SessionTotals>,
+    pub(crate) today_by_session: HashMap<String, SessionTotals>,
 }
 
 /// What a [`Totals`] was computed from.
@@ -86,6 +86,7 @@ impl Reader {
     }
 
     /// Returns a reader of the day files in `dir`.
+    #[cfg(test)]
     pub fn in_dir(dir: PathBuf) -> Self {
         Self {
             dir: Some(dir),
@@ -387,7 +388,7 @@ fn midnight_of<Tz: TimeZone>(day: NaiveDate, tz: &Tz) -> Option<f64> {
 /// `events` holds each day's events, including the days before. `now` ends a wait still going.
 /// `totals` is [`crate::core::journal::window_totals`] of the events from `today` on, if already
 /// known.
-pub fn day_summary(
+fn day_summary(
     events: &Days,
     today: NaiveDate,
     now: f64,
