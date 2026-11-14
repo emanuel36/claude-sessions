@@ -149,11 +149,7 @@ fn handle_event_in(
     let naming = NAMING_EVENTS.contains(&name);
     if naming {
         // A title found once stays, even after it scrolls out of the transcript's tail
-        let found = record
-            .transcript
-            .as_deref()
-            .map(title_of)
-            .unwrap_or_default();
+        let found = transcript_title(&record);
         if !found.is_empty() {
             record.title = found;
         }
@@ -186,16 +182,17 @@ pub fn adopt_title(id: &str, t: &dyn Runner) {
     }
 }
 
+/// The title in a record's transcript; empty when it has none or there is no transcript.
+fn transcript_title(r: &Record) -> String {
+    r.transcript.as_deref().map(title_of).unwrap_or_default()
+}
+
 fn adopt_title_in(s: &Seams<'_>, id: &str, t: &dyn Runner) -> Result<()> {
     let lock = store::lock_in(s.dir, id).context("cannot lock the record")?;
     let Some(mut record) = store::read_in(s.dir, id) else {
         return Ok(());
     };
-    let found = record
-        .transcript
-        .as_deref()
-        .map(title_of)
-        .unwrap_or_default();
+    let found = transcript_title(&record);
     if found.is_empty() || found == record.title {
         return Ok(());
     }

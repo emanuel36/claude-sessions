@@ -363,7 +363,7 @@ impl ModelSpend {
         let readings = self
             .readings
             .get_or_insert_with(|| Self::load(stored, &stored_path));
-        let mut tokens: HashMap<String, Tokens> = HashMap::new();
+        let mut dollars: HashMap<String, f64> = HashMap::new();
         for path in session_files(&config, id, cwd) {
             let opened = File::open(&path).and_then(|f| Ok((f.metadata()?, f)));
             let Ok((meta, mut file)) = opened else {
@@ -377,16 +377,12 @@ impl ModelSpend {
                 .or_insert_with(|| Reading::start(id.clone()));
             self.changed |= reading.catch_up(&mut file, &meta, id);
             for (model, t) in &reading.tokens {
-                tokens.entry(model.clone()).or_default().add(*t);
+                if let Some(p) = price(model) {
+                    *dollars.entry(display_name(model)).or_default() += t.dollars(p);
+                }
             }
             if self.stored {
                 self.used.insert(path);
-            }
-        }
-        let mut dollars: HashMap<String, f64> = HashMap::new();
-        for (model, t) in tokens {
-            if let Some(p) = price(&model) {
-                *dollars.entry(display_name(&model)).or_default() += t.dollars(p);
             }
         }
         dollars.retain(|_, d| *d > 0.0);
@@ -397,8 +393,8 @@ impl ModelSpend {
 /// A session's transcript, and its subagents' under `<session id>/subagents/`.
 fn session_files(config: &Path, id: &str, cwd: &str) -> Vec<PathBuf> {
     let main = transcript_path_in(config, id, cwd);
-    let mut files = vec![main.clone()];
     let subagents = main.with_extension("").join("subagents");
+    let mut files = vec![main];
     if let Ok(entries) = fs::read_dir(subagents) {
         let mut found: Vec<PathBuf> = entries
             .filter_map(|e| e.ok().map(|e| e.path()))

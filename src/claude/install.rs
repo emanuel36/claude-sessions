@@ -129,19 +129,11 @@ pub fn is_ours(command: &str) -> bool {
     matches!(name, "cs" | "cst") && matches!(arg.as_str(), "hook" | "statusline")
 }
 
-fn command_of(entry: &Value) -> Option<&str> {
-    entry.get("command")?.as_str()
-}
-
-fn entry_is_ours_in(entry: &serde_json::Map<String, Value>) -> bool {
+fn entry_is_ours(entry: &Value) -> bool {
     entry
         .get("command")
         .and_then(Value::as_str)
         .is_some_and(is_ours)
-}
-
-fn entry_is_ours(entry: &Value) -> bool {
-    command_of(entry).is_some_and(is_ours)
 }
 
 fn group_has_ours(group: &Value) -> bool {
@@ -219,8 +211,8 @@ fn merge(settings: &Value, cst: &str, saved: Option<Value>) -> (Value, Option<Va
     }
     let command = statusline_command(cst);
     match root.get_mut("statusLine") {
-        Some(Value::Object(line)) if entry_is_ours_in(line) => {
-            line.insert("command".to_owned(), json!(command));
+        Some(line) if entry_is_ours(line) => {
+            line["command"] = json!(command);
             (new, saved)
         }
         Some(Value::Object(line)) => {
@@ -413,8 +405,7 @@ fn load_settings(path: &Path) -> Result<Value, Failure> {
 /// settings.json as it was.
 pub fn install(cst: &Path) -> i32 {
     let (mut out, mut err) = (io::stdout().lock(), io::stderr().lock());
-    let Some(cst) = cst.to_str() else {
-        let _ = writeln!(err, "error: {}: not a valid UTF-8 path", cst.display());
+    let Some(cst) = utf8_path(cst, &mut err) else {
         return 1;
     };
     install_at(&locations(), cst, &mut out, &mut err)
@@ -425,15 +416,20 @@ pub fn install(cst: &Path) -> i32 {
 /// It loads and validates settings.json as `install` does and prints the same error, so a
 /// caller can stop before it changes anything else.
 pub fn check(cst: &Path) -> i32 {
-    let Some(cst) = cst.to_str() else {
-        let _ = writeln!(
-            io::stderr().lock(),
-            "error: {}: not a valid UTF-8 path",
-            cst.display()
-        );
+    let mut err = io::stderr().lock();
+    let Some(cst) = utf8_path(cst, &mut err) else {
         return 1;
     };
-    check_at(&locations(), cst, &mut io::stderr().lock())
+    check_at(&locations(), cst, &mut err)
+}
+
+/// `cst` as a string; `None`, with the error printed to `err`, when it is not valid UTF-8.
+fn utf8_path<'a>(cst: &'a Path, err: &mut dyn Write) -> Option<&'a str> {
+    let text = cst.to_str();
+    if text.is_none() {
+        let _ = writeln!(err, "error: {}: not a valid UTF-8 path", cst.display());
+    }
+    text
 }
 
 /// Takes `cst` out of Claude Code's settings.json. Returns the exit code.
@@ -513,12 +509,13 @@ fn plan_install(loc: &Locations, cst: &str) -> Result<Plan, Failure> {
     let settings = load_settings(&loc.settings)?;
     let saved = saved_status_line(loc, &settings)?;
     let (new, to_save) = merge(&settings, cst, saved);
-    let hooks_of = |s: &'_ Value, event: &str| s.get("hooks").and_then(|h| h.get(event)).cloned();
+    fn hooks_of<'a>(settings: &'a Value, event: &str) -> Option<&'a Value> {
+        settings.get("hooks")?.get(event)
+    }
     let has_ours = |event: &str| {
-        let groups = hooks_of(&settings, event);
-        groups
-            .and_then(|g| g.as_array().map(|g| g.iter().any(group_has_ours)))
-            .unwrap_or(false)
+        hooks_of(&settings, event)
+            .and_then(Value::as_array)
+            .is_some_and(|groups| groups.iter().any(group_has_ours))
     };
     let added = EVENTS.iter().filter(|e| !has_ours(e)).count();
     let updated = EVENTS
@@ -581,17 +578,15 @@ fn try_install(loc: &Locations, cst: &str, out: &mut dyn Write) -> Result<(), Fa
     }
     let real = real_path(&loc.settings);
     let dir = real.parent().unwrap_or(Path::new("."));
-    fs::create_dir_all(dir).map_err(Failure::io(&loc.settings))?;
-    fs::create_dir_all(&loc.state_dir).map_err(Failure::io(&loc.settings))?;
+    fs::create_dir_all(dir).map_err(&io_failure)?;
+    fs::create_dir_all(&loc.state_dir).map_err(&io_failure)?;
     if real.exists() {
         let backup = dir.join(BACKUP);
         // symlink_metadata: a dangling symlink in its place is not ours to replace
         if backup.symlink_metadata().is_err() {
-            let bytes = fs::read(&real).map_err(Failure::io(&loc.settings))?;
-            let mode = fs::metadata(&real)
-                .map_err(Failure::io(&loc.settings))?
-                .mode();
-            paths::write_atomic(&backup, &bytes, Some(mode)).map_err(Failure::io(&loc.settings))?;
+            let bytes = fs::read(&real).map_err(&io_failure)?;
+            let mode = fs::metadata(&real).map_err(&io_failure)?.mode();
+            paths::write_atomic(&backup, &bytes, Some(mode)).map_err(&io_failure)?;
             changes.push(format!("backup: {}", backup.display()));
         }
     }

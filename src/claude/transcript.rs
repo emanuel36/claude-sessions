@@ -275,9 +275,6 @@ impl Titles {
     ///
     /// The transcript is read only when its modification time differs from the last reading.
     pub fn get(&mut self, id: &str, path: &Path) -> String {
-        if self.seen.is_none() {
-            self.seen = Some(self.load());
-        }
         if self.stored {
             self.used.insert(id.to_owned());
         }
@@ -286,7 +283,13 @@ impl Titles {
                 .saturating_mul(1_000_000_000)
                 .saturating_add(m.mtime_nsec())
         });
-        let seen = self.seen.get_or_insert_with(HashMap::new);
+        let seen = match &mut self.seen {
+            Some(seen) => seen,
+            None => {
+                let loaded = self.load();
+                self.seen.insert(loaded)
+            }
+        };
         if let Some((cached, title)) = seen.get(id) {
             if *cached == mtime {
                 return title.clone();
