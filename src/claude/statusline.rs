@@ -208,7 +208,7 @@ fn record_session_usage(dir: &Path, journal: Sink<'_>, data: &Value, now: f64) -
     let before = record.usage.as_ref().and_then(|u| u.cost);
     let usage = parse(data);
     record.usage = Some(usage.clone());
-    store::write_in(dir, &record, journal)?;
+    store::write_in(dir, &record, Some(record.status), journal)?;
     if usage.cost.is_some() && usage.cost != before {
         journal(&JournalEvent {
             t: now,
@@ -599,7 +599,7 @@ mod tests {
             status_since: 7.0,
             ..new_record("s1")
         };
-        write_in(dir.path(), &before, &|_| {}).unwrap();
+        write_in(dir.path(), &before, None, &|_| {}).unwrap();
         record(dir.path(), &status_input(), 100.0);
         let after = read_in(dir.path(), "s1").unwrap();
         assert_eq!(
@@ -624,7 +624,7 @@ mod tests {
             status_since: 7.0,
             ..new_record("s1")
         };
-        write_in(dir.path(), &rec, &|_| {}).unwrap();
+        write_in(dir.path(), &rec, None, &|_| {}).unwrap();
         let first = record(dir.path(), &status_input(), 100.0);
         let second = record(dir.path(), &status_input(), 101.0);
         assert_eq!(first.len(), 1);
@@ -635,7 +635,7 @@ mod tests {
     #[test]
     fn cost_events_carry_lines_and_model() {
         let dir = TempDir::new().unwrap();
-        write_in(dir.path(), &new_record("s1"), &|_| {}).unwrap();
+        write_in(dir.path(), &new_record("s1"), None, &|_| {}).unwrap();
         let mut data = status_input();
         data["cost"] =
             json!({"total_cost_usd": 1.0, "total_lines_added": 10, "total_lines_removed": 2});
@@ -657,7 +657,7 @@ mod tests {
     #[test]
     fn no_cost_yet_logs_nothing() {
         let dir = TempDir::new().unwrap();
-        write_in(dir.path(), &new_record("s1"), &|_| {}).unwrap();
+        write_in(dir.path(), &new_record("s1"), None, &|_| {}).unwrap();
         let mut data = status_input();
         data["cost"] = Value::Null;
         assert!(record(dir.path(), &data, 100.0).is_empty());

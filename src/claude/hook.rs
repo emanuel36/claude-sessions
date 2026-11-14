@@ -136,7 +136,8 @@ fn handle_event_in(
         }
         return Ok(());
     }
-    let mut record = apply_event(store::read_in(s.dir, id).as_ref(), event, now);
+    let before = store::read_in(s.dir, id);
+    let mut record = apply_event(before.as_ref(), event, now);
     let pid = claude_pid(env);
     record.pid = Some(pid);
     record.pid_start = store::process_start(pid);
@@ -160,7 +161,8 @@ fn handle_event_in(
             record.title = found;
         }
     }
-    store::write_in(s.dir, &record, s.journal).context("cannot write the record")?;
+    let status = before.map(|b| b.status);
+    store::write_in(s.dir, &record, status, s.journal).context("cannot write the record")?;
     // Told under the lock, so overlapping hooks reach tmux in the order they hit the disk
     if let (true, Some(server)) = (naming, &pane_server) {
         tmux::name_window(&record, &record.title, &**server);
@@ -201,7 +203,8 @@ fn adopt_title_in(s: &Seams<'_>, id: &str, t: &dyn Runner) -> Result<()> {
         return Ok(());
     }
     record.title = found;
-    store::write_in(s.dir, &record, s.journal).context("cannot write the record")?;
+    store::write_in(s.dir, &record, Some(record.status), s.journal)
+        .context("cannot write the record")?;
     tmux::name_window(&record, &record.title, t);
     drop(lock);
     Ok(())
@@ -267,7 +270,7 @@ fn settle_interrupted_in(s: &Seams<'_>, id: &str, now: f64) -> Option<Record> {
         return Some(current);
     }
     let settled = mark_interrupted(&current, now);
-    if let Err(e) = store::write_in(s.dir, &settled, s.journal) {
+    if let Err(e) = store::write_in(s.dir, &settled, Some(current.status), s.journal) {
         paths::log_error(&format_args!("hook: cannot settle {id}: {e}"));
     }
     Some(settled)
@@ -298,7 +301,12 @@ fn seen_in(s: &Seams<'_>, pane: &str, socket: &str, now: f64) {
         else {
             continue;
         };
-        if let Err(e) = store::write_in(s.dir, &mark_seen(&current, now), s.journal) {
+        if let Err(e) = store::write_in(
+            s.dir,
+            &mark_seen(&current, now),
+            Some(current.status),
+            s.journal,
+        ) {
             paths::log_error(&format_args!("hook: cannot mark {} seen: {e}", r.id));
         }
     }
@@ -377,7 +385,7 @@ mod tests {
         }
 
         fn write(&self, r: &Record) {
-            write_in(self.dir.path(), r, &no_journal).expect("write record");
+            write_in(self.dir.path(), r, None, &no_journal).expect("write record");
         }
 
         /// Each call as one line: `-S <socket> <args>`.
@@ -445,6 +453,26 @@ mod tests {
             assert_eq!(claude_pid(&env(bad)), parent, "{bad:?}");
         }
         assert_eq!(claude_pid(&HashMap::new()), parent);
+    }
+
+    #[test]
+    fn hook_journals_a_status_change_once() {
+        let rig = Rig::new();
+        let seen = RefCell::new(Vec::new());
+        let journal = |e: &JournalEvent| seen.borrow_mut().push(e.status.clone());
+        let seams = Seams {
+            journal: &journal,
+            ..rig.seams()
+        };
+        let here = rig.here();
+        let mut e = event("s1", "UserPromptSubmit");
+        for name in ["UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"] {
+            e.hook_event_name = name.to_owned();
+            handle_event_in(&seams, &e, &env(&[]), 100.0, &*here).expect("handle event");
+        }
+        // A new session, then its stop: the tool events keep it working and journal nothing
+        let statuses: Vec<_> = seen.borrow().iter().flatten().cloned().collect();
+        assert_eq!(statuses, ["working", "done"]);
     }
 
     #[test]
