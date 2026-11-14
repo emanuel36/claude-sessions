@@ -15,7 +15,7 @@ use serde::Deserialize;
 
 use crate::core::paths;
 use crate::shell;
-use crate::ui::line::{cell_len, cells, ljust, plain, push, rjust, styled, truncate, width_of};
+use crate::ui::line::{cell_len, cells, ljust, push, rjust, styled, truncate, width_of};
 use crate::ui::search::{self, Hit, Searchable};
 use crate::ui::tree::{self, Disk};
 use crate::ui::words::{
@@ -288,7 +288,7 @@ impl Picker {
         }];
         match searched {
             Some(dir) => self.search_rows(root, dir, &mut out),
-            None => self.tree_rows(root, &self.home, "", &mut out),
+            None => self.tree_rows(root, &self.recent(), &self.home, "", &mut out),
         }
         out
     }
@@ -359,13 +359,14 @@ impl Picker {
     ///
     /// # Arguments
     /// * `root`: the entry the tree belongs to.
+    /// * `recent`: by folder, when a Claude session last ran in or below it.
     /// * `dir`: the folder whose subfolders to list.
     /// * `prefix`: the tree lines of the levels above.
     /// * `out`: where the rows go.
-    fn tree_rows(&self, root: Root, dir: &str, prefix: &str, out: &mut Vec<Row>) {
-        let recent = self.recent();
+    fn tree_rows(&self, root: Root, recent: &Recent, dir: &str, prefix: &str, out: &mut Vec<Row>) {
         let disk = self.disk(root);
-        let mut names = disk.children(dir);
+        let children = disk.children(dir);
+        let mut names: Vec<&str> = children.iter().map(String::as_str).collect();
         names.sort_by_cached_key(|name| {
             let path = tree::join(dir, name);
             disk.usage(&path, recent.get(&path).copied())
@@ -373,18 +374,18 @@ impl Picker {
         let count = names.len();
         for (i, name) in names.into_iter().enumerate() {
             let last = i + 1 == count;
-            let path = tree::join(dir, &name);
+            let key = (root, tree::join(dir, name));
             out.push(Row {
                 kind: RowKind::Dir,
-                path: path.clone(),
+                path: key.1.clone(),
                 root: Some(root),
                 branch: format!("{prefix}{}", if last { "└ " } else { "├ " }),
                 label: format!("{name}/"),
                 ..Row::default()
             });
-            if self.dirs.contains(&(root, path.clone())) {
+            if self.dirs.contains(&key) {
                 let deeper = format!("{prefix}{}", if last { "  " } else { "│ " });
-                self.tree_rows(root, &path, &deeper, out);
+                self.tree_rows(root, recent, &key.1, &deeper, out);
             }
         }
     }
@@ -1153,7 +1154,8 @@ pub fn list_lines(
     let mut out = Vec::with_capacity(end.saturating_sub(top));
     for (n, mut line) in lines.into_iter().enumerate().take(end).skip(top) {
         // A session line's branch already marks its folder's own more below
-        if n + 1 == end && end < total && plain(&line).chars().nth(5) != Some(MORE) {
+        let sixth = || line.spans.iter().flat_map(|s| s.content.chars()).nth(5);
+        if n + 1 == end && end < total && sixth() != Some(MORE) {
             // Its first column is always blank: room for the mark that more lies below
             drop_first(&mut line);
             line.spans.insert(0, Span::styled(MORE.to_string(), FAINT));
@@ -1336,7 +1338,7 @@ pub fn screen(picker: &mut Picker, now: f64, width: u16, height: u16) -> Vec<Lin
     lines
         .into_iter()
         .map(|line| {
-            if plain(&line).is_empty() {
+            if line.spans.iter().all(|s| s.content.is_empty()) {
                 Line::raw(" ")
             } else {
                 line

@@ -6,6 +6,7 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::path::Path;
+use std::rc::Rc;
 
 /// How deep a search goes below the folder it starts from.
 pub const DEPTH: usize = 6;
@@ -64,7 +65,7 @@ pub struct Hit {
 #[derive(Debug, Default)]
 pub struct Disk {
     /// By folder, its subfolders, hidden ones left out.
-    children: RefCell<HashMap<String, Vec<String>>>,
+    children: RefCell<HashMap<String, Rc<[String]>>>,
     /// By folder, its sort key from its change on disk.
     changed: RefCell<HashMap<String, Use>>,
     /// By folder and whether hidden ones count, the folders below it, relative to it.
@@ -138,12 +139,12 @@ impl Disk {
     }
 
     /// The subfolders of `dir`, hidden ones left out.
-    pub fn children(&self, dir: &str) -> Vec<String> {
-        self.children
-            .borrow_mut()
+    pub fn children(&self, dir: &str) -> Rc<[String]> {
+        let mut children = self.children.borrow_mut();
+        let kept = children
             .entry(dir.to_owned())
-            .or_insert_with(|| read(dir, false, true))
-            .clone()
+            .or_insert_with(|| read(dir, false, true).into());
+        Rc::clone(kept)
     }
 
     /// Every folder below `dir`, `DEPTH` levels at most, breadth first.
@@ -262,7 +263,7 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         dirs(t.path(), &["a", "B", ".git", "node_modules", "target"]);
         fs::write(t.path().join("f"), "").unwrap();
-        assert_eq!(Disk::default().children(&root_of(&t)), ["a", "B"]);
+        assert_eq!(*Disk::default().children(&root_of(&t)), ["a", "B"]);
     }
 
     #[test]
@@ -377,10 +378,10 @@ mod tests {
         let disk = Disk::default();
         let root = root_of(&t);
         assert_eq!(rels(&disk.search(&root, "vt", &flat)), ["vtp"]);
-        assert_eq!(disk.children(&root), ["vtp"]);
+        assert_eq!(*disk.children(&root), ["vtp"]);
         dirs(t.path(), &["vt2"]);
         disk.forget_folders();
-        assert_eq!(disk.children(&root), ["vt2", "vtp"]);
+        assert_eq!(*disk.children(&root), ["vt2", "vtp"]);
         assert_eq!(rels(&disk.search(&root, "vt", &flat)), ["vtp"], "walk kept");
         disk.forget_search();
         assert_eq!(rels(&disk.search(&root, "vt", &flat)), ["vt2", "vtp"]);
