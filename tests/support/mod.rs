@@ -7,6 +7,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -96,7 +97,7 @@ pub fn cst(env: &TestEnv, args: &[&str], stdin: &[u8]) -> Output {
     child.wait_with_output().expect("wait for cst")
 }
 
-/// A tmux server on its own socket (`cst-test-<uuid>`), killed with its socket file on drop.
+/// A tmux server on its own socket (`cst-test-<pid>-<start>-<n>`), killed with its socket file on drop.
 pub struct PrivateTmux {
     socket: String,
 }
@@ -105,8 +106,14 @@ impl PrivateTmux {
     /// Returns `None` when tmux is not installed.
     pub fn new() -> Option<Self> {
         Command::new("tmux").arg("-V").output().ok()?;
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let n = NEXT.fetch_add(1, Ordering::Relaxed);
+        // The start time tells a run apart from a killed one whose pid was reused
+        let started = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_micros());
         Some(Self {
-            socket: format!("cst-test-{}", uuid::Uuid::new_v4()),
+            socket: format!("cst-test-{}-{started}-{n}", std::process::id()),
         })
     }
 
@@ -381,6 +388,8 @@ impl Drop for PrivateTmux {
 
 /// The release asset for this machine: `cst-<arch>-unknown-linux-musl`, with the arch named as
 /// `install.sh` names it from `uname -m`.
+///
+/// Deliberately independent of the lib's own naming, as a cross-check of it.
 pub fn asset_name() -> String {
     let out = Command::new("uname").arg("-m").output().expect("run uname");
     let arch = match String::from_utf8_lossy(&out.stdout).trim() {
@@ -398,6 +407,8 @@ pub fn release_binary(marker: &str) -> Vec<u8> {
 }
 
 /// The SHA-256 of `bytes`, in lowercase hex.
+///
+/// Deliberately independent of the lib's own hashing, as a cross-check of it.
 pub fn sha256_hex(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     Sha256::digest(bytes)
