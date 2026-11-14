@@ -7,17 +7,7 @@ use crate::claude::history::HistorySession;
 use crate::claude::transcript::{transcript_path_in, Titles};
 use crate::core::paths;
 use crate::ui::picker::{Folder, Session};
-use crate::ui::search::{name, Searchable};
-
-/// A session worth listing: its id, title, folder and last use.
-#[derive(Debug, Clone)]
-struct Found {
-    id: String,
-    title: String,
-    path: String,
-    last: f64,
-    gone: bool,
-}
+use crate::ui::search::Searchable;
 
 /// The sessions worth listing, with their title and folder, kept for one history generation.
 ///
@@ -28,7 +18,6 @@ pub struct Scan {
     titles: Titles,
     config: Option<PathBuf>,
     generation: Option<u64>,
-    found: Vec<Found>,
     searchable: Vec<Searchable>,
 }
 
@@ -39,7 +28,6 @@ impl Scan {
             titles,
             config: None,
             generation: None,
-            found: Vec::new(),
             searchable: Vec::new(),
         }
     }
@@ -67,17 +55,17 @@ impl Scan {
         opened: &HashSet<String>,
     ) -> Vec<Folder> {
         if self.generation != Some(generation) {
-            (self.found, self.searchable) = self.scan(history);
+            self.searchable = self.scan(history);
             self.generation = Some(generation);
         }
         // By path, in the order first seen, so folders used at the same time keep that order
         let mut index: HashMap<&str, usize> = HashMap::new();
         let mut folders: Vec<Folder> = Vec::new();
-        for s in self.found.iter().filter(|s| !s.gone) {
+        for s in self.searchable.iter().filter(|s| !s.gone) {
             let at = *index.entry(&s.path).or_insert_with(|| {
                 folders.push(Folder {
                     path: s.path.clone(),
-                    name: name(&s.path),
+                    name: s.name.clone(),
                     last: s.last,
                     count: 0,
                     spend: 0.0,
@@ -113,9 +101,8 @@ impl Scan {
     }
 
     /// The sessions with a title, its own or its first prompt, and what can be searched in them.
-    fn scan(&mut self, history: &[HistorySession]) -> (Vec<Found>, Vec<Searchable>) {
+    fn scan(&mut self, history: &[HistorySession]) -> Vec<Searchable> {
         let config = self.config.clone().unwrap_or_else(paths::config_dir);
-        let mut found = Vec::new();
         let mut searchable = Vec::new();
         for s in history {
             let mut title = self
@@ -134,23 +121,16 @@ impl Scan {
             let gone = !Path::new(&s.cwd).is_dir();
             searchable.push(Searchable::new(
                 s.id.clone(),
-                title.clone(),
-                path.clone(),
+                title,
+                path,
                 s.last,
                 gone,
                 own_title,
                 &s.prompts,
             ));
-            found.push(Found {
-                id: s.id.clone(),
-                title,
-                path,
-                last: s.last,
-                gone,
-            });
         }
         self.titles.save();
-        (found, searchable)
+        searchable
     }
 }
 

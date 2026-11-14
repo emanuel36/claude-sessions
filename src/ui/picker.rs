@@ -545,6 +545,45 @@ impl Picker {
             .collect()
     }
 
+    /// The history's rows: a typed path first, then the folders that match, with the sessions
+    /// of the open ones below.
+    fn history_rows(&self) -> Vec<Row> {
+        let mut out = Vec::new();
+        let typed = self.query.trim();
+        if (typed.starts_with('/') || typed.starts_with('~')) && (self.is_dir)(typed) {
+            out.push(Row {
+                kind: RowKind::Path,
+                path: typed.to_owned(),
+                ..Row::default()
+            });
+        }
+        for (index, folder) in self.folders.iter().enumerate() {
+            if !matches(folder, &self.query) {
+                continue;
+            }
+            out.push(Row {
+                kind: RowKind::Folder,
+                path: folder.path.clone(),
+                folder: Some(index),
+                ..Row::default()
+            });
+            if self.expanded.contains(&folder.path) {
+                let count = folder.sessions.len();
+                let start = self.scroll.get(&folder.path).map_or(0, |&s| s.min(count));
+                let stop = (start + SHOWN).min(count);
+                out.extend((start..stop).map(|session| Row {
+                    kind: RowKind::Session,
+                    path: folder.path.clone(),
+                    folder: Some(index),
+                    session: Some(session),
+                    end: session + 1 == stop,
+                    ..Row::default()
+                }));
+            }
+        }
+        out
+    }
+
     /// The rows on show: the open entries, each followed by its tree, then the history: a typed
     /// path, the sessions found and the folders. The cursor is kept on one of them.
     pub fn shown(&mut self) -> Vec<Row> {
@@ -553,13 +592,7 @@ impl Picker {
         let last_start = found.len().saturating_sub(self.found_shown);
         self.found_scroll = self.found_scroll.min(last_start);
         let mut out: Vec<Row> = self.open.iter().flat_map(|&r| self.root_rows(r)).collect();
-        let mut history = rows(
-            &self.folders,
-            &self.query,
-            &self.expanded,
-            self.is_dir.as_ref(),
-            &self.scroll,
-        );
+        let mut history = self.history_rows();
         // The sessions found go after a typed path, before the folders
         let at = usize::from(history.first().is_some_and(|r| r.kind == RowKind::Path));
         history.splice(at..at, self.hit_rows(&found));
@@ -576,10 +609,6 @@ impl Picker {
 
     /// Applies a key; returns the row to open on Enter, else `None`.
     pub fn key(&mut self, key: Key) -> Option<Row> {
-        if let Key::Entry(root) = key {
-            self.toggle(root);
-            return None;
-        }
         let row = self.selected();
         let kind = row.as_ref().map(|r| r.kind);
         let root = row.as_ref().and_then(|r| r.root);
@@ -626,8 +655,8 @@ impl Picker {
         None
     }
 
-    /// Applies a key the entries and trees leave to the history rows; returns the row to open
-    /// on Enter, else `None`.
+    /// Applies a key the trees leave: opens or closes an entry, else acts on the history rows;
+    /// returns the row to open on Enter, else `None`.
     fn history_key(&mut self, key: Key, row: Option<Row>) -> Option<Row> {
         match key {
             Key::Enter => return row,
@@ -661,8 +690,7 @@ impl Picker {
                 }
             }
             Key::Backspace | Key::Char(_) => self.typed(key, row.as_ref()),
-            // [`Picker::key`] toggles the entries before any row is read
-            Key::Entry(_) => {}
+            Key::Entry(root) => self.toggle(root),
         }
         self.shown();
         None
@@ -805,62 +833,6 @@ fn matches(folder: &Folder, query: &str) -> bool {
         .to_lowercase()
         .split_whitespace()
         .all(|word| path.contains(word))
-}
-
-/// The list's rows: a typed path first, then the folders that match, with sessions below.
-///
-/// # Arguments
-/// * `folders`: the folders, last used first.
-/// * `query`: what the user typed.
-/// * `expanded`: the paths of the folders showing their sessions.
-/// * `is_dir`: tells whether a typed path (with `~` expanded) is a folder.
-/// * `scroll`: by folder path, how many of its sessions are scrolled past.
-pub fn rows(
-    folders: &[Folder],
-    query: &str,
-    expanded: &BTreeSet<String>,
-    is_dir: &dyn Fn(&str) -> bool,
-    scroll: &HashMap<String, usize>,
-) -> Vec<Row> {
-    let mut out = Vec::new();
-    let typed = query.trim();
-    if (typed.starts_with('/') || typed.starts_with('~')) && is_dir(typed) {
-        out.push(Row {
-            kind: RowKind::Path,
-            path: typed.to_owned(),
-            folder: None,
-            session: None,
-            end: false,
-            ..Row::default()
-        });
-    }
-    for (index, folder) in folders.iter().enumerate() {
-        if !matches(folder, query) {
-            continue;
-        }
-        out.push(Row {
-            kind: RowKind::Folder,
-            path: folder.path.clone(),
-            folder: Some(index),
-            session: None,
-            end: false,
-            ..Row::default()
-        });
-        if expanded.contains(&folder.path) {
-            let count = folder.sessions.len();
-            let start = scroll.get(&folder.path).copied().unwrap_or(0).min(count);
-            let stop = (start + SHOWN).min(count);
-            out.extend((start..stop).map(|session| Row {
-                kind: RowKind::Session,
-                path: folder.path.clone(),
-                folder: Some(index),
-                session: Some(session),
-                end: session + 1 == stop,
-                ..Row::default()
-            }));
-        }
-    }
-    out
 }
 
 /// The rule between two folders.
@@ -1206,23 +1178,6 @@ pub fn list_lines(
     out
 }
 
-/// The keys a screen takes, each in Claude's orange before what it does, if anything.
-///
-/// A line too long for `width` is cut with an ellipsis.
-pub fn keys_line(keys: &[(&str, &str)], width: usize) -> Line<'static> {
-    let mut line = Line::from(Span::raw(" "));
-    for (i, (key, does)) in keys.iter().enumerate() {
-        if i > 0 {
-            push(&mut line, " · ", FAINT);
-        }
-        push(&mut line, *key, CLAUDE);
-        if !does.is_empty() {
-            push(&mut line, format!(" {does}"), INK);
-        }
-    }
-    cut(line, width)
-}
-
 /// What the search box shows while nothing is typed: with a tree open, it also offers to name a
 /// new folder.
 pub fn placeholder(picker: &Picker) -> &'static str {
@@ -1452,9 +1407,9 @@ mod tests {
 
     use crate::ui::line::{cell_len, cells};
     use crate::ui::picker::{
-        command, dir_line, entry_hints, hints, hints_line, hit_line, keys_line, list_lines,
-        placeholder, rows, screen, search_box, session_line, tilde, Folder, Key, Picker, Root, Row,
-        RowKind, Session, ENTRY_KEYS, WIDTH,
+        command, dir_line, entry_hints, hints, hints_line, hit_line, list_lines, placeholder,
+        screen, search_box, session_line, tilde, Folder, Key, Picker, Root, Row, RowKind, Session,
+        ENTRY_KEYS, WIDTH,
     };
     use crate::ui::search::Searchable;
     use crate::ui::words::{CLAUDE, GREEN, INACTIVE, INK, PERMISSION, SOFT, SUBTLE};
@@ -1535,7 +1490,7 @@ mod tests {
     #[test]
     fn rows_list_folders_and_open_a_folders_last_five_sessions() {
         let fs = folders();
-        let shown = rows(&fs, "", &set(&["/w/api"]), &no_dirs, &HashMap::new());
+        let shown = list(&fs, 0, &set(&["/w/api"])).history_rows();
         let kinds: Vec<_> = shown.iter().map(|r| (r.kind, r.path.as_str())).collect();
         let mut want = vec![(RowKind::Folder, "/w/api")];
         want.extend([(RowKind::Session, "/w/api"); 5]);
@@ -1583,26 +1538,26 @@ mod tests {
 
     #[test]
     fn a_folder_stays_closed_until_expanded() {
-        let shown = rows(&folders(), "", &set(&[]), &no_dirs, &HashMap::new());
+        let shown = list(&folders(), 0, &set(&[])).history_rows();
         let kinds: Vec<_> = shown.iter().map(|r| r.kind).collect();
         assert_eq!(kinds, [RowKind::Folder, RowKind::Folder]);
     }
 
     #[test]
     fn typing_filters_by_every_word_and_a_typed_folder_comes_first() {
-        let fs = folders();
-        let none = HashMap::new();
-        let paths: Vec<_> = rows(&fs, "W E", &set(&[]), &no_dirs, &none)
-            .into_iter()
-            .map(|r| r.path)
-            .collect();
+        let history = |is_dir, query: &str| {
+            let mut p = picker(is_dir);
+            p.query = query.into();
+            p.history_rows()
+        };
+        let paths: Vec<_> = history(false, "W E").into_iter().map(|r| r.path).collect();
         assert_eq!(paths, ["/w/web"]);
-        let shown = rows(&fs, "~/x", &set(&[]), &|_| true, &none);
+        let shown = history(true, "~/x");
         assert_eq!(
             (shown[0].kind, shown[0].path.as_str()),
             (RowKind::Path, "~/x")
         );
-        assert!(rows(&fs, "/nope", &set(&[]), &no_dirs, &none).is_empty());
+        assert!(history(false, "/nope").is_empty());
     }
 
     #[test]
@@ -1650,7 +1605,7 @@ mod tests {
             })
             .collect();
         let none = set(&[]);
-        let shown = rows(&many, "", &none, &no_dirs, &HashMap::new());
+        let shown = list(&many, 0, &none).history_rows();
         let lines: Vec<String> = list_lines(&list(&many, 25, &none), &shown, NOW, 8, WIDTH)
             .iter()
             .map(plain)
@@ -1678,7 +1633,7 @@ mod tests {
             .collect();
         many[5].sessions = sessions();
         let open = set(&["/w/f5"]);
-        let shown = rows(&many, "", &open, &no_dirs, &HashMap::new());
+        let shown = list(&many, 0, &open).history_rows();
         let lines: Vec<String> = list_lines(&list(&many, 5, &open), &shown, NOW, 16, WIDTH)
             .iter()
             .map(plain)
@@ -2662,16 +2617,6 @@ mod tests {
         assert_eq!(style_of(" · "), SUBTLE);
         let cut = hints_line(&keys, 12);
         assert_eq!(plain(&cut), " Enter to s…");
-    }
-
-    #[test]
-    fn keys_line_cuts_a_long_line_with_an_ellipsis() {
-        let keys = [("↑↓", "move"), ("Enter", "new / resume"), ("Esc", "")];
-        assert_eq!(
-            plain(&keys_line(&keys, 40)),
-            " ↑↓ move · Enter new / resume · Esc"
-        );
-        assert_eq!(plain(&keys_line(&keys, 12)), " ↑↓ move · …");
     }
 
     /// A session of `path` to search, its title its own, used `ago` seconds before `NOW`.
