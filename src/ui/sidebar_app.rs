@@ -18,7 +18,8 @@ use crate::core::state::{self, unix_now, Record, Status, TIMED};
 use crate::term::tmux::{self, Cli, Pane, Runner};
 use crate::ui::pane::{self, own_socket, own_window, resets, App, Shell, Step, WINDOW_PAUSE};
 use crate::ui::runtime::{signal, Msg, Runtime, Schedule, Screen, Signal};
-use crate::ui::sidebar::{column, entry_at, load_entries, Entry, Run, Stats};
+use crate::ui::sidebar::{column, entry_at, load_entries, Entry, Run};
+use crate::ui::stats::Stats;
 use crate::ui::watch::{interruptible, Stale};
 
 /// Runs the sidebar in the tmux pane this process runs in, until its terminal goes away.
@@ -324,10 +325,11 @@ mod tests {
     use crate::term::tmux::fake::FakeTmux;
     use crate::ui::pane::{App, Step};
     use crate::ui::runtime::{Msg, Runtime};
-    use crate::ui::sidebar::{Entry, Run, Stats};
+    use crate::ui::sidebar::{Entry, Run};
     use crate::ui::sidebar_app::{
         animating, labels, quiet_deadlines, runs_of, transcript_dirs, Sidebar,
     };
+    use crate::ui::stats::Stats;
     use crate::ui::watch::Stale;
 
     const NOW: f64 = 1_700_000_000.0;

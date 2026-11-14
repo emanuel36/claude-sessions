@@ -21,7 +21,7 @@ use crate::ui::landing;
 use crate::ui::pane::{self, open, own_window, picker_key, resets, App, Shell, Step, WINDOW_PAUSE};
 use crate::ui::picker::{self, Picker, Root, RowKind};
 use crate::ui::runtime::{signal, Msg, Runtime, Schedule, Screen, Signal};
-use crate::ui::sidebar::Stats;
+use crate::ui::stats::Stats;
 use crate::ui::usage::Reader;
 
 /// The sessions found that the page shows at once.
@@ -340,7 +340,7 @@ mod tests {
     use crate::ui::picker::{Folder, Picker, Root, RowKind, Session};
     use crate::ui::runtime::{Msg, Runtime};
     use crate::ui::search::Searchable;
-    use crate::ui::sidebar::Stats;
+    use crate::ui::stats::Stats;
     use crate::ui::usage::Reader;
 
     const NOW: f64 = 1_700_000_000.0;

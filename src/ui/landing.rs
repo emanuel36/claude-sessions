@@ -6,7 +6,8 @@ use ratatui::text::{Line, Span};
 
 use crate::ui::line::{ljust, pad_right, push, styled};
 use crate::ui::picker::{self, hints_line, list_lines, search_box, Picker, Row};
-use crate::ui::sidebar::{self, panel_lines, stats_lines, Stats, PANEL_CONTENT, PANEL_WIDTH};
+use crate::ui::sidebar;
+use crate::ui::stats::{panel_lines, stats_lines, Stats, PANEL_CONTENT, PANEL_WIDTH};
 use crate::ui::words::{MASCOT, MASCOT_ROWS, MONTHS, SOFT, STRONG, WEEKDAYS};
 
 /// The columns between the list and the statistics, which take the sidebar's width on the right.
@@ -87,7 +88,10 @@ fn right_side(stats: &Stats, now: f64, width: usize, height: usize) -> (Vec<Line
         }
     }
     if fits(sidebar::WIDTH) {
-        return (stats_lines(stats, now, true), sidebar::WIDTH);
+        return (
+            stats_lines(stats, now, sidebar::CONTENT, true),
+            sidebar::WIDTH,
+        );
     }
     (Vec::new(), 0)
 }
@@ -198,7 +202,8 @@ mod tests {
     use crate::ui::landing::{footer, header, screen, GAP, LIST_MAX};
     use crate::ui::line::{pad_right, plain, row_text, truncate, width_of};
     use crate::ui::picker::{self, hints_line, Folder, Key, Picker, Root, Session};
-    use crate::ui::sidebar::{self, panel_lines, Stats, PANEL_CONTENT, PANEL_WIDTH};
+    use crate::ui::sidebar;
+    use crate::ui::stats::{panel_lines, Stats, PANEL_CONTENT, PANEL_WIDTH};
     use crate::ui::usage::{Day, Totals};
 
     /// 2026-11-04 14:07 local time, a Wednesday.

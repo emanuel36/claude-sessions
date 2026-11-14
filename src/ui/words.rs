@@ -1,9 +1,9 @@
 //! Words, numbers, bars and styles the sidebar and the landing page share.
 
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::Span;
+use ratatui::text::{Line, Span};
 
-use crate::ui::line::cells;
+use crate::ui::line::{cell_len, cells, push, start, width_of, ELBOW, INDENT};
 
 /// While a session works the screen redraws `FPS` times a second, a spinner frame each time.
 pub const FPS: u32 = 8;
@@ -147,6 +147,59 @@ pub fn fit(text: &str, width: usize) -> String {
     }
     out.push('…');
     out
+}
+
+/// Ends a line with `value` against the right edge.
+pub(crate) fn right(line: &mut Line<'static>, value: &str, style: Style, content: usize) {
+    let used = cell_len(line).saturating_sub(1) + width_of(value);
+    push(line, " ".repeat(content.saturating_sub(used)), INK);
+    push(line, value, style);
+}
+
+/// A `•` line: the mark, a title cut to fit, and a value on the right.
+pub(crate) struct Bullet<'a> {
+    /// The character before the title, such as `•` or a spinner frame.
+    pub(crate) mark: char,
+    /// The mark's style.
+    pub(crate) mark_style: Style,
+    /// The text after the mark, cut with `…` to the room the value leaves.
+    pub(crate) title: &'a str,
+    /// The title's style.
+    pub(crate) title_style: Style,
+    /// The text flush right; empty for none, which gives the title the whole width.
+    pub(crate) value: &'a str,
+    /// The value's style.
+    pub(crate) value_style: Style,
+    /// The style of the line's margin and gaps.
+    pub(crate) base: Style,
+    /// The cells between the margins.
+    pub(crate) content: usize,
+}
+
+impl Bullet<'_> {
+    /// The styled line.
+    pub(crate) fn line(&self) -> Line<'static> {
+        let mut line = start(self.base);
+        push(&mut line, format!("{} ", self.mark), self.mark_style);
+        let taken = if self.value.is_empty() {
+            0
+        } else {
+            width_of(self.value) + 1
+        };
+        let room = self.content.saturating_sub(2 + taken);
+        push(&mut line, fit(self.title, room), self.title_style);
+        if !self.value.is_empty() {
+            right(&mut line, self.value, self.value_style, self.content);
+        }
+        line
+    }
+}
+
+/// The start of a `⎿` line, or of the lines after it, which only indent.
+pub(crate) fn elbow(first: bool, base: Style) -> Line<'static> {
+    let mut line = start(base);
+    push(&mut line, if first { ELBOW } else { INDENT }, SUBTLE);
+    line
 }
 
 /// A bar cell: a line through the middle of the cell, level with the text, so stacked bars

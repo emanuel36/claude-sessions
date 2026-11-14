@@ -7,6 +7,15 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use unicode_width::UnicodeWidthChar;
 
+/// What a `⎿` line puts before its text.
+pub(crate) const ELBOW: &str = "  ⎿  ";
+/// What the lines after a `⎿` line put before their text.
+pub(crate) const INDENT: &str = "     ";
+/// The cells [`ELBOW`] and [`INDENT`] take.
+pub(crate) const ELBOW_CELLS: usize = 5;
+/// `⏺` shows as an emoji button in some fonts.
+pub(crate) const BULLET: char = '•';
+
 /// How many terminal cells a character takes: two when wide, none when combining.
 pub fn cells(c: char) -> usize {
     c.width().unwrap_or(0)
@@ -106,6 +115,17 @@ pub fn styled(parts: &[(&str, Style)]) -> Line<'static> {
         .filter(|(text, _)| !text.is_empty())
         .map(|(text, style)| Span::styled((*text).to_owned(), *style))
         .collect()
+}
+
+/// A line starting with the left padding column, over a `base` style.
+pub(crate) fn start(base: Style) -> Line<'static> {
+    Line::from(Span::raw(" ")).style(base)
+}
+
+/// Pads a line to `content` and the two padding columns, so a background reaches both edges.
+pub(crate) fn finish(mut line: Line<'static>, content: usize) -> Line<'static> {
+    pad_right(&mut line, content + 2);
+    line
 }
 
 /// The text a rendered buffer row shows, skipping the cells wide characters cover.

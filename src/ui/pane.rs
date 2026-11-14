@@ -21,7 +21,7 @@ use crate::ui::folders::Scan;
 use crate::ui::picker;
 use crate::ui::runtime::{signal, Msg, Runtime, Schedule, Screen, Signal, Wake};
 use crate::ui::search::Searchable;
-use crate::ui::sidebar::Stats;
+use crate::ui::stats::Stats;
 use crate::ui::usage::Reader;
 use crate::ui::watch::{Stale, Watches};
 
