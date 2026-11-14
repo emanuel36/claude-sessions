@@ -18,7 +18,7 @@ use crate::core::paths::{self, LIMITS_FILE};
 use crate::core::state::{self, unix_now, Record, Status};
 
 /// A lock file nobody holds, whose session has no record, is deleted once this old.
-pub const STALE_LOCK_SECONDS: f64 = 60.0;
+const STALE_LOCK_SECONDS: f64 = 60.0;
 
 /// What a record file's name ends with, after the session id.
 pub(crate) const RECORD_SUFFIX: &str = ".json";
@@ -49,7 +49,7 @@ pub fn process_start(pid: i32) -> Option<u64> {
 ///
 /// A record needs both its pid and the start time it was written with: without a start time
 /// there is nothing to tell the process from another that took the pid, so it counts as dead.
-pub fn is_alive(r: &Record) -> bool {
+fn is_alive(r: &Record) -> bool {
     let (Some(pid), Some(start)) = (r.pid, r.pid_start) else {
         return false;
     };

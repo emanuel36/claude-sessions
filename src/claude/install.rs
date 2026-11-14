@@ -152,7 +152,7 @@ fn group_has_ours(group: &Value) -> bool {
 }
 
 /// Returns what is malformed in `settings` for our purposes, or `None`.
-pub fn shape_error(settings: &Value) -> Option<String> {
+fn shape_error(settings: &Value) -> Option<String> {
     let Some(root) = settings.as_object() else {
         return Some("settings is not an object".to_owned());
     };
@@ -198,7 +198,7 @@ fn repoint(groups: &mut [Value], command: &str) -> bool {
 /// `settings` is the parsed settings.json and is not modified; `cst` is the path of the
 /// executable and `saved` the user's own status line saved by an earlier install, if any.
 /// Returns the new settings and the status line to save (the user's own, or `None`).
-pub fn merge(settings: &Value, cst: &str, saved: Option<Value>) -> (Value, Option<Value>) {
+fn merge(settings: &Value, cst: &str, saved: Option<Value>) -> (Value, Option<Value>) {
     let mut new = settings.clone();
     let Some(root) = new.as_object_mut() else {
         return (new, saved);
@@ -255,7 +255,7 @@ fn without_ours(group: &Value) -> Option<Value> {
 /// An event list, or the hooks object, that only our entries filled goes away with them; an
 /// empty one the user had stays. `settings` is not modified; `saved` is the user's own status
 /// line saved by install, if any.
-pub fn unmerge(settings: &Value, saved: Option<Value>) -> Value {
+fn unmerge(settings: &Value, saved: Option<Value>) -> Value {
     let mut new = settings.clone();
     let Some(root) = new.as_object_mut() else {
         return new;

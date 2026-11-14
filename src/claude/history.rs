@@ -19,9 +19,9 @@ use crate::core::paths;
 /// Claude Code's prompt history, in its config folder.
 pub const HISTORY: &str = "history.jsonl";
 /// Where the history read so far is kept between runs, in the state folder.
-pub const STORED_HISTORY: &str = "history.json";
+const STORED_HISTORY: &str = "history.json";
 /// A title shows one line of a prompt at most; the rest need not be kept.
-pub const PROMPT_CHARS: usize = 200;
+const PROMPT_CHARS: usize = 200;
 
 /// A session from Claude Code's prompt history.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -32,7 +32,7 @@ pub struct HistorySession {
     pub cwd: String,
     /// When its latest prompt was typed, in seconds since the epoch.
     pub last: f64,
-    /// Its first prompt that is not a command, cut to [`PROMPT_CHARS`] characters.
+    /// Its first prompt that is not a command, cut to `PROMPT_CHARS` characters.
     pub first_prompt: String,
     /// Every prompt typed in it, commands left out, whole and in the order typed.
     pub prompts: Vec<String>,

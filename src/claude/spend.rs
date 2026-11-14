@@ -2,7 +2,7 @@
 //!
 //! Claude Code reports one running cost per session, under the model of its main conversation,
 //! though subagents may run on other models. The transcripts (the session's own and its
-//! subagents') record each reply's model and tokens; priced with [`price`], they give the share
+//! subagents') record each reply's model and tokens; priced by model, they give the share
 //! of each model, which splits the reported cost. The prices only weigh the models against each
 //! other, so the reported total never changes.
 
@@ -23,7 +23,7 @@ pub const STORED_SPEND: &str = "spend.json";
 
 /// A model's dollars per million tokens: input, output, cache write and cache read.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Price {
+struct Price {
     pub input: f64,
     pub output: f64,
     pub cache_write: f64,
@@ -69,7 +69,7 @@ fn base_id(model: &str) -> &str {
 }
 
 /// Returns the price of a model id: its own, else the newest of its family, else none.
-pub fn price(model: &str) -> Option<Price> {
+fn price(model: &str) -> Option<Price> {
     let id = base_id(model);
     if let Some((_, p)) = PRICES.iter().find(|(known, _)| *known == id) {
         return Some(*p);
@@ -82,7 +82,7 @@ pub fn price(model: &str) -> Option<Price> {
 }
 
 /// Returns the name Claude Code shows for a model id: `claude-opus-5-5` is `Opus 5.5`.
-pub fn display_name(model: &str) -> String {
+fn display_name(model: &str) -> String {
     let id = base_id(model);
     let mut parts = id.split('-');
     let Some(family) = parts.next().filter(|f| !f.is_empty()) else {
@@ -288,8 +288,8 @@ impl ModelSpend {
     }
 
     /// Returns an estimator over the config folder `config` that keeps nothing on disk.
-    #[doc(hidden)]
-    pub fn in_dir(config: PathBuf) -> Self {
+    #[cfg(test)]
+    pub(crate) fn in_dir(config: PathBuf) -> Self {
         ModelSpend {
             stored: false,
             config: Some(config),

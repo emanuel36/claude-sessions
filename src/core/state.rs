@@ -55,18 +55,6 @@ impl Status {
             Status::Unknown => "unknown",
         }
     }
-
-    fn rank(self) -> u8 {
-        match self {
-            Status::Permission => 0,
-            Status::Input => 1,
-            Status::Done => 2,
-            Status::Working => 3,
-            Status::Shell => 4,
-            Status::Idle => 5,
-            Status::Unknown => 6,
-        }
-    }
 }
 
 /// What an agent that waits on the user waits for.
@@ -411,12 +399,12 @@ pub fn since(r: &Record) -> f64 {
     }
 }
 
-/// Orders sessions by status, then the ones in that status longest first.
-pub fn sort_key(r: &Record) -> (u8, f64) {
-    (r.status.rank(), since(r))
+/// Orders sessions by status, in declaration order, then the ones in that status longest first.
+fn sort_key(r: &Record) -> (u8, f64) {
+    (r.status as u8, since(r))
 }
 
-/// Compares two sessions by [`sort_key`]: the most urgent first.
+/// Compares two sessions by status, then the longest in it: the most urgent first.
 pub fn by_urgency(a: &Record, b: &Record) -> Ordering {
     let (a, b) = (sort_key(a), sort_key(b));
     a.0.cmp(&b.0).then(a.1.total_cmp(&b.1))
@@ -709,12 +697,19 @@ mod tests {
         let mut all = vec![a.clone(), b.clone(), c.clone(), d.clone()];
         all.sort_by(|x, y| sort_key(x).partial_cmp(&sort_key(y)).unwrap());
         assert_eq!(all, vec![c, b, d, a.clone()]);
-        // An unknown status sorts last instead of failing
-        let old = rec(Status::Unknown, 0.0);
-        let idle = rec(Status::Idle, 99.0);
-        let mut all = vec![old.clone(), idle.clone(), a.clone()];
+        // Every status in display order, the unknown one last instead of failing
+        let order = [
+            Status::Permission,
+            Status::Input,
+            Status::Done,
+            Status::Working,
+            Status::Shell,
+            Status::Idle,
+            Status::Unknown,
+        ];
+        let mut all: Vec<Record> = order.iter().rev().map(|&s| rec(s, 0.0)).collect();
         all.sort_by(|x, y| sort_key(x).partial_cmp(&sort_key(y)).unwrap());
-        assert_eq!(all, vec![a, idle, old]);
+        assert_eq!(all.iter().map(|r| r.status).collect::<Vec<_>>(), order);
     }
 
     #[test]

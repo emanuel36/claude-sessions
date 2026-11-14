@@ -15,14 +15,14 @@ use serde_json::Value;
 use crate::core::paths;
 
 /// The title is looked for in this many bytes at the end of a transcript.
-pub const TITLE_TAIL_BYTES: u64 = 512 * 1024;
+const TITLE_TAIL_BYTES: u64 = 512 * 1024;
 /// How a turn ended is looked for in this many bytes at the end of a transcript: enough for
 /// the line of a long pasted prompt.
-pub const TURN_TAIL_BYTES: u64 = 256 * 1024;
+const TURN_TAIL_BYTES: u64 = 256 * 1024;
 /// What Claude Code writes when the user presses Esc.
-pub const INTERRUPT_MARKER: &str = "[Request interrupted by user";
+const INTERRUPT_MARKER: &str = "[Request interrupted by user";
 /// Where the titles found in the transcripts are kept between runs, in the state folder.
-pub const TITLES_FILE: &str = "titles.json";
+const TITLES_FILE: &str = "titles.json";
 /// A title the user set with /rename wins over the one Claude Code made up.
 const TITLE_KEYS: [&str; 2] = ["customTitle", "aiTitle"];
 
@@ -44,7 +44,7 @@ pub(crate) fn transcript_path_in(config: &Path, id: &str, cwd: &str) -> PathBuf 
 /// # Errors
 ///
 /// Fails if the file cannot be opened or read.
-pub fn tail(path: &Path, n: u64) -> io::Result<Vec<u8>> {
+fn tail(path: &Path, n: u64) -> io::Result<Vec<u8>> {
     let mut file = File::open(path)?;
     let len = file.seek(SeekFrom::End(0))?;
     file.seek(SeekFrom::Start(len.saturating_sub(n)))?;
@@ -65,7 +65,7 @@ pub enum TurnEnd {
     Other,
 }
 
-/// Tells how the transcript ends; only its last [`TURN_TAIL_BYTES`] are read.
+/// Tells how the transcript ends; only its last `TURN_TAIL_BYTES` are read.
 ///
 /// An assistant entry after the last user entry means the session went on.
 pub fn turn_end(path: &Path) -> TurnEnd {
@@ -133,7 +133,7 @@ fn is_interrupt(message: Option<&Value>) -> bool {
 ///
 /// The last occurrence of each key that holds a valid, non-empty JSON string counts; the tail
 /// may start or end in the middle of a line, so those cut ones are skipped.
-pub fn find_title(chunk: &[u8]) -> String {
+fn find_title(chunk: &[u8]) -> String {
     for key in TITLE_KEYS {
         if let Some(title) = last_string(chunk, key) {
             if !title.is_empty() {

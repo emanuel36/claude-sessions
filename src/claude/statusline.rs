@@ -28,9 +28,9 @@ use crate::core::store::{self, Sink};
 use crate::process;
 
 /// The account's usage windows, as the status line input names them.
-pub const WINDOWS: [&str; 2] = ["five_hour", "seven_day"];
+const WINDOWS: [&str; 2] = ["five_hour", "seven_day"];
 /// Claude Code cancels a status line that runs past its next update anyway.
-pub const CHAIN_TIMEOUT: Duration = Duration::from_secs(5);
+const CHAIN_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// How much of a usage window is used, and when the window resets.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -61,7 +61,7 @@ fn text(value: Option<&Value>) -> Option<&str> {
 /// `cost` (USD) and `api_duration` (seconds Claude spent answering) are `None` until known;
 /// `model` is the display name or else the id, `None` until known; `added` and `removed` lines
 /// are 0 until known. A fraction of a line is dropped and a negative count is 0.
-pub fn parse(data: &Value) -> Usage {
+fn parse(data: &Value) -> Usage {
     let cost = |key| number(get(data, &["cost", key]));
     // A float-to-int `as` saturates, and maps a negative to 0
     let lines = |key| cost(key).map_or(0, |n| n as u64);
@@ -80,7 +80,7 @@ pub fn parse(data: &Value) -> Usage {
 ///
 /// A window needs both a used percentage and a reset time; `resets_at` in the input is a Unix
 /// timestamp.
-pub fn parse_limits(data: &Value) -> BTreeMap<String, Quota> {
+fn parse_limits(data: &Value) -> BTreeMap<String, Quota> {
     WINDOWS
         .iter()
         .filter_map(|name| {
@@ -161,7 +161,7 @@ pub fn saved_statusline_path() -> PathBuf {
 }
 
 /// Returns the command of the user's own status line, or `None` if there is none.
-pub fn saved_command() -> Option<String> {
+fn saved_command() -> Option<String> {
     saved_command_in(&saved_statusline_path())
 }
 
@@ -178,7 +178,7 @@ pub(crate) fn saved_command_in(path: &Path) -> Option<String> {
 /// # Errors
 ///
 /// Fails if the records directory is unusable, or the limits or the record cannot be written.
-pub fn record_usage(data: &Value, now: f64) -> io::Result<()> {
+fn record_usage(data: &Value, now: f64) -> io::Result<()> {
     record_usage_in(&paths::runtime_dir()?, &journal::append, data, now)
 }
 
@@ -233,7 +233,7 @@ fn record_session_usage(dir: &Path, journal: Sink<'_>, data: &Value, now: f64) -
 /// # Errors
 ///
 /// Fails if the command cannot start or the output cannot be written.
-pub fn print_statusline(raw: &[u8], data: &Value, out: &mut dyn Write) -> io::Result<()> {
+fn print_statusline(raw: &[u8], data: &Value, out: &mut dyn Write) -> io::Result<()> {
     print_statusline_with(saved_command().as_deref(), raw, data, out, CHAIN_TIMEOUT)
 }
 
