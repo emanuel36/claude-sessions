@@ -9,17 +9,17 @@ use serde::Deserialize;
 use crate::claude::history::HistorySession;
 use crate::claude::spend::ModelSpend;
 use crate::core::journal::{
-    day_costs, journal_dir, session_model_costs, window_totals, DayReader, Days, SessionTotals,
-    ENDED,
+    day_costs, day_of, journal_dir, session_model_costs, window_totals, DayReader, Days,
+    SessionTotals, ENDED,
 };
 use crate::core::state::{Status, NEEDS_YOU};
 
 /// Days of spend the sidebar shows, today included.
-pub const WEEK_DAYS: u64 = 7;
+const WEEK_DAYS: u64 = 7;
 /// The longest a working session goes without an event and still counts as working, in
 /// seconds. A longer silence is a suspended machine or a session killed mid-turn, which writes
 /// no event to end its turn; the silences of real turns stay well under it.
-pub const MAX_SILENCE: f64 = 3600.0;
+const MAX_SILENCE: f64 = 3600.0;
 
 /// What today's journal adds up to.
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
@@ -56,7 +56,7 @@ pub struct Totals {
     /// What each of the last 7 days cost, oldest first, today last.
     pub days: Vec<(NaiveDate, f64)>,
     /// What each session added from today on, for the lines of the day.
-    pub today_by_session: HashMap<String, SessionTotals>,
+    pub(crate) today_by_session: HashMap<String, SessionTotals>,
 }
 
 /// What a [`Totals`] was computed from.
@@ -86,6 +86,7 @@ impl Reader {
     }
 
     /// Returns a reader of the day files in `dir`.
+    #[cfg(test)]
     pub fn in_dir(dir: PathBuf) -> Self {
         Self {
             dir: Some(dir),
@@ -119,7 +120,7 @@ impl Reader {
         now: f64,
         tz: &Tz,
     ) -> &Totals {
-        let Some(today) = local_date(now, tz) else {
+        let Some(today) = day_of(now, tz) else {
             return &self.totals;
         };
         let days: Vec<NaiveDate> = (0..=WEEK_DAYS)
@@ -170,7 +171,7 @@ impl Reader {
     }
 
     fn hours_in<Tz: TimeZone>(&self, now: f64, tz: &Tz) -> [f64; 24] {
-        let Some(first) = local_date(now, tz)
+        let Some(first) = day_of(now, tz)
             .and_then(|today| today.checked_sub_days(ChronoDays::new(WEEK_DAYS - 1)))
         else {
             return [0.0; 24];
@@ -186,7 +187,7 @@ impl Reader {
     }
 
     fn day_in<Tz: TimeZone>(&self, now: f64, tz: &Tz) -> Day {
-        let Some(today) = local_date(now, tz) else {
+        let Some(today) = day_of(now, tz) else {
             return Day::default();
         };
         if !self.journals.contains_key(&today) {
@@ -200,14 +201,6 @@ impl Reader {
 
 fn events_of(journals: &BTreeMap<NaiveDate, DayReader>) -> Days<'_> {
     journals.iter().map(|(&d, r)| (d, r.events())).collect()
-}
-
-fn local_date<Tz: TimeZone>(t: f64, tz: &Tz) -> Option<NaiveDate> {
-    if !t.is_finite() {
-        return None;
-    }
-    let utc = DateTime::<Utc>::from_timestamp(t.floor() as i64, 0)?;
-    Some(utc.with_timezone(tz).date_naive())
 }
 
 /// What a session's models cost, estimated from its id and folder: `{model: dollars}`.
@@ -387,7 +380,7 @@ fn midnight_of<Tz: TimeZone>(day: NaiveDate, tz: &Tz) -> Option<f64> {
 /// `events` holds each day's events, including the days before. `now` ends a wait still going.
 /// `totals` is [`crate::core::journal::window_totals`] of the events from `today` on, if already
 /// known.
-pub fn day_summary(
+fn day_summary(
     events: &Days,
     today: NaiveDate,
     now: f64,

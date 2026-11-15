@@ -1,47 +1,34 @@
 //! The sidebar column: mascot, sessions by urgency, background runs, and the statistics.
 //!
 //! It reads like Claude Code's own transcript: each session is a line with its status's mark,
-//! and a `⎿` line under it. The landing page's wide statistics ([`panel_lines`]) are built from
-//! the same blocks.
+//! and a `⎿` line under it. The statistics at the bottom are [`crate::ui::stats`]'s blocks.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
-use chrono::{Datelike, NaiveDate};
 use ratatui::style::{Modifier, Style};
-use ratatui::text::{Line, Span};
+use ratatui::text::Line;
 use serde::Deserialize;
 
-use crate::claude::statusline::Quota;
 use crate::core::state::{self, Record, Status, NEEDS_YOU, TIMED};
 use crate::term::tmux::{self, Pane};
-use crate::ui::line::{cell_len, cells, ljust, pad_right, push, rjust, truncate, width_of};
-use crate::ui::usage::{Day, Totals};
+use crate::ui::line::{cells, finish, push, rjust, start, truncate, width_of, BULLET, ELBOW_CELLS};
+use crate::ui::stats::{stats_lines, Stats};
 use crate::ui::words::{
-    self, BAR, CLAUDE, CURRENT, ERROR, INACTIVE, INK, MAGENTA, MASCOT, MASCOT_ROWS, PERMISSION,
-    STRONG, SUBTLE, SUCCESS, WARNING,
+    self, elbow, right, Bullet, CLAUDE, CURRENT, ERROR, INACTIVE, INK, MAGENTA, MASCOT,
+    MASCOT_ROWS, PERMISSION, STRONG, SUCCESS, WARNING,
 };
 
 /// The sidebar pane's width.
 pub const WIDTH: usize = 29;
 /// The room inside the one-cell padding on each side.
-pub const CONTENT: usize = 27;
-/// The landing page's wide statistics: their width.
-pub const PANEL_WIDTH: usize = 56;
-/// The room inside the landing page's padding.
-pub const PANEL_CONTENT: usize = PANEL_WIDTH - 2;
+pub(crate) const CONTENT: usize = 27;
 
-/// What a `⎿` line puts before its text.
-const ELBOW: &str = "  ⎿  ";
-/// What the lines after a `⎿` line put before their text.
-const INDENT: &str = "     ";
-/// The cells [`ELBOW`] and [`INDENT`] take.
-const ELBOW_CELLS: usize = 5;
 /// The room a `⎿` line leaves after the elbow.
 const DETAIL_ROOM: usize = CONTENT - ELBOW_CELLS;
 /// A blank line, the mascot (3) and a blank line: the mascot level with Claude Code's own.
 const HEAD: i64 = 5;
 /// Lines of a session entry whose name fits one line, not counting the blank line between
-/// entries; a longer name adds one (see [`entry_height`]).
+/// entries; a longer name adds one (see [`Laid::height`]).
 const ENTRY: usize = 2;
 /// The cells kept for the waiting time beside a name: `59m` or `12h`.
 const LABEL_CELLS: usize = 3;
@@ -49,21 +36,6 @@ const LABEL_CELLS: usize = 3;
 const COST_CELLS: usize = 7;
 /// The cells Claude's time takes on a `⎿` line, right-aligned: ` 12h05`.
 const TIME_CELLS: usize = 6;
-/// Two-letter day names, for the narrow chart.
-const DAY_NAMES: [&str; 7] = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
-/// Active hours: a cell per hour, from no work to the busiest hour.
-const HEAT: [&str; 5] = ["·", "░", "▒", "▓", "█"];
-/// The hours ruled under the active hours.
-const HOURS_RULER: &str = "0     6     12    18";
-/// From this many columns the chart names days with three letters and the quota says
-/// "resets in".
-const WIDE_CHART: usize = 40;
-/// How many names the spend by folder and by model list.
-const TOP_RANKED: usize = 4;
-/// The cells a ranked name takes.
-const RANKED_NAME: usize = 16;
-/// `⏺` shows as an emoji button in some fonts.
-const BULLET: &str = "•";
 /// Claude Code's spinner, played forwards and back, one frame per redraw.
 const SPINNER: [char; 10] = ['·', '✢', '✳', '✶', '✻', '✽', '✻', '✶', '✳', '✢'];
 
@@ -85,25 +57,6 @@ pub struct Entry {
     pub duration: Option<f64>,
     /// The model's display name.
     pub model: Option<String>,
-}
-
-/// What the bottom of the sidebar shows: today, the quota and the week's spend.
-#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
-#[serde(default)]
-pub struct Stats {
-    /// The usage windows by name (`five_hour`, `seven_day`).
-    pub limits: BTreeMap<String, Quota>,
-    /// Dollars spent today.
-    pub today: f64,
-    /// `(date, dollars)` for each of the last 7 days, oldest first, today last.
-    pub week: Vec<(NaiveDate, f64)>,
-    /// What today's journal adds up to; `None` leaves the Today block out.
-    pub day: Option<Day>,
-    /// The week's totals, for the landing page's Last 7 days block.
-    pub totals: Option<Totals>,
-    /// Seconds sessions worked in each hour of the day over the last 7 days, for the landing
-    /// page's week block.
-    pub hours: Vec<f64>,
 }
 
 /// A Claude run without a terminal (a start hook's `claude -p`), listed while it runs.
@@ -133,13 +86,13 @@ pub fn load_entries(records: &[Record], panes: &[Pane], socket: &str) -> Vec<Ent
         .into_iter()
         .filter_map(|(window_id, _, name)| {
             let window = heads.get(window_id.as_str())?;
-            let usage = window.head().usage.clone().unwrap_or_default();
+            let usage = window.head().usage.as_ref();
             Some(Entry {
                 status: window.lead.status,
                 since: state::since(&window.lead),
-                cost: usage.cost,
-                duration: usage.api_duration,
-                model: usage.model,
+                cost: usage.and_then(|u| u.cost),
+                duration: usage.and_then(|u| u.api_duration),
+                model: usage.and_then(|u| u.model.clone()),
                 window_id,
                 name,
             })
@@ -162,7 +115,7 @@ fn urgency(status: Status) -> u8 {
 }
 
 /// The entries in the order the sidebar lists them: by urgency, then by window.
-pub fn ordered(entries: &[Entry]) -> Vec<&Entry> {
+fn ordered(entries: &[Entry]) -> Vec<&Entry> {
     let mut out: Vec<&Entry> = entries.iter().collect();
     // A stable sort keeps the window order within each place
     out.sort_by_key(|e| urgency(e.status));
@@ -181,61 +134,6 @@ pub fn step(entries: &[Entry], current: &str, offset: i32) -> Option<String> {
         None => order.len().checked_sub(1)?,
     };
     order.get(index).map(|e| e.window_id.clone())
-}
-
-/// A line starting with the left padding column, over a `base` style.
-fn start(base: Style) -> Line<'static> {
-    Line::from(Span::raw(" ")).style(base)
-}
-
-/// Pads a line to `content` and the two padding columns, so a background reaches both edges.
-fn finish(mut line: Line<'static>, content: usize) -> Line<'static> {
-    pad_right(&mut line, content + 2);
-    line
-}
-
-/// Ends a line with `value` against the right edge.
-fn right(line: &mut Line<'static>, value: &str, style: Style, content: usize) {
-    let used = cell_len(line).saturating_sub(1) + width_of(value);
-    push(line, " ".repeat(content.saturating_sub(used)), INK);
-    push(line, value, style);
-}
-
-/// A `•` line: the mark, a title cut to fit, and a value on the right.
-struct Bullet<'a> {
-    mark: &'a str,
-    mark_style: Style,
-    title: &'a str,
-    title_style: Style,
-    value: &'a str,
-    value_style: Style,
-    base: Style,
-    content: usize,
-}
-
-impl Bullet<'_> {
-    fn line(&self) -> Line<'static> {
-        let mut line = start(self.base);
-        push(&mut line, format!("{} ", self.mark), self.mark_style);
-        let taken = if self.value.is_empty() {
-            0
-        } else {
-            width_of(self.value) + 1
-        };
-        let room = self.content.saturating_sub(2 + taken);
-        push(&mut line, words::fit(self.title, room), self.title_style);
-        if !self.value.is_empty() {
-            right(&mut line, self.value, self.value_style, self.content);
-        }
-        line
-    }
-}
-
-/// The start of a `⎿` line, or of the lines after it, which only indent.
-fn elbow(first: bool, base: Style) -> Line<'static> {
-    let mut line = start(base);
-    push(&mut line, if first { ELBOW } else { INDENT }, SUBTLE);
-    line
 }
 
 /// The spinner's frame at a moment; the frame number truncates, as Python's `int()` does.
@@ -258,14 +156,14 @@ fn colour(status: Status) -> Option<Style> {
 
 /// The mark of a status at `now`: its shape tells the status apart without the colour, and a
 /// working session's spins.
-fn mark(status: Status, now: f64) -> String {
+fn mark(status: Status, now: f64) -> char {
     match status {
-        Status::Permission => "!".to_owned(),
-        Status::Input => "?".to_owned(),
-        Status::Shell => "◐".to_owned(),
-        Status::Done => "✓".to_owned(),
-        Status::Working => spinner(now).to_string(),
-        Status::Idle | Status::Unknown => "○".to_owned(),
+        Status::Permission => '!',
+        Status::Input => '?',
+        Status::Shell => '◐',
+        Status::Done => '✓',
+        Status::Working => spinner(now),
+        Status::Idle | Status::Unknown => '○',
     }
 }
 
@@ -327,15 +225,10 @@ fn split_name(entry: &Entry) -> (String, String) {
     (name[..at].to_owned(), name[at..].trim_start().to_owned())
 }
 
-/// The lines of a session entry: two, or three when its name goes on to a second line.
-fn entry_height(entry: &Entry) -> usize {
-    ENTRY + usize::from(!split_name(entry).1.is_empty())
-}
-
 /// A `⎿` field, or `–` for an unknown one.
-fn or_dash(text: String) -> String {
+fn or_dash(text: &str) -> &str {
     if text.is_empty() {
-        "–".to_owned()
+        "–"
     } else {
         text
     }
@@ -347,7 +240,8 @@ fn or_dash(text: String) -> String {
 /// time; a name too long for it goes on under it, cut there with `…`. The `⎿` line has the
 /// cost, Claude's time and the model's family in columns, so they line up across entries.
 /// The current session's lines have a lighter background.
-fn entry_lines(entry: &Entry, current: bool, now: f64) -> Vec<Line<'static>> {
+fn entry_lines(laid: &Laid, current: bool, now: f64) -> Vec<Line<'static>> {
+    let Laid { entry, head, rest } = laid;
     let base = if current { CURRENT } else { Style::new() };
     let status_colour = colour(entry.status);
     let mark_style = status_colour.unwrap_or(INACTIVE);
@@ -358,11 +252,10 @@ fn entry_lines(entry: &Entry, current: bool, now: f64) -> Vec<Line<'static>> {
         (false, Some(_)) => INK,
     };
     let label = waiting(entry, now);
-    let (head, rest) = split_name(entry);
     let mut lines = vec![Bullet {
-        mark: &mark,
+        mark,
         mark_style: mark_style.add_modifier(Modifier::BOLD),
-        title: &head,
+        title: head,
         title_style: name_style,
         value: &label,
         value_style: mark_style.add_modifier(Modifier::BOLD),
@@ -373,12 +266,12 @@ fn entry_lines(entry: &Entry, current: bool, now: f64) -> Vec<Line<'static>> {
     if !rest.is_empty() {
         let mut more = start(base);
         push(&mut more, "  ", INK);
-        push(&mut more, words::fit(&rest, CONTENT - 2), name_style);
+        push(&mut more, words::fit(rest, CONTENT - 2), name_style);
         lines.push(more);
     }
 
-    let cost = rjust(&or_dash(words::money(entry.cost)), COST_CELLS);
-    let time = rjust(&or_dash(words::span(entry.duration)), TIME_CELLS);
+    let cost = rjust(or_dash(&words::money(entry.cost)), COST_CELLS);
+    let time = rjust(or_dash(&words::span(entry.duration)), TIME_CELLS);
     // A cost or time wider than its column leaves the model less room
     let room = DETAIL_ROOM.saturating_sub(width_of(&cost) + width_of(&time) + 2);
     // Only the family ("Opus" of "Opus 5.5"), and only whole: a cut name says nothing
@@ -391,11 +284,7 @@ fn entry_lines(entry: &Entry, current: bool, now: f64) -> Vec<Line<'static>> {
     let mut detail = elbow(true, base);
     push(&mut detail, cost, INACTIVE);
     push(&mut detail, time, INACTIVE);
-    push(
-        &mut detail,
-        format!("  {}", or_dash(model.to_owned())),
-        INACTIVE,
-    );
+    push(&mut detail, format!("  {}", or_dash(model)), INACTIVE);
     truncate(&mut detail, 1 + CONTENT);
     lines.push(detail);
     lines.into_iter().map(|l| finish(l, CONTENT)).collect()
@@ -445,359 +334,58 @@ fn runs_lines(runs: &[Run], now: f64, room: i64) -> Vec<Line<'static>> {
     lines.into_iter().map(|l| finish(l, CONTENT)).collect()
 }
 
-/// A statistics block's `•` line: its name, and its total on the right.
-fn block(title: &str, value: &str, content: usize) -> Line<'static> {
-    Bullet {
-        mark: BULLET,
-        mark_style: CLAUDE,
-        title,
-        title_style: STRONG,
-        value,
-        value_style: STRONG,
-        base: Style::new(),
-        content,
+/// A session entry with its name split for its lines (see [`split_name`]), so a frame splits
+/// each name once.
+struct Laid<'a> {
+    entry: &'a Entry,
+    head: String,
+    rest: String,
+}
+
+impl<'a> Laid<'a> {
+    fn new(entry: &'a Entry) -> Self {
+        let (head, rest) = split_name(entry);
+        Self { entry, head, rest }
     }
-    .line()
-}
 
-/// `value` as a horizontal bar scaled so `top` fills `cells`.
-///
-/// Any value above zero shows at least one cell; the scaled length rounds half to even.
-fn hbar(value: f64, top: f64, cells: usize) -> String {
-    let filled = if top != 0.0 {
-        (value / top * cells as f64).round_ties_even()
-    } else {
-        0.0
-    };
-    let least = if value > 0.0 { 1.0 } else { 0.0 };
-    BAR.repeat(filled.min(cells as f64).max(least) as usize)
-}
-
-/// Appends a chart bar for `value` scaled to `top`, padded so `value_text` ends the line at
-/// `content` cells.
-fn push_bar(line: &mut Line<'static>, value: f64, top: f64, value_text: &str, content: usize) {
-    let used = cell_len(line).saturating_sub(1) + 1 + width_of(value_text);
-    let cells = content.saturating_sub(used);
-    push(line, ljust(&hbar(value, top, cells), cells + 1), CLAUDE);
-}
-
-/// An unsigned count with a comma between thousands.
-fn thousands(n: u64) -> String {
-    words::thousands(i64::try_from(n).unwrap_or(i64::MAX))
-}
-
-/// A `⎿` line with the lines added and removed, cut to the content.
-fn changed(added: u64, removed: u64, content: usize) -> Line<'static> {
-    let mut line = elbow(true, Style::new());
-    push(&mut line, format!("+{}", thousands(added)), SUCCESS);
-    push(&mut line, format!(" −{}", thousands(removed)), ERROR);
-    push(&mut line, " lines", INACTIVE);
-    truncate(&mut line, 1 + content);
-    line
-}
-
-/// A day's sessions and the time they waited on you, as `4 sessions · 12m wait`.
-fn sessions_waited(day: &Day) -> String {
-    let plural = if day.sessions == 1 { "" } else { "s" };
-    let waited = words::span(Some(day.waited));
-    format!("{} session{plural} · {waited} wait", day.sessions)
-}
-
-/// Today: its spend, the lines changed, the sessions and the time spent waiting.
-///
-/// The counts share the lines' row when they fit, else go on a row of their own.
-fn today_lines(day: &Day, spent: f64, content: usize) -> Vec<Line<'static>> {
-    let mut lines_changed = changed(day.added, day.removed, content);
-    let said = sessions_waited(day);
-    let head = block("Today", &words::money(Some(spent)), content);
-    if cell_len(&lines_changed) - 1 + 3 + width_of(&said) <= content {
-        push(&mut lines_changed, format!(" · {said}"), INACTIVE);
-        return vec![head, lines_changed];
-    }
-    let mut counts = elbow(false, Style::new());
-    let room = content.saturating_sub(ELBOW_CELLS);
-    push(&mut counts, words::fit(&said, room), INACTIVE);
-    vec![head, lines_changed, counts]
-}
-
-/// Usage: the 5-hour and 7-day quota bars, with when each resets; none without quota.
-fn usage_lines(limits: &BTreeMap<String, Quota>, now: f64, content: usize) -> Vec<Line<'static>> {
-    let wide = content >= WIDE_CHART;
-    let mut lines = Vec::new();
-    for (label, key) in [("5h", "five_hour"), ("7d", "seven_day")] {
-        let Some(quota) = limits.get(key) else {
-            continue;
-        };
-        let mut line = elbow(lines.is_empty(), Style::new());
-        push(&mut line, format!("{label} "), INACTIVE);
-        let left = words::remaining(quota.resets_at - now);
-        let reset = if wide {
-            format!("resets in {left}")
-        } else {
-            left
-        };
-        // The room the longest reset takes, so both bars end in the same column
-        let room = if wide { "resets in ".len() } else { 0 } + 5;
-        let cells = content.saturating_sub(ELBOW_CELLS + 3 + 5 + 1 + room);
-        line.spans.extend(words::bar(quota.pct, cells));
-        let pct = quota.pct.round_ties_even() as i64;
-        push(&mut line, rjust(&format!("{pct}%"), 5), Style::new());
-        push(&mut line, format!(" {reset}"), INACTIVE);
-        lines.push(line);
-    }
-    if !lines.is_empty() {
-        lines.insert(0, block("Usage", "", content));
-    }
-    lines
-}
-
-/// The week's spend; Python's sum starts from the integer 0, so an empty week is $0.00, never
-/// -0.00.
-fn week_total(week: &[(NaiveDate, f64)]) -> f64 {
-    week.iter().fold(0.0, |sum, (_, v)| sum + v)
-}
-
-/// A row per day with a bar scaled to the most expensive one.
-///
-/// A wide block names each day with three letters, a narrow one with two.
-fn day_rows(week: &[(NaiveDate, f64)], content: usize) -> Vec<Line<'static>> {
-    let top = week.iter().map(|(_, v)| *v).fold(0.0, f64::max);
-    let wide = content >= WIDE_CHART;
-    let values: Vec<String> = week
-        .iter()
-        .map(|(_, v)| {
-            if wide {
-                format!("${v:.2}")
-            } else {
-                format!("${v:.1}")
-            }
-        })
-        .collect();
-    let value_cells = values.iter().map(|v| width_of(v)).max().unwrap_or(0);
-    let mut lines = Vec::new();
-    for ((day, dollars), value) in week.iter().zip(&values) {
-        let weekday = day.weekday().num_days_from_monday() as usize;
-        let name = if wide {
-            words::WEEKDAYS[weekday]
-        } else {
-            DAY_NAMES[weekday]
-        };
-        let mut line = elbow(false, Style::new());
-        push(&mut line, format!("{name} "), INACTIVE);
-        let value = rjust(value, value_cells);
-        push_bar(&mut line, *dollars, top, &value, content);
-        push(&mut line, value, INACTIVE);
-        lines.push(line);
-    }
-    lines
-}
-
-/// Turns the first of a block's indented lines into its `⎿` line.
-fn hook_first(lines: &mut [Line<'static>]) {
-    if let Some(span) = lines.first_mut().and_then(|l| l.spans.get_mut(1)) {
-        if span.content == INDENT {
-            *span = Span::styled(ELBOW, SUBTLE);
-        }
+    /// The entry's lines: two, or three when its name goes on to a second line.
+    fn height(&self) -> usize {
+        ENTRY + usize::from(!self.rest.is_empty())
     }
 }
 
-/// Spend 7d: the total, then a row per day.
-fn chart_lines(week: &[(NaiveDate, f64)], content: usize) -> Vec<Line<'static>> {
-    let mut rows = day_rows(week, content);
-    hook_first(&mut rows);
-    let head = block("Spend 7d", &words::money(Some(week_total(week))), content);
-    std::iter::once(head).chain(rows).collect()
+/// The entries laid out in the order the sidebar lists them.
+fn lay(entries: &[Entry]) -> Vec<Laid<'_>> {
+    ordered(entries).into_iter().map(Laid::new).collect()
 }
 
-/// What cost most this week, by name, with a bar scaled to the first.
-///
-/// # Arguments
-/// * `ranked`: `(name, dollars)` pairs, most expensive first; the first [`TOP_RANKED`] show.
-/// * `content`: columns available.
-fn ranked_rows(ranked: &[(String, f64)], content: usize) -> Vec<Line<'static>> {
-    let shown = &ranked[..ranked.len().min(TOP_RANKED)];
-    let Some((_, top)) = shown.first() else {
-        return Vec::new();
-    };
-    let values: Vec<String> = shown.iter().map(|(_, v)| words::money(Some(*v))).collect();
-    let value_cells = values.iter().map(|v| width_of(v)).max().unwrap_or(0);
-    let mut lines = Vec::new();
-    for ((name, dollars), value) in shown.iter().zip(&values) {
-        let mut line = elbow(false, Style::new());
-        let name = ljust(&words::fit(name, RANKED_NAME), RANKED_NAME + 1);
-        push(&mut line, name, INK);
-        let value = rjust(value, value_cells);
-        push_bar(&mut line, *dollars, *top, &value, content);
-        push(&mut line, value, INACTIVE);
-        lines.push(line);
-    }
-    lines
-}
-
-/// A cell per hour of the day, darker the longer sessions worked in it, ruled under it.
-///
-/// # Arguments
-/// * `hours`: seconds sessions worked in each hour of the day, midnight first; none drawn
-///   without any work.
-fn hours_lines(hours: &[f64]) -> Vec<Line<'static>> {
-    let top = hours.iter().copied().fold(0.0, f64::max);
-    if top == 0.0 {
-        return Vec::new();
-    }
-    let darkest = (HEAT.len() - 1) as f64;
-    let mut line = elbow(false, Style::new());
-    for &seconds in hours {
-        if seconds == 0.0 {
-            push(&mut line, HEAT[0], SUBTLE);
-            continue;
-        }
-        // Rounded up, so any work shows
-        let level = -words::floor_div(-seconds * darkest, top);
-        push(&mut line, HEAT[level.clamp(0.0, darkest) as usize], CLAUDE);
-    }
-    let mut ruler = elbow(false, Style::new());
-    push(&mut ruler, HOURS_RULER, INACTIVE);
-    vec![line, ruler]
-}
-
-/// A heading inside a block: an indented rule to the right edge with `title` in it, as
-/// `── Hours ──────`.
-fn heading(title: &str, content: usize) -> Line<'static> {
-    let mut line = elbow(false, Style::new());
-    push(&mut line, "── ", SUBTLE);
-    push(&mut line, title, CLAUDE);
-    let rest = content.saturating_sub(ELBOW_CELLS + 4 + width_of(title));
-    push(&mut line, format!(" {}", "─".repeat(rest)), SUBTLE);
-    line
-}
-
-/// The landing page's last 7 days in one block: the spend, the lines and sessions, then the
-/// hours worked, the spend per day, by folder and, with `models`, by model.
-///
-/// A part with nothing to show is left out with its heading.
-fn week_lines(stats: &Stats, content: usize, models: bool) -> Vec<Line<'static>> {
-    let total = words::money(Some(week_total(&stats.week)));
-    let mut rows = Vec::new();
-    if let Some(totals) = &stats.totals {
-        let mut summary = changed(totals.added, totals.removed, content);
-        let plural = if totals.sessions == 1 { "" } else { "s" };
-        push(
-            &mut summary,
-            format!(" · {} session{plural}", totals.sessions),
-            INACTIVE,
-        );
-        truncate(&mut summary, 1 + content);
-        rows.push(summary);
-    }
-    let ranked = |pick: fn(&Totals) -> &Vec<(String, f64)>| {
-        stats
-            .totals
-            .as_ref()
-            .map_or_else(Vec::new, |t| ranked_rows(pick(t), content))
-    };
-    let mut parts = vec![
-        ("Hours", hours_lines(&stats.hours)),
-        ("Per day", day_rows(&stats.week, content)),
-        ("By folder", ranked(|t| &t.by_project)),
-    ];
-    if models {
-        parts.push(("By model", ranked(|t| &t.by_model)));
-    }
-    for (title, lines) in parts.into_iter().filter(|(_, l)| !l.is_empty()) {
-        rows.push(heading(title, content));
-        rows.extend(lines);
-    }
-    hook_first(&mut rows);
-    std::iter::once(block("Last 7 days", &total, content))
-        .chain(rows)
-        .collect()
-}
-
-/// The lines of the blocks that have any, a blank line between them.
-fn spaced(blocks: Vec<Vec<Line<'static>>>) -> Vec<Line<'static>> {
-    let mut lines = Vec::new();
-    for block in blocks.into_iter().filter(|b| !b.is_empty()) {
-        if !lines.is_empty() {
-            lines.push(start(Style::new()));
-        }
-        lines.extend(block);
-    }
-    lines
-}
-
-/// The statistics at the bottom, under a blank line and with one between blocks: Usage,
-/// Today and Spend 7d.
-///
-/// # Arguments
-/// * `stats`: what to show.
-/// * `now`: current time as a Unix timestamp.
-/// * `today`: whether to show the Today block; it goes first when room is short.
-pub fn stats_lines(stats: &Stats, now: f64, today: bool) -> Vec<Line<'static>> {
-    let mut blocks = vec![usage_lines(&stats.limits, now, CONTENT)];
-    if let Some(day) = stats.day.as_ref().filter(|_| today) {
-        blocks.push(today_lines(day, stats.today, CONTENT));
-    }
-    blocks.push(chart_lines(&stats.week, CONTENT));
-    std::iter::once(start(Style::new()))
-        .chain(spaced(blocks))
-        .map(|l| finish(l, CONTENT))
-        .collect()
-}
-
-/// The landing page's wide statistics, a blank line between blocks: Usage, Today, and the
-/// last 7 days in one block, by model only with `models`. Each line is padded to
-/// `content + 2` cells.
-pub fn panel_lines(stats: &Stats, now: f64, content: usize, models: bool) -> Vec<Line<'static>> {
-    let mut blocks = vec![usage_lines(&stats.limits, now, content)];
-    if let Some(day) = &stats.day {
-        blocks.push(today_lines(day, stats.today, content));
-    }
-    blocks.push(week_lines(stats, content, models));
-    spaced(blocks)
-        .into_iter()
-        .map(|l| finish(l, content))
-        .collect()
-}
-
-/// A row of the session list.
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum Row<'a> {
-    /// The blank line between two entries.
-    Blank,
-    /// The first line of an entry, with its mark.
-    First(&'a Entry),
-    /// The other lines of an entry: the rest of its name, and the `⎿` line.
-    Rest(&'a Entry),
-}
-
-/// Lays the sessions out in `room` lines at most.
+/// How many entries fit in `room` lines, a blank line between two.
 ///
 /// An entry that does not fit, and all after it, are left out.
-fn plan(entries: &[Entry], room: i64) -> Vec<Row<'_>> {
-    let mut rows = Vec::new();
-    for entry in ordered(entries) {
-        let before = usize::from(!rows.is_empty());
-        let height = entry_height(entry);
-        if (rows.len() + before + height) as i64 > room {
+fn fitting(laid: &[Laid], room: i64) -> usize {
+    let mut used = 0;
+    let mut shown = 0;
+    for entry in laid {
+        let next = used + usize::from(shown > 0) + entry.height();
+        if next as i64 > room {
             break;
         }
-        if before > 0 {
-            rows.push(Row::Blank);
-        }
-        rows.push(Row::First(entry));
-        rows.extend(std::iter::repeat_n(Row::Rest(entry), height - 1));
+        used = next;
+        shown += 1;
     }
-    rows
+    shown
 }
 
 /// The statistics that fit under the sessions: Today goes when the sessions need its room.
-fn bottom_lines(entries: &[Entry], stats: &Stats, now: f64, height: i64) -> Vec<Line<'static>> {
-    let full = stats_lines(stats, now, true);
-    let shown = |room| plan(entries, room).len();
-    if shown(height - HEAD - full.len() as i64) == shown(height) {
+fn bottom_lines(laid: &[Laid], stats: &Stats, now: f64, height: i64) -> Vec<Line<'static>> {
+    let full = stats_lines(stats, now, CONTENT, true);
+    // Without a Today block there is nothing to leave out
+    if stats.day.is_none()
+        || fitting(laid, height - HEAD - full.len() as i64) == fitting(laid, height)
+    {
         return full;
     }
-    stats_lines(stats, now, false)
+    stats_lines(stats, now, CONTENT, false)
 }
 
 /// The entry drawn on row `y` of a `height`-line column, or `None`.
@@ -805,13 +393,18 @@ fn bottom_lines(entries: &[Entry], stats: &Stats, now: f64, height: i64) -> Vec<
 /// The blank lines between entries, and entries a short column leaves out, belong to none.
 pub fn entry_at<'a>(entries: &'a [Entry], y: u16, height: u16, stats: &Stats) -> Option<&'a Entry> {
     let height = i64::from(height);
-    let bottom = bottom_lines(entries, stats, 0.0, height).len() as i64;
-    let rows = plan(entries, height - HEAD - bottom);
-    let row = usize::try_from(i64::from(y) - HEAD).ok()?;
-    match rows.get(row)? {
-        Row::First(entry) | Row::Rest(entry) => Some(entry),
-        Row::Blank => None,
+    let laid = lay(entries);
+    let bottom = bottom_lines(&laid, stats, 0.0, height).len() as i64;
+    let shown = fitting(&laid, height - HEAD - bottom);
+    let mut row = usize::try_from(i64::from(y) - HEAD).ok()?;
+    for entry in &laid[..shown] {
+        if row < entry.height() {
+            return Some(entry.entry);
+        }
+        // Past this entry and the blank line after it
+        row = row.checked_sub(entry.height() + 1)?;
     }
+    None
 }
 
 /// The whole column: exactly `height` lines of [`WIDTH`] cells.
@@ -837,15 +430,15 @@ pub fn column(
     lines.push(blank());
 
     let height = i64::from(height);
-    let bottom = bottom_lines(entries, stats, now, height);
+    let laid = lay(entries);
+    let bottom = bottom_lines(&laid, stats, now, height);
     let room = height - HEAD - bottom.len() as i64;
     let mut body = Vec::new();
-    for row in plan(entries, room) {
-        match row {
-            Row::First(entry) => body.extend(entry_lines(entry, entry.window_id == current, now)),
-            Row::Blank => body.push(blank()),
-            Row::Rest(_) => {}
+    for (i, entry) in laid[..fitting(&laid, room)].iter().enumerate() {
+        if i > 0 {
+            body.push(blank());
         }
+        body.extend(entry_lines(entry, entry.entry.window_id == current, now));
     }
     body.extend(runs_lines(runs, now, room - body.len() as i64));
     let filler = usize::try_from(room - body.len() as i64).unwrap_or(0);
@@ -858,63 +451,26 @@ pub fn column(
 
 #[cfg(test)]
 mod tests {
-    use chrono::{Days, NaiveDate};
     use ratatui::style::Modifier;
     use ratatui::text::Line;
 
-    use crate::claude::statusline::Quota;
     use crate::core::state::{Mux, Record, Status, Usage};
     use crate::term::tmux::Pane;
     use crate::ui::line::{cell_len, plain, row_text};
     use crate::ui::sidebar::{
-        column, entry_at, entry_lines, hbar, hours_lines, load_entries, ordered, panel_lines, plan,
-        runs_lines, spinner, stats_lines, step, today_lines, Entry, Row, Run, Stats, CONTENT,
-        DETAIL_ROOM, PANEL_WIDTH, WIDTH,
+        self, column, entry_at, fitting, lay, load_entries, ordered, runs_lines, spinner, step,
+        Entry, Laid, Run, DETAIL_ROOM, WIDTH,
     };
-    use crate::ui::usage::{Day, Totals};
+    use crate::ui::stats::tests::{body, day, limits, stats, strs, week, NOW};
+    use crate::ui::stats::Stats;
     use crate::ui::words::{
         CURRENT, ERROR, INACTIVE, MAGENTA, PERMISSION, STRONG, SUCCESS, WARNING,
     };
 
-    /// 2026-11-03 14:07:00 UTC, a Tuesday; a multiple of 5 s, so the spinner is at frame 0.
-    const NOW: f64 = 1_793_714_820.0;
     const ELBOW: &str = "  ⎿  ";
 
-    fn today() -> NaiveDate {
-        NaiveDate::from_ymd_opt(2026, 11, 3).unwrap()
-    }
-
-    fn limits() -> std::collections::BTreeMap<String, Quota> {
-        [
-            ("five_hour", 58.0, NOW + 2.0 * 3600.0 + 33.0 * 60.0),
-            // 2026-11-06 09:00
-            ("seven_day", 31.0, NOW + 240_780.0),
-        ]
-        .into_iter()
-        .map(|(k, pct, resets_at)| (k.to_owned(), Quota { pct, resets_at }))
-        .collect()
-    }
-
-    fn week() -> Vec<(NaiveDate, f64)> {
-        [0.0, 2.0, 4.0, 6.0, 8.0, 1.0, 3.0]
-            .into_iter()
-            .enumerate()
-            .map(|(i, v)| {
-                (
-                    today().checked_sub_days(Days::new(6 - i as u64)).unwrap(),
-                    v,
-                )
-            })
-            .collect()
-    }
-
-    fn stats() -> Stats {
-        Stats {
-            limits: limits(),
-            today: 9.59,
-            week: week(),
-            ..Stats::default()
-        }
+    fn entry_lines(entry: &Entry, current: bool, now: f64) -> Vec<Line<'static>> {
+        sidebar::entry_lines(&Laid::new(entry), current, now)
     }
 
     fn e(id: &str, name: &str, status: Status, since: f64) -> Entry {
@@ -952,17 +508,6 @@ mod tests {
         ]
     }
 
-    /// The content columns of each line, without the padding or trailing spaces.
-    fn body(lines: &[Line]) -> Vec<String> {
-        lines
-            .iter()
-            .map(|l| {
-                let text: String = plain(l).chars().skip(1).take(CONTENT).collect();
-                text.trim_end().to_owned()
-            })
-            .collect()
-    }
-
     /// A `⎿` line: the cost and Claude's time right-aligned, then the model.
     fn detail(cost: &str, time: &str, model: &str) -> String {
         format!("{ELBOW}{cost:>7}{time:>6}  {model}")
@@ -970,25 +515,6 @@ mod tests {
 
     fn entry(status: Status, waited: f64) -> Entry {
         eu("@1", "web", status, NOW - waited, 3.10, 2400.0)
-    }
-
-    fn day(added: u64, removed: u64, sessions: u32, waited: f64) -> Day {
-        Day {
-            added,
-            removed,
-            sessions,
-            waited,
-        }
-    }
-
-    /// A heading of the landing page's week block, after `lead`.
-    fn rule(lead: &str, title: &str) -> String {
-        let rest = PANEL_WIDTH - 2 - 9 - title.len();
-        format!("{lead}── {title} {}", "─".repeat(rest))
-    }
-
-    fn strs(v: &[&str]) -> Vec<String> {
-        v.iter().map(|s| (*s).to_owned()).collect()
     }
 
     #[test]
@@ -1052,156 +578,6 @@ mod tests {
         );
         // Today's row is no different from the others
         assert!(!lines[49].spans.iter().any(|s| s.style == STRONG));
-    }
-
-    #[test]
-    fn a_week_with_no_spend_draws_empty_rows() {
-        let empty = Stats {
-            week: week().into_iter().map(|(d, _)| (d, 0.0)).collect(),
-            ..Stats::default()
-        };
-        let b = body(&stats_lines(&empty, NOW, true));
-        assert_eq!(b.last().unwrap(), "     Tu                $0.0");
-    }
-
-    #[test]
-    fn an_empty_journal_shows_a_positive_zero_spend() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut reader = crate::ui::usage::Reader::in_dir(dir.path().to_path_buf());
-        let totals = reader.totals(&[], 0, NOW).clone();
-        let stats = Stats {
-            today: totals.today,
-            week: totals.days,
-            day: Some(Day::default()),
-            ..Stats::default()
-        };
-        let b = body(&stats_lines(&stats, NOW, true));
-        assert_eq!(b[1], "• Today               $0.00");
-        assert!(b.iter().any(|l| l.ends_with(" $0.0")), "{b:#?}");
-        assert!(!b.iter().any(|l| l.contains('-')), "{b:#?}");
-    }
-
-    #[test]
-    fn hbar_draws_at_least_one_cell_for_any_spend() {
-        assert_eq!(hbar(1.0, 2.0, 4), "━━");
-        assert_eq!(hbar(0.001, 100.0, 4), "━");
-        assert_eq!(hbar(0.0, 0.0, 4), "");
-    }
-
-    #[test]
-    fn hbar_rounds_half_to_even() {
-        // round(2.5) == 2 in Python
-        assert_eq!(hbar(5.0, 8.0, 4), "━━");
-    }
-
-    #[test]
-    fn the_panel_puts_the_week_in_one_block() {
-        let by = [
-            ("claude-sessions", 18.4),
-            ("api", 9.3),
-            ("dotfiles", 2.1),
-            ("notes", 2.0),
-            ("x", 1.0),
-        ];
-        let mut hours = vec![0.0; 24];
-        hours[9] = 3600.0;
-        let totals = Totals {
-            by_project: by.iter().map(|(n, v)| ((*n).into(), *v)).collect(),
-            by_model: vec![("Opus 5.5".into(), 20.0), ("Sonnet 5.5".into(), 4.0)],
-            added: 8940,
-            removed: 2115,
-            sessions: 38,
-            ..Totals::default()
-        };
-        let mut stats = Stats {
-            day: Some(day(1376, 58, 4, 720.0)),
-            totals: Some(totals),
-            hours,
-            ..stats()
-        };
-        let rendered = panel_lines(&stats, NOW, PANEL_WIDTH - 2, true);
-        assert!(rendered.iter().all(|l| cell_len(l) == PANEL_WIDTH));
-        let lines: Vec<String> = rendered
-            .iter()
-            .map(|l| plain(l).trim_end().to_owned())
-            .collect();
-        assert_eq!(
-            lines[..13],
-            strs(&[
-                " • Usage",
-                &lines[1],
-                &lines[2],
-                "",
-                " • Today                                          $9.59",
-                "   ⎿  +1,376 −58 lines · 4 sessions · 12m wait",
-                "",
-                " • Last 7 days                                   $24.00",
-                "   ⎿  +8,940 −2,115 lines · 38 sessions",
-                &rule("      ", "Hours"),
-                &format!("      {}█{}", "·".repeat(9), "·".repeat(14)),
-                "      0     6     12    18",
-                &rule("      ", "Per day"),
-            ])[..]
-        );
-        assert!(lines[1].ends_with("58% resets in 2h33"));
-        let column_of = |l: &str| l.chars().position(|c| c == '%');
-        assert_eq!(column_of(&lines[1]), column_of(&lines[2]));
-        assert_eq!(
-            lines[13],
-            "      Wed                                         $0.00"
-        );
-        assert!(lines[17].ends_with("━ $8.00"));
-        assert_eq!(lines[20], rule("      ", "By folder"));
-        assert!(lines[21].starts_with("      claude-sessions  ") && lines[21].ends_with("$18.40"));
-        assert!(!lines.iter().any(|l| l.contains(" x ")));
-        let n = lines.len();
-        assert_eq!(lines[n - 3], rule("      ", "By model"));
-        assert!(
-            lines[n - 2].starts_with("      Opus 5.5         ") && lines[n - 2].ends_with("$20.00")
-        );
-        assert!(
-            lines[n - 1].starts_with("      Sonnet 5.5       ") && lines[n - 1].ends_with("$4.00")
-        );
-        // No work recorded this week: no hours, nor their heading
-        stats.hours = vec![0.0; 24];
-        assert_eq!(panel_lines(&stats, NOW, PANEL_WIDTH - 2, true).len(), n - 3);
-        // Without models their part goes
-        assert_eq!(
-            panel_lines(&stats, NOW, PANEL_WIDTH - 2, false).len(),
-            n - 3 - 3
-        );
-        // Without the week's totals the per-day rows start the block
-        stats.totals = None;
-        let bare: Vec<String> = panel_lines(&stats, NOW, PANEL_WIDTH - 2, true)
-            .iter()
-            .map(|l| plain(l).trim_end().to_owned())
-            .collect();
-        assert_eq!(bare[bare.len() - 8], rule("   ⎿  ", "Per day"));
-    }
-
-    #[test]
-    fn active_hours_shade_each_hour_by_the_busiest() {
-        let mut hours = vec![0.0; 24];
-        hours[9] = 3600.0;
-        hours[10] = 1800.0;
-        hours[14] = 100.0;
-        let lines: Vec<String> = hours_lines(&hours)
-            .iter()
-            .map(|l| {
-                plain(l)
-                    .chars()
-                    .skip(1)
-                    .collect::<String>()
-                    .trim_end()
-                    .to_owned()
-            })
-            .collect();
-        assert_eq!(
-            lines[0],
-            format!("     {}█▒···░{}", "·".repeat(9), "·".repeat(9))
-        );
-        assert_eq!(lines[1], "     0     6     12    18");
-        assert!(hours_lines(&[0.0; 24]).is_empty());
     }
 
     #[test]
@@ -1464,8 +840,9 @@ mod tests {
     #[test]
     fn a_long_name_that_does_not_fit_leaves_its_entry_out() {
         let long = e("@1", "a name long enough for two lines", Status::Idle, NOW);
-        assert!(plan(std::slice::from_ref(&long), 2).is_empty());
-        assert_eq!(plan(std::slice::from_ref(&long), 3).len(), 3);
+        let laid = lay(std::slice::from_ref(&long));
+        assert_eq!(fitting(&laid, 2), 0);
+        assert_eq!(fitting(&laid, 3), 1);
     }
 
     #[test]
@@ -1584,10 +961,8 @@ mod tests {
         let first = entries()[0].clone();
         let list = [odd.clone(), notes.clone(), first.clone()];
         assert_eq!(ordered(&list), vec![&first, &odd, &notes]);
-        assert_eq!(
-            plan(std::slice::from_ref(&odd), 10),
-            vec![Row::First(&odd), Row::Rest(&odd)]
-        );
+        let laid = lay(std::slice::from_ref(&odd));
+        assert_eq!((fitting(&laid, 10), laid[0].height()), (1, 2));
     }
 
     #[test]
@@ -1611,14 +986,6 @@ mod tests {
         assert_eq!(step(&shuffled, "@0", 1).as_deref(), Some("@1"));
         assert_eq!(step(&shuffled, "@0", -1).as_deref(), Some("@5"));
         assert_eq!(step(&[], "@0", 1), None);
-    }
-
-    #[test]
-    fn today_lines_fit_the_column_with_big_numbers() {
-        let big = day(1_234_567, 7_654_321, 123, 99.0 * 3600.0);
-        let lines = today_lines(&big, 1234.5, CONTENT);
-        assert!(lines.iter().all(|l| cell_len(l) <= 1 + CONTENT));
-        assert_eq!(lines.len(), 3);
     }
 
     #[test]

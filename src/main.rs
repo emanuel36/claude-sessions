@@ -26,10 +26,16 @@ Options:
   --help      Print this help
 ";
 
+/// All of stdin.
+fn read_stdin() -> std::io::Result<Vec<u8>> {
+    let mut input = Vec::new();
+    std::io::stdin().lock().read_to_end(&mut input)?;
+    Ok(input)
+}
+
 /// Applies the hook event on stdin; logs a failure and exits 0, so no event breaks a session.
 fn run_hook() -> ExitCode {
-    let mut input = Vec::new();
-    let read = std::io::stdin().lock().read_to_end(&mut input);
+    let read = read_stdin();
     let now = unix_now();
     // `vars()` panics on non-UTF-8 values, so convert lossily instead.
     let env: HashMap<String, String> = std::env::vars_os()
@@ -41,7 +47,7 @@ fn run_hook() -> ExitCode {
         })
         .collect();
     let result = match read {
-        Ok(_) => hook::run(&input, &env, now, &Cli::default()),
+        Ok(input) => hook::run(&input, &env, now, &Cli::default()),
         Err(e) => Err(anyhow::Error::new(e).context("cannot read stdin")),
     };
     if let Err(e) = result {
@@ -53,10 +59,10 @@ fn run_hook() -> ExitCode {
 /// Records the usage on stdin and prints the status line; logs a failure and exits 0, so no
 /// update leaves Claude Code without a line.
 fn run_statusline() -> ExitCode {
-    let mut input = Vec::new();
-    if let Err(e) = std::io::stdin().lock().read_to_end(&mut input) {
+    let input = read_stdin().unwrap_or_else(|e| {
         paths::log_error(&format_args!("statusline: cannot read stdin: {e}"));
-    }
+        Vec::new()
+    });
     statusline::run(&input, unix_now(), &mut std::io::stdout().lock());
     ExitCode::SUCCESS
 }
@@ -115,20 +121,16 @@ fn main() -> ExitCode {
         .skip(1)
         .map(|a| a.to_string_lossy().into_owned())
         .collect();
-    // The hook and the status line run on every Claude Code update: nothing but the subcommand
-    // name is parsed.
-    if args.first().map(String::as_str) == Some("hook") {
-        return run_hook();
-    }
-    if args.first().map(String::as_str) == Some("statusline") {
-        return run_statusline();
-    }
     match args
         .iter()
         .map(String::as_str)
         .collect::<Vec<_>>()
         .as_slice()
     {
+        // Hidden: Claude Code runs them on every update; any arguments after the name are
+        // ignored
+        ["hook", ..] => run_hook(),
+        ["statusline", ..] => run_statusline(),
         // Hidden: users get it through `install.sh` and `cst update`
         ["install"] => run_install(false),
         ["install", "--check"] => run_install(true),

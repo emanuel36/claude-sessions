@@ -72,7 +72,7 @@ pub struct Hit {
 }
 
 /// A folder's name: its last path component, or the whole path when it has none.
-pub fn name(path: &str) -> String {
+fn name(path: &str) -> String {
     match path.rsplit('/').next() {
         Some(last) if !last.is_empty() => last.to_owned(),
         _ => path.to_owned(),
@@ -91,10 +91,8 @@ pub fn hits(sessions: &[Searchable], query: &str) -> Vec<Hit> {
     }
     let mut found: Vec<(bool, Hit)> = Vec::new();
     for (index, s) in sessions.iter().enumerate() {
-        if !words
-            .iter()
-            .all(|w| s.text_lower.contains(w) || s.title_lower.contains(w))
-        {
+        // The text holds the title as searched: its own, or the first prompt
+        if !words.iter().all(|w| s.text_lower.contains(w)) {
             continue;
         }
         let in_title = words.iter().all(|w| s.title_lower.contains(w));

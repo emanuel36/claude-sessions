@@ -16,10 +16,11 @@ use crate::claude::hook::{self, QUIET_SECONDS};
 use crate::claude::transcript::titled_since;
 use crate::core::state::{self, unix_now, Record, Status, TIMED};
 use crate::term::tmux::{self, Cli, Pane, Runner};
-use crate::ui::pane::{self, own_socket, own_window, App, Shell, Step, Visible, WINDOW_PAUSE};
+use crate::ui::pane::{self, own_socket, own_window, resets, App, Shell, Step, WINDOW_PAUSE};
 use crate::ui::runtime::{signal, Msg, Runtime, Schedule, Screen, Signal};
-use crate::ui::sidebar::{column, entry_at, load_entries, Entry, Run, Stats};
-use crate::ui::watch::interruptible;
+use crate::ui::sidebar::{column, entry_at, load_entries, Entry, Run};
+use crate::ui::stats::Stats;
+use crate::ui::watch::{interruptible, Stale};
 
 /// Runs the sidebar in the tmux pane this process runs in, until its terminal goes away.
 ///
@@ -37,7 +38,7 @@ pub fn main_sidebar() -> anyhow::Result<()> {
     // On screen if its window is: a window just opened is, unless the user already moved on;
     // F12 shows it once its window is
     if window.current {
-        app.show();
+        app.shell.show();
     }
     app.update(unix_now(), &mut runtime, &mut screen);
     pane::run(&mut app, &mut runtime, &mut screen);
@@ -110,8 +111,7 @@ fn labels(entries: &[Entry], runs: &[Run], stats: &Stats) -> Vec<f64> {
         .filter(|e| TIMED.contains(&e.status))
         .map(|e| e.since);
     let runs = runs.iter().map(|r| r.started);
-    let resets = stats.limits.values().map(|q| q.resets_at);
-    waits.chain(runs).chain(resets).collect()
+    waits.chain(runs).chain(resets(stats)).collect()
 }
 
 /// Whether a spinner turns: some session works.
@@ -181,11 +181,7 @@ impl Sidebar {
             }
             Msg::Changed(path) => {
                 self.adopt_renamed(&path);
-                let touched = self.shell.watches.changed(&path, &self.records, now);
-                if touched.any() {
-                    self.shell.stale.add(touched);
-                    self.shell.schedule.dirty = true;
-                }
+                self.shell.changed(&path, &self.records, now);
                 Step::Wait
             }
         }
@@ -239,8 +235,8 @@ impl Sidebar {
         }
     }
 
-    /// Reads again what is stale.
-    fn reload(&mut self, now: f64) {
+    /// Reads again what is stale; returns what that was.
+    fn reload(&mut self, now: f64) -> Stale {
         let stale = std::mem::take(&mut self.shell.stale);
         if stale.panes {
             self.panes = tmux::panes(self.tmux.as_ref());
@@ -254,6 +250,7 @@ impl Sidebar {
             self.runs = runs_of(&self.records);
         }
         self.shell.read_stats(&stale, now, false);
+        stale
     }
 
     /// Draws the column; a failed draw keeps the last screen.
@@ -277,23 +274,14 @@ impl Sidebar {
     }
 }
 
-impl Visible for Sidebar {
-    fn shell(&self) -> &Shell {
-        &self.shell
-    }
-
-    fn shell_mut(&mut self) -> &mut Shell {
-        &mut self.shell
-    }
-}
-
 impl App for Sidebar {
     fn schedule(&self) -> &Schedule {
         &self.shell.schedule
     }
 
     fn handle(&mut self, msg: Msg, now: f64, runtime: &mut Runtime) -> Step {
-        pane::gated(self, msg, runtime, |side, msg, _| side.take(msg, now))
+        let gate = self.shell.gate(&msg, runtime);
+        gate.then(|| self.take(msg, now))
     }
 
     fn update(&mut self, now: f64, runtime: &mut Runtime, screen: &mut Screen) {
@@ -304,12 +292,21 @@ impl App for Sidebar {
         if !self.shell.prepare(now, runtime) {
             return;
         }
-        self.reload(now);
-        self.track_titles();
+        // A spinner tick reads nothing: what follows from the reads stays as it is
+        let read = self.reload(now);
+        if read.records {
+            self.track_titles();
+            self.shell.schedule.quiet = quiet_deadlines(&self.records, self.records_at);
+        }
+        // A transcript folder not there yet, or dropped and made again, is tried on every
+        // wake: the hook that writes it may not run again soon
         self.watch_transcripts(runtime);
-        self.shell.schedule.animating = animating(&self.entries);
-        self.shell.schedule.labels = labels(&self.entries, &self.runs, &self.shell.stats);
-        self.shell.schedule.quiet = quiet_deadlines(&self.records, self.records_at);
+        if read.records || read.panes {
+            self.shell.schedule.animating = animating(&self.entries);
+        }
+        if read.records || read.panes || read.limits {
+            self.shell.schedule.labels = labels(&self.entries, &self.runs, &self.shell.stats);
+        }
         self.draw(now, screen);
     }
 }
@@ -326,12 +323,13 @@ mod tests {
     use crate::claude::statusline::Quota;
     use crate::core::state::{Mux, Record, Status};
     use crate::term::tmux::fake::FakeTmux;
-    use crate::ui::pane::{App, Step, Visible};
+    use crate::ui::pane::{App, Step};
     use crate::ui::runtime::{Msg, Runtime};
-    use crate::ui::sidebar::{Entry, Run, Stats};
+    use crate::ui::sidebar::{Entry, Run};
     use crate::ui::sidebar_app::{
         animating, labels, quiet_deadlines, runs_of, transcript_dirs, Sidebar,
     };
+    use crate::ui::stats::Stats;
     use crate::ui::watch::Stale;
 
     const NOW: f64 = 1_700_000_000.0;
@@ -362,7 +360,7 @@ mod tests {
         let layout = Msg::Key(KeyEvent::new(KeyCode::F(10), KeyModifiers::NONE));
         for msg in [Msg::Resize, layout, click(30)] {
             let mut side = Sidebar::new("@1".into(), String::new(), Box::new(FakeTmux::silent()));
-            side.hide(&mut runtime);
+            side.shell.hide(&mut runtime);
             let step = side.handle(msg.clone(), NOW, &mut runtime);
             assert_eq!(step, Step::Draw, "{msg:?}");
             assert!(side.shell.schedule.visible, "{msg:?}");
@@ -374,7 +372,7 @@ mod tests {
     fn a_hidden_sidebar_drops_changes_on_disk() {
         let mut runtime = Runtime::headless().unwrap();
         let mut side = Sidebar::new("@1".into(), String::new(), Box::new(FakeTmux::silent()));
-        side.hide(&mut runtime);
+        side.shell.hide(&mut runtime);
         let changed = Msg::Changed(PathBuf::from("/run/cst/s1.json"));
         assert_eq!(side.handle(changed, NOW, &mut runtime), Step::Wait);
         assert!(!side.shell.schedule.visible && !side.shell.schedule.dirty);

@@ -12,6 +12,7 @@ pub mod runtime;
 pub mod search;
 pub mod sidebar;
 pub mod sidebar_app;
+pub mod stats;
 pub mod tree;
 pub mod usage;
 pub mod watch;

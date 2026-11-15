@@ -10,19 +10,20 @@ use std::io::{self, Read, Seek, SeekFrom};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
+use memchr::memmem;
 use serde_json::Value;
 
 use crate::core::paths;
 
 /// The title is looked for in this many bytes at the end of a transcript.
-pub const TITLE_TAIL_BYTES: u64 = 512 * 1024;
+const TITLE_TAIL_BYTES: u64 = 512 * 1024;
 /// How a turn ended is looked for in this many bytes at the end of a transcript: enough for
 /// the line of a long pasted prompt.
-pub const TURN_TAIL_BYTES: u64 = 256 * 1024;
+const TURN_TAIL_BYTES: u64 = 256 * 1024;
 /// What Claude Code writes when the user presses Esc.
-pub const INTERRUPT_MARKER: &str = "[Request interrupted by user";
+const INTERRUPT_MARKER: &str = "[Request interrupted by user";
 /// Where the titles found in the transcripts are kept between runs, in the state folder.
-pub const TITLES_FILE: &str = "titles.json";
+const TITLES_FILE: &str = "titles.json";
 /// A title the user set with /rename wins over the one Claude Code made up.
 const TITLE_KEYS: [&str; 2] = ["customTitle", "aiTitle"];
 
@@ -44,7 +45,7 @@ pub(crate) fn transcript_path_in(config: &Path, id: &str, cwd: &str) -> PathBuf 
 /// # Errors
 ///
 /// Fails if the file cannot be opened or read.
-pub fn tail(path: &Path, n: u64) -> io::Result<Vec<u8>> {
+fn tail(path: &Path, n: u64) -> io::Result<Vec<u8>> {
     let mut file = File::open(path)?;
     let len = file.seek(SeekFrom::End(0))?;
     file.seek(SeekFrom::Start(len.saturating_sub(n)))?;
@@ -65,7 +66,7 @@ pub enum TurnEnd {
     Other,
 }
 
-/// Tells how the transcript ends; only its last [`TURN_TAIL_BYTES`] are read.
+/// Tells how the transcript ends; only its last `TURN_TAIL_BYTES` are read.
 ///
 /// An assistant entry after the last user entry means the session went on.
 pub fn turn_end(path: &Path) -> TurnEnd {
@@ -133,7 +134,7 @@ fn is_interrupt(message: Option<&Value>) -> bool {
 ///
 /// The last occurrence of each key that holds a valid, non-empty JSON string counts; the tail
 /// may start or end in the middle of a line, so those cut ones are skipped.
-pub fn find_title(chunk: &[u8]) -> String {
+fn find_title(chunk: &[u8]) -> String {
     for key in TITLE_KEYS {
         if let Some(title) = last_string(chunk, key) {
             if !title.is_empty() {
@@ -151,7 +152,7 @@ fn last_string(chunk: &[u8], key: &str) -> Option<String> {
     let marker = format!("\"{key}\":\"");
     let marker = marker.as_bytes();
     let mut end = chunk.len();
-    while let Some(at) = rfind(&chunk[..end], marker) {
+    while let Some(at) = memmem::rfind(&chunk[..end], marker) {
         end = at;
         let start = at + marker.len();
         let Some(len) = string_rest(&chunk[start..]) else {
@@ -184,47 +185,6 @@ fn string_rest(bytes: &[u8]) -> Option<usize> {
     None
 }
 
-/// Returns where the last occurrence of `needle` starts in `haystack`; an empty needle is
-/// found at the end, as with [`str::rfind`].
-///
-/// Scans back a block of starts at a time for the needle's second and second-to-last bytes, a
-/// test the compiler vectorises, and compares whole windows only in a block that has that pair.
-fn rfind(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    const BLOCK: usize = 32;
-    let n = needle.len();
-    if n == 0 {
-        return Some(haystack.len());
-    }
-    if n < 3 || haystack.len() < n {
-        return haystack.windows(n).rposition(|window| window == needle);
-    }
-    // Not the ends: the keys searched for start and end with `"`, which JSON is full of
-    let (second, penultimate) = (needle[1], needle[n - 2]);
-    // One past the last place a needle can start
-    let mut end = haystack.len() - n + 1;
-    while end > 0 {
-        let start = end.saturating_sub(BLOCK);
-        let seconds = &haystack[start + 1..end + 1];
-        let penultimates = &haystack[start + n - 2..end + n - 2];
-        let pair = seconds
-            .iter()
-            .zip(penultimates)
-            .fold(false, |seen, (&a, &b)| {
-                seen | ((a == second) & (b == penultimate))
-            });
-        if pair {
-            if let Some(at) = (start..end)
-                .rev()
-                .find(|&at| &haystack[at..at + n] == needle)
-            {
-                return Some(at);
-            }
-        }
-        end = start;
-    }
-    None
-}
-
 /// Returns a session's title from its transcript, empty when it has none or cannot be read.
 pub fn title_of(path: &Path) -> String {
     tail(path, TITLE_TAIL_BYTES)
@@ -252,11 +212,7 @@ pub fn titled_since(path: &Path, seen: &mut u64) -> bool {
     read.is_ok()
         && TITLE_KEYS
             .iter()
-            .any(|key| contains(&added, key.as_bytes()))
-}
-
-fn contains(haystack: &[u8], needle: &[u8]) -> bool {
-    rfind(haystack, needle).is_some()
+            .any(|key| memmem::find(&added, key.as_bytes()).is_some())
 }
 
 /// Session titles, read from the transcripts again only when one changes.
@@ -304,24 +260,14 @@ impl Titles {
         if !self.stored {
             return HashMap::new();
         }
-        let saved = fs::read(self.state_dir().join(TITLES_FILE))
+        // Entry by entry, so one bad title does not drop the others
+        let saved: HashMap<String, Value> = fs::read(self.state_dir().join(TITLES_FILE))
             .ok()
-            .and_then(|bytes| serde_json::from_slice::<HashMap<String, Value>>(&bytes).ok());
-        let Some(saved) = saved else {
-            return HashMap::new();
-        };
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default();
         saved
             .into_iter()
-            .filter_map(|(id, value)| {
-                let [mtime, title] = value.as_array()?.as_slice() else {
-                    return None;
-                };
-                let mtime = match mtime {
-                    Value::Null => None,
-                    other => Some(other.as_i64()?),
-                };
-                Some((id, (mtime, title.as_str()?.to_owned())))
-            })
+            .filter_map(|(id, value)| Some((id, serde_json::from_value(value).ok()?)))
             .collect()
     }
 
@@ -329,9 +275,6 @@ impl Titles {
     ///
     /// The transcript is read only when its modification time differs from the last reading.
     pub fn get(&mut self, id: &str, path: &Path) -> String {
-        if self.seen.is_none() {
-            self.seen = Some(self.load());
-        }
         if self.stored {
             self.used.insert(id.to_owned());
         }
@@ -340,7 +283,13 @@ impl Titles {
                 .saturating_mul(1_000_000_000)
                 .saturating_add(m.mtime_nsec())
         });
-        let seen = self.seen.get_or_insert_with(HashMap::new);
+        let seen = match &mut self.seen {
+            Some(seen) => seen,
+            None => {
+                let loaded = self.load();
+                self.seen.insert(loaded)
+            }
+        };
         if let Some((cached, title)) = seen.get(id) {
             if *cached == mtime {
                 return title.clone();
@@ -392,8 +341,8 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::claude::transcript::{
-        find_title, rfind, tail, title_of, titled_since, transcript_path_in, turn_end, Titles,
-        TurnEnd, TITLES_FILE,
+        find_title, tail, title_of, titled_since, transcript_path_in, turn_end, Titles, TurnEnd,
+        TITLES_FILE,
     };
 
     fn set_mtime(path: &Path, secs: u64) {
@@ -420,56 +369,6 @@ mod tests {
     fn transcript_path_replaces_every_non_alphanumeric_char() {
         let path = transcript_path_in(Path::new("/c"), "x", "/a b/c.d_e/ç");
         assert_eq!(path, Path::new("/c/projects/-a-b-c-d-e--/x.jsonl"));
-    }
-
-    /// Where the last `needle` starts in `haystack`, comparing every window.
-    fn naive_rfind(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-        if needle.is_empty() {
-            return Some(haystack.len());
-        }
-        haystack
-            .windows(needle.len())
-            .rposition(|window| window == needle)
-    }
-
-    #[test]
-    fn rfind_finds_an_empty_needle_at_the_end() {
-        assert_eq!(rfind(b"", b""), Some(0));
-        assert_eq!(rfind(b"abc", b""), Some(3));
-    }
-
-    proptest::proptest! {
-        #[test]
-        fn rfind_finds_the_last_occurrence(
-            haystack in "[ab\"]{0,80}",
-            needle in "[ab\"]{1,6}",
-        ) {
-            let (haystack, needle) = (haystack.as_bytes(), needle.as_bytes());
-            proptest::prop_assert_eq!(rfind(haystack, needle), naive_rfind(haystack, needle));
-        }
-
-        #[test]
-        fn rfind_finds_long_needles(
-            haystack in "[ab\"]{0,200}",
-            needle in "[ab\"]{30,40}|a{10,40}|\"[ab]{8,38}\"",
-        ) {
-            let (haystack, needle) = (haystack.as_bytes(), needle.as_bytes());
-            proptest::prop_assert_eq!(rfind(haystack, needle), naive_rfind(haystack, needle));
-        }
-
-        #[test]
-        fn rfind_finds_a_needle_taken_from_the_haystack(
-            haystack in "[ab\"]{1,200}",
-            from in 0usize..200,
-            len in 1usize..60,
-        ) {
-            let haystack = haystack.as_bytes();
-            let from = from % haystack.len();
-            let needle = &haystack[from..(from + len).min(haystack.len())];
-            let found = rfind(haystack, needle);
-            proptest::prop_assert!(found >= Some(from));
-            proptest::prop_assert_eq!(found, naive_rfind(haystack, needle));
-        }
     }
 
     #[test]
@@ -714,6 +613,21 @@ mod tests {
         fs::write(&path, b"{\"aiTitle\":\"First\"}\n").unwrap();
         let mut titles = Titles::in_dir(true, state);
         assert_eq!(titles.get("a", &path), "First");
+    }
+
+    #[test]
+    fn a_bad_stored_title_drops_only_itself() {
+        let tmp = TempDir::new().unwrap();
+        let state = tmp.path().join("state");
+        fs::create_dir(&state).unwrap();
+        let saved = json!({"a": [5_000_000_000i64, "Kept"], "b": [1.5, "Odd"], "c": "no"});
+        fs::write(state.join(TITLES_FILE), saved.to_string()).unwrap();
+        let path = tmp.path().join("t.jsonl");
+        fs::write(&path, b"{\"aiTitle\":\"Read\"}\n").unwrap();
+        set_mtime(&path, 5);
+        let mut titles = Titles::in_dir(true, state);
+        assert_eq!(titles.get("a", &path), "Kept");
+        assert_eq!(titles.get("b", &path), "Read");
     }
 
     #[test]

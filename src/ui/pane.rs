@@ -2,22 +2,25 @@
 //! learn whether they are on screen and how they log failures; the sidebar and the landing
 //! page also share a [`Shell`]. What they watch is in [`crate::ui::watch`].
 
+use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
 use std::io;
+use std::path::Path;
 use std::thread;
 use std::time::Duration;
 
 use anyhow::bail;
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::claude::history::HistoryReader;
 use crate::claude::statusline::load_limits;
 use crate::core::paths;
-use crate::core::state::unix_now;
+use crate::core::state::{unix_now, Record};
 use crate::term::tmux::{self, Runner};
+use crate::ui::folders::Scan;
 use crate::ui::picker;
 use crate::ui::runtime::{signal, Msg, Runtime, Schedule, Screen, Signal, Wake};
-use crate::ui::sidebar::Stats;
+use crate::ui::search::Searchable;
+use crate::ui::stats::Stats;
 use crate::ui::usage::Reader;
 use crate::ui::watch::{Stale, Watches};
 
@@ -74,7 +77,7 @@ pub fn run(app: &mut impl App, runtime: &mut Runtime, screen: &mut Screen) {
 
 /// What a message tells about whether the pane is on screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Sight {
+enum Sight {
     /// It is on screen now.
     Shown,
     /// It left the screen.
@@ -90,7 +93,7 @@ pub enum Sight {
 ///
 /// A resize is such a proof because tmux (3.1 on; tmux.conf requires 3.2) resizes a window
 /// only when it is current or becomes current, never while it is out of sight.
-pub fn sight(msg: &Msg, visible: bool) -> Sight {
+fn sight(msg: &Msg, visible: bool) -> Sight {
     match msg {
         Msg::Key(key) => match signal(key) {
             Some(Signal::Shown) => Sight::Shown,
@@ -144,7 +147,7 @@ impl Shell {
         if !self.schedule.visible {
             return false;
         }
-        if self.stats.limits.values().any(|q| q.resets_at <= now) {
+        if resets(&self.stats).any(|at| at <= now) {
             self.stale.limits = true;
         }
         if self.stale.any() {
@@ -196,65 +199,94 @@ impl Shell {
     }
 }
 
-/// A pane tmux shows and hides: the sidebar and the landing page.
-pub trait Visible {
-    /// The pane's [`Shell`].
-    fn shell(&self) -> &Shell;
-    /// The pane's [`Shell`], to change.
-    fn shell_mut(&mut self) -> &mut Shell;
+/// What becomes of a message for a pane tmux shows and hides; see [`Shell::gate`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Gate {
+    /// The pane is hidden, or the message just hid it: it does no work.
+    Dropped,
+    /// The pane is on screen: it takes the message.
+    Take,
+    /// The message just showed the pane: it takes it and draws at once.
+    Shown,
+}
 
-    /// Whether the pane believes itself on screen.
-    fn visible(&self) -> bool {
-        self.shell().schedule.visible
+impl Gate {
+    /// The step for the message, `take` handling it unless it is dropped.
+    pub fn then(self, take: impl FnOnce() -> Step) -> Step {
+        match self {
+            Gate::Dropped => Step::Wait,
+            Gate::Take => take(),
+            Gate::Shown => match take() {
+                Step::Quit => Step::Quit,
+                Step::Wait | Step::Draw => Step::Draw,
+            },
+        }
     }
+}
 
+impl Shell {
     /// Comes on screen: everything is read again before the next draw.
-    fn show(&mut self) {
-        let shell = self.shell_mut();
-        shell.schedule.visible = true;
-        shell.stale = Stale::ALL;
+    pub fn show(&mut self) {
+        self.schedule.visible = true;
+        self.stale = Stale::ALL;
     }
 
     /// Leaves the screen: no watches, no timer, nothing read until shown again.
-    fn hide(&mut self, runtime: &mut Runtime) {
-        let shell = self.shell_mut();
-        shell.schedule.visible = false;
-        shell.schedule.dirty = false;
-        shell.watches.clear(runtime);
+    pub fn hide(&mut self, runtime: &mut Runtime) {
+        self.schedule.visible = false;
+        self.schedule.dirty = false;
+        runtime.unwatch_all();
+    }
+
+    /// Shows or hides the pane as `msg` tells, and says whether it takes `msg`.
+    ///
+    /// A hidden pane does no work: the message that hid it, and any that comes while hidden
+    /// (such as changes queued before its watches went), is dropped.
+    pub fn gate(&mut self, msg: &Msg, runtime: &mut Runtime) -> Gate {
+        match sight(msg, self.schedule.visible) {
+            Sight::Shown => {
+                self.show();
+                Gate::Shown
+            }
+            Sight::Hidden => {
+                self.hide(runtime);
+                Gate::Dropped
+            }
+            Sight::Same if self.schedule.visible => Gate::Take,
+            Sight::Same => Gate::Dropped,
+        }
+    }
+
+    /// Takes a change at `path` on disk, given the records last read: what it makes stale is
+    /// read again before a redraw.
+    pub fn changed(&mut self, path: &Path, records: &[Record], now: f64) {
+        let touched = self.watches.changed(path, records, now);
+        if touched.any() {
+            self.stale.add(touched);
+            self.schedule.dirty = true;
+        }
     }
 }
 
-/// Takes a message for a pane tmux shows and hides; `take` handles it once the pane is known
-/// to be on screen.
-///
-/// The pane is shown or hidden as the message tells ([`sight`]). A hidden pane does no work:
-/// the message that hid it, and any that comes while hidden (such as changes queued before
-/// its watches went), is dropped. A pane just shown draws at once, whatever `take` returns.
-pub fn gated<A: Visible>(
-    app: &mut A,
-    msg: Msg,
-    runtime: &mut Runtime,
-    take: impl FnOnce(&mut A, Msg, &mut Runtime) -> Step,
-) -> Step {
-    match sight(&msg, app.visible()) {
-        Sight::Shown => {
-            app.show();
-            match take(app, msg, runtime) {
-                Step::Quit => Step::Quit,
-                Step::Wait | Step::Draw => Step::Draw,
-            }
-        }
-        Sight::Hidden => {
-            app.hide(runtime);
-            Step::Wait
-        }
-        Sight::Same if app.visible() => take(app, msg, runtime),
-        Sight::Same => Step::Wait,
-    }
+/// When each quota resets (Unix).
+pub fn resets(stats: &Stats) -> impl Iterator<Item = f64> + '_ {
+    stats.limits.values().map(|q| q.resets_at)
+}
+
+/// The folders of `history` that still exist, last used first, and the sessions to search;
+/// those in `live` are open now and not offered to resume. `costs` is each session's spend.
+pub fn folders(
+    history: &HistoryReader,
+    scan: &mut Scan,
+    costs: &HashMap<String, f64>,
+    live: &HashSet<String>,
+) -> (Vec<picker::Folder>, Vec<Searchable>) {
+    let folders = scan.load(history.sessions(), history.generation(), costs, live);
+    (folders, scan.searchable(live))
 }
 
 /// The tmux window a pane is in.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct OwnWindow {
     /// The window's id, as `@3`.
     pub id: String,
@@ -302,59 +334,6 @@ pub fn own_socket() -> String {
         .unwrap_or_default()
 }
 
-/// Whether a key ends a panel: Ctrl+C or Ctrl+Q.
-pub fn quits(key: &KeyEvent) -> bool {
-    key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('c' | 'q'))
-}
-
-/// The key the folder list takes for a key press, if any: arrows, Enter, Backspace, Ctrl+n and
-/// Ctrl+o for the entries, and a character typed with no modifier but Shift.
-pub fn picker_key(key: &KeyEvent) -> Option<picker::Key> {
-    let ctrl = key.modifiers == KeyModifiers::CONTROL;
-    Some(match key.code {
-        KeyCode::Char('n') if ctrl => picker::Key::Entry(picker::Root::New),
-        KeyCode::Char('o') if ctrl => picker::Key::Entry(picker::Root::Open),
-        KeyCode::Up => picker::Key::Up,
-        KeyCode::Down => picker::Key::Down,
-        KeyCode::Left => picker::Key::Left,
-        KeyCode::Right => picker::Key::Right,
-        KeyCode::Enter => picker::Key::Enter,
-        KeyCode::Backspace => picker::Key::Backspace,
-        KeyCode::Char(c) if (key.modifiers - KeyModifiers::SHIFT).is_empty() => {
-            picker::Key::Char(c)
-        }
-        _ => return None,
-    })
-}
-
-/// Runs `new-window` for a row of the folder list: resume its session, or start one.
-///
-/// A create row's folder, and any missing parent, is created first, as is the folder of a
-/// session found that was deleted; when that fails, the failure goes to the error log and
-/// nothing starts.
-pub fn open(tmux: &dyn Runner, row: &picker::Row, folders: &[picker::Folder]) {
-    open_with(tmux, row, folders, &paths::process_env);
-}
-
-/// [`open`], logging to the state directory `env` names.
-fn open_with(
-    tmux: &dyn Runner,
-    row: &picker::Row,
-    folders: &[picker::Folder],
-    env: paths::Lookup<'_>,
-) {
-    if matches!(row.kind, picker::RowKind::Create | picker::RowKind::Hit) {
-        if let Err(e) = std::fs::create_dir_all(&row.path) {
-            paths::log_error_with(env, &format_args!("cannot create {}: {e}", row.path));
-            return;
-        }
-    }
-    let command = picker::command(row, folders);
-    let mut args = vec!["new-window"];
-    args.extend(command.iter().map(String::as_str));
-    tmux.run(&args);
-}
-
 /// Logs a failure unless it repeats the last one, which would fill the log on every redraw.
 #[derive(Debug)]
 pub struct LogOnce {
@@ -397,10 +376,8 @@ mod tests {
         KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
     };
 
-    use crate::core::paths::ERROR_LOG;
     use crate::term::tmux::fake::FakeTmux;
-    use crate::ui::pane::{open, open_with, own_window, picker_key, quits, sight, LogOnce, Sight};
-    use crate::ui::picker::{Key, Root, Row, RowKind};
+    use crate::ui::pane::{own_window, sight, LogOnce, Sight};
     use crate::ui::runtime::Msg;
 
     /// Answers each call with the next of `answers`, then with nothing.
@@ -498,116 +475,12 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_c_and_ctrl_q_quit() {
-        let ctrl = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
-        assert!(quits(&ctrl('c')) && quits(&ctrl('q')));
-        assert!(!quits(&key(KeyCode::Char('q'))) && !quits(&ctrl('x')));
-    }
-
-    #[test]
-    fn keys_map_to_the_folder_list() {
-        assert_eq!(picker_key(&key(KeyCode::Up)), Some(Key::Up));
-        assert_eq!(picker_key(&key(KeyCode::Down)), Some(Key::Down));
-        assert_eq!(picker_key(&key(KeyCode::Left)), Some(Key::Left));
-        assert_eq!(picker_key(&key(KeyCode::Right)), Some(Key::Right));
-        assert_eq!(picker_key(&key(KeyCode::Enter)), Some(Key::Enter));
-        assert_eq!(picker_key(&key(KeyCode::Backspace)), Some(Key::Backspace));
-        assert_eq!(picker_key(&key(KeyCode::Char('/'))), Some(Key::Char('/')));
-        let shifted = KeyEvent::new(KeyCode::Char('W'), KeyModifiers::SHIFT);
-        assert_eq!(picker_key(&shifted), Some(Key::Char('W')));
-        let ctrl = KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL);
-        let alt = KeyEvent::new(KeyCode::Char('w'), KeyModifiers::ALT);
-        assert_eq!((picker_key(&ctrl), picker_key(&alt)), (None, None));
-        let ctrl = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
-        assert_eq!(picker_key(&ctrl('n')), Some(Key::Entry(Root::New)));
-        assert_eq!(picker_key(&ctrl('o')), Some(Key::Entry(Root::Open)));
-        assert_eq!(picker_key(&key(KeyCode::Tab)), None);
-        assert_eq!(picker_key(&key(KeyCode::Esc)), None);
-    }
-
-    #[test]
     fn a_failure_is_logged_once_until_another_one() {
         let mut log = LogOnce::new("sidebar");
         assert_eq!(log.check(&"x: gone"), Some("x: gone".to_owned()));
         assert_eq!(log.check(&"x: gone"), None);
         assert_eq!(log.check(&"y: bad"), Some("y: bad".to_owned()));
         assert_eq!(log.check(&"x: gone"), Some("x: gone".to_owned()));
-    }
-
-    /// A row that creates the folder `path`, then starts a session in it.
-    fn create_row(path: &std::path::Path) -> Row {
-        Row {
-            kind: RowKind::Create,
-            path: path.to_string_lossy().into_owned(),
-            ..Row::default()
-        }
-    }
-
-    #[test]
-    fn open_creates_the_folder_then_starts_there() {
-        let t = tempfile::tempdir().unwrap();
-        let path = t.path().join("Documents/Meu-Projeto");
-        let tmux = FakeTmux::silent();
-        open(&tmux, &create_row(&path), &[]);
-        assert!(path.is_dir());
-        let want = ["new-window", "-c", &path.to_string_lossy(), "claude"];
-        assert_eq!(tmux.calls(), [want.map(str::to_owned).to_vec()]);
-    }
-
-    #[test]
-    fn open_logs_and_starts_nothing_when_create_fails() {
-        let t = tempfile::tempdir().unwrap();
-        let path = t.path().join("x");
-        std::fs::write(&path, "").unwrap();
-        let state = t.path().join("state");
-        let env = |key: &str| (key == "CST_STATE_DIR").then(|| state.clone().into_os_string());
-        let tmux = FakeTmux::silent();
-        open_with(&tmux, &create_row(&path), &[], &env);
-        assert!(tmux.calls().is_empty());
-        let log = std::fs::read_to_string(state.join(ERROR_LOG)).unwrap();
-        assert!(log.contains(&*path.to_string_lossy()), "{log}");
-    }
-
-    #[test]
-    fn a_hit_in_a_deleted_folder_creates_it_and_resumes() {
-        let t = tempfile::tempdir().unwrap();
-        let path = t.path().join("gone/Projeto");
-        let row = Row {
-            kind: RowKind::Hit,
-            id: "id".into(),
-            path: path.to_string_lossy().into_owned(),
-            ..Row::default()
-        };
-        let tmux = FakeTmux::silent();
-        open(&tmux, &row, &[]);
-        assert!(path.is_dir());
-        let want = [
-            "new-window",
-            "-c",
-            &path.to_string_lossy(),
-            "claude --resume id",
-        ];
-        assert_eq!(tmux.calls(), [want.map(str::to_owned).to_vec()]);
-    }
-
-    #[test]
-    fn a_hit_logs_and_starts_nothing_when_its_folder_cannot_be_made() {
-        let t = tempfile::tempdir().unwrap();
-        let path = t.path().join("x");
-        std::fs::write(&path, "").unwrap();
-        let state = t.path().join("state");
-        let env = |key: &str| (key == "CST_STATE_DIR").then(|| state.clone().into_os_string());
-        let row = Row {
-            kind: RowKind::Hit,
-            id: "id".into(),
-            path: path.to_string_lossy().into_owned(),
-            ..Row::default()
-        };
-        let tmux = FakeTmux::silent();
-        open_with(&tmux, &row, &[], &env);
-        assert!(tmux.calls().is_empty());
-        let log = std::fs::read_to_string(state.join(ERROR_LOG)).unwrap();
-        assert!(log.contains(&*path.to_string_lossy()), "{log}");
     }
 
     #[test]

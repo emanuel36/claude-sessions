@@ -9,17 +9,17 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
-use chrono::{DateTime, Local, NaiveDate};
+use chrono::{DateTime, Local, NaiveDate, TimeZone};
 use serde::{Deserialize, Serialize};
 
 use crate::core::paths;
 
 /// Day files older than this many days are deleted.
-pub const KEEP_DAYS: u64 = 7;
+const KEEP_DAYS: u64 = 7;
 /// The status a session leaves the journal with when its record goes away; not a live status.
 pub const ENDED: &str = "ended";
 /// The model of cost events written before the journal recorded one.
-pub const UNKNOWN_MODEL: &str = "unknown";
+const UNKNOWN_MODEL: &str = "unknown";
 const SUFFIX: &str = ".jsonl";
 
 /// One line of the journal: a status change or a cost reading of one session.
@@ -56,15 +56,14 @@ fn day_path(dir: &Path, day: NaiveDate) -> PathBuf {
     dir.join(format!("{day}{SUFFIX}"))
 }
 
-/// The local date of a Unix timestamp, or `None` for one that is not a date.
-fn day_of(t: f64) -> Option<NaiveDate> {
+/// The date of a Unix timestamp in the zone `tz`, or `None` for one that is not a date.
+pub(crate) fn day_of<Tz: TimeZone>(t: f64, tz: &Tz) -> Option<NaiveDate> {
     if !t.is_finite() {
         return None;
     }
-    let secs = t.floor();
-    let nanos = ((t - secs) * 1e9) as u32;
-    let utc = DateTime::from_timestamp(secs as i64, nanos.min(999_999_999))?;
-    Some(utc.with_timezone(&Local).date_naive())
+    // The fraction of a second never changes the date
+    let utc = DateTime::from_timestamp(t.floor() as i64, 0)?;
+    Some(utc.with_timezone(tz).date_naive())
 }
 
 /// Adds an event to the file of its day, and deletes the files of past weeks.
@@ -72,7 +71,7 @@ fn day_of(t: f64) -> Option<NaiveDate> {
 /// Never fails: the hook and the status line call it, and losing an event is better than
 /// breaking them. A failure goes to the error log.
 pub fn append(e: &JournalEvent) {
-    let Some(day) = day_of(e.t) else {
+    let Some(day) = day_of(e.t, &Local) else {
         paths::log_error(&format_args!("journal: event time {} is not a date", e.t));
         return;
     };
@@ -150,11 +149,6 @@ pub struct DayReader {
 }
 
 impl DayReader {
-    /// Returns a reader that has read nothing yet.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// A number that changes only when a read parsed new events or dropped the old ones, so
     /// callers can tell nothing changed without comparing the events.
     pub fn generation(&self) -> u64 {
@@ -272,22 +266,12 @@ pub fn window_totals(days: &Days, first: NaiveDate) -> HashMap<String, SessionTo
         .collect()
 }
 
-/// The cost all sessions added from `first` on, by the model each event names.
+/// The cost each session added from `first` on, by the model each event names:
+/// `{session id: {model: dollars}}`.
 ///
 /// Costs are running totals, counted as [`window_totals`] counts them: from a session's last
 /// cost before the window, each new high goes to the model of the event that reaches it. Events
-/// without a model count under [`UNKNOWN_MODEL`].
-pub fn model_costs(days: &Days, first: NaiveDate) -> HashMap<String, f64> {
-    let mut totals: HashMap<String, f64> = HashMap::new();
-    for by_model in session_model_costs(days, first).into_values() {
-        for (model, dollars) in by_model {
-            *totals.entry(model).or_default() += dollars;
-        }
-    }
-    totals
-}
-
-/// [`model_costs`] for each session apart: `{session id: {model: dollars}}`.
+/// without a model count under `UNKNOWN_MODEL`.
 pub fn session_model_costs(days: &Days, first: NaiveDate) -> HashMap<String, HashMap<String, f64>> {
     let mut before: HashMap<&str, f64> = HashMap::new();
     let mut high: HashMap<&str, f64> = HashMap::new();
@@ -362,8 +346,8 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::core::journal::{
-        append_in, day_costs, day_of, day_path, model_costs, session_model_costs, window_totals,
-        DayReader, Days, JournalEvent, SessionTotals, ENDED,
+        append_in, day_costs, day_of, day_path, session_model_costs, window_totals, DayReader,
+        Days, JournalEvent, SessionTotals, ENDED,
     };
 
     fn date(y: i32, m: u32, d: u32) -> NaiveDate {
@@ -395,12 +379,12 @@ mod tests {
     }
 
     fn put(dir: &Path, e: &JournalEvent) {
-        let day = day_of(e.t).unwrap();
+        let day = day_of(e.t, &Local).unwrap();
         append_in(dir, e, day, day).unwrap();
     }
 
     fn read_day(dir: &Path, day: NaiveDate) -> Vec<JournalEvent> {
-        DayReader::new().read_in(dir, day).to_vec()
+        DayReader::default().read_in(dir, day).to_vec()
     }
 
     fn days(pairs: &[(NaiveDate, Vec<JournalEvent>)]) -> Days<'_> {
@@ -421,10 +405,10 @@ mod tests {
     #[test]
     fn day_of_is_the_local_date() {
         let day = date(2026, 11, 2);
-        assert_eq!(day_of(noon(day)), Some(day));
-        assert_eq!(day_of(f64::INFINITY), None);
-        assert_eq!(day_of(f64::NAN), None);
-        assert_eq!(day_of(1e300), None);
+        assert_eq!(day_of(noon(day), &Local), Some(day));
+        assert_eq!(day_of(f64::INFINITY, &Local), None);
+        assert_eq!(day_of(f64::NAN, &Local), None);
+        assert_eq!(day_of(1e300, &Local), None);
     }
 
     #[test]
@@ -535,7 +519,7 @@ mod tests {
         let dir = tmp.path();
         let day = date(2026, 11, 2);
         let start = noon(day);
-        let mut reader = DayReader::new();
+        let mut reader = DayReader::default();
         put(dir, &cost(start, "a", 1.0));
         assert_eq!(reader.read_in(dir, day), [cost(start, "a", 1.0)]);
         // Rewritten in place at the same size: a reader that started over would see "b"
@@ -560,7 +544,7 @@ mod tests {
         let dir = tmp.path();
         let day = date(2026, 11, 2);
         let start = noon(day);
-        let mut reader = DayReader::new();
+        let mut reader = DayReader::default();
         put(dir, &cost(start, "a", 1.0));
         let line = serde_json::to_string(&cost(start + 1.0, "a", 2.0)).unwrap();
         let mut f = open_append(dir, day);
@@ -582,7 +566,7 @@ mod tests {
         let dir = tmp.path();
         let day = date(2026, 11, 2);
         let start = noon(day);
-        let mut reader = DayReader::new();
+        let mut reader = DayReader::default();
         put(dir, &cost(start, "a", 1.0));
         assert_eq!(reader.read_in(dir, day).len(), 1);
         open_append(dir, day)
@@ -598,7 +582,7 @@ mod tests {
         let dir = tmp.path();
         let day = date(2026, 11, 2);
         let start = noon(day);
-        let mut reader = DayReader::new();
+        let mut reader = DayReader::default();
         put(dir, &cost(start, "a", 1.0));
         put(dir, &cost(start + 1.0, "a", 2.0));
         assert_eq!(reader.read_in(dir, day).len(), 2);
@@ -627,7 +611,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path();
         let day = date(2026, 11, 2);
-        let mut reader = DayReader::new();
+        let mut reader = DayReader::default();
         assert!(reader.read_in(dir, day).is_empty());
         let empty = reader.generation();
         assert!(reader.read_in(dir, day).is_empty());
@@ -796,12 +780,15 @@ mod tests {
             ),
         ];
         // Only what rose inside the window, by the model of the event that shows it
-        let expected = HashMap::from([
-            ("Opus".to_string(), 3.0),
-            ("Sonnet".to_string(), 1.0),
-            ("unknown".to_string(), 1.5),
-        ]);
-        assert_eq!(model_costs(&days(&data), day), expected);
+        let by_session = session_model_costs(&days(&data), day);
+        assert_eq!(
+            by_session["a"],
+            HashMap::from([("Opus".to_string(), 3.0), ("Sonnet".to_string(), 1.0)])
+        );
+        assert_eq!(
+            by_session["b"],
+            HashMap::from([("unknown".to_string(), 1.5)])
+        );
     }
 
     #[test]
@@ -821,7 +808,7 @@ mod tests {
         ];
         let d = days(&data);
         assert_eq!(
-            model_costs(&d, day),
+            session_model_costs(&d, day)["a"],
             HashMap::from([("Opus".to_string(), 2.0)])
         );
         assert_eq!(window_totals(&d, day)["a"].cost, 2.0);

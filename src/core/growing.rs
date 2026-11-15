@@ -10,7 +10,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 /// The bytes before where a reading stopped, kept to tell the file is still the one read.
-pub const MARK_BYTES: usize = 64;
+const MARK_BYTES: usize = 64;
 
 /// Which file a reading was made of.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -6,6 +6,7 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::path::Path;
+use std::rc::Rc;
 
 /// How deep a search goes below the folder it starts from.
 pub const DEPTH: usize = 6;
@@ -19,7 +20,7 @@ pub const HITS: usize = 50;
 pub type Use = (u8, std::cmp::Reverse<i64>);
 
 /// The sort key of `path`, given when a Claude session last ran in or below it.
-pub fn usage(path: &str, session: Option<f64>) -> Use {
+fn usage(path: &str, session: Option<f64>) -> Use {
     match session {
         // Whole seconds are enough to order folders
         #[allow(clippy::cast_possible_truncation)]
@@ -56,22 +57,19 @@ pub fn sessions_below<'a>(folders: impl Iterator<Item = (&'a str, f64)>) -> Hash
 pub struct Hit {
     /// Its path relative to the folder searched, with `/` between components.
     pub rel: String,
-    /// How many components `rel` has.
-    pub depth: usize,
     /// Byte offsets in `rel` of the matched characters.
     pub hits: Vec<usize>,
 }
 
-/// A folder found by a walk: its path relative to the walk's start, and its depth.
-type Found = (String, usize);
-
 /// The folders read from disk, by folder, and the searches made below them.
 #[derive(Debug, Default)]
 pub struct Disk {
-    children: RefCell<HashMap<(String, bool), Vec<String>>>,
+    /// By folder, its subfolders, hidden ones left out.
+    children: RefCell<HashMap<String, Rc<[String]>>>,
     /// By folder, its sort key from its change on disk.
     changed: RefCell<HashMap<String, Use>>,
-    below: RefCell<HashMap<(String, bool), Vec<Found>>>,
+    /// By folder and whether hidden ones count, the folders below it, relative to it.
+    below: RefCell<HashMap<(String, bool), Vec<String>>>,
     /// By folder searched and lowercased text, the matches ranked.
     hits: RefCell<HashMap<(String, String), Vec<Hit>>>,
 }
@@ -110,7 +108,7 @@ pub fn join(dir: &str, rel: &str) -> String {
 
 impl Disk {
     /// Forgets everything read, so the next call reads the disk again.
-    pub fn clear(&self) {
+    pub(crate) fn clear(&self) {
         self.forget_folders();
         self.forget_search();
     }
@@ -141,17 +139,16 @@ impl Disk {
     }
 
     /// The subfolders of `dir`, hidden ones left out.
-    pub fn children(&self, dir: &str) -> Vec<String> {
-        let key = (dir.to_owned(), false);
-        self.children
-            .borrow_mut()
-            .entry(key)
-            .or_insert_with(|| read(dir, false, true))
-            .clone()
+    pub fn children(&self, dir: &str) -> Rc<[String]> {
+        let mut children = self.children.borrow_mut();
+        let kept = children
+            .entry(dir.to_owned())
+            .or_insert_with(|| read(dir, false, true).into());
+        Rc::clone(kept)
     }
 
     /// Every folder below `dir`, `DEPTH` levels at most, breadth first.
-    fn below(&self, dir: &str, hidden: bool) -> Vec<Found> {
+    fn below(&self, dir: &str, hidden: bool) -> Vec<String> {
         let key = (dir.to_owned(), hidden);
         if let Some(found) = self.below.borrow().get(&key) {
             return found.clone();
@@ -168,7 +165,7 @@ impl Disk {
                 } else {
                     format!("{rel}/{name}")
                 };
-                found.push((child.clone(), depth + 1));
+                found.push(child.clone());
                 queue.push_back((child, depth + 1));
             }
         }
@@ -195,10 +192,10 @@ impl Disk {
 
     /// The matches of [`Disk::search`] for the lowercased text `wanted`, ranked.
     fn rank(&self, dir: &str, wanted: &str, order: &dyn Fn(&str) -> Use) -> Vec<Hit> {
-        let mut ranked: Vec<(Use, u8, Hit)> = self
+        let mut ranked: Vec<(usize, Use, u8, Hit)> = self
             .below(dir, wanted.starts_with('.'))
             .into_iter()
-            .filter_map(|(rel, depth)| {
+            .filter_map(|rel| {
                 let start = rel.rfind('/').map_or(0, |i| i + 1);
                 let name = rel[start..].to_lowercase();
                 // Lowercasing can change byte lengths; ranks and marks then fall back to none
@@ -216,12 +213,12 @@ impl Disk {
                     Vec::new()
                 };
                 let used = order(&join(dir, &rel));
-                Some((used, rank, Hit { rel, depth, hits }))
+                let depth = rel.matches('/').count() + 1;
+                Some((depth, used, rank, Hit { rel, hits }))
             })
             .collect();
-        ranked.sort_by(|(ua, ra, a), (ub, rb, b)| {
-            a.depth
-                .cmp(&b.depth)
+        ranked.sort_by(|(da, ua, ra, a), (db, ub, rb, b)| {
+            da.cmp(db)
                 .then(ua.cmp(ub))
                 .then(ra.cmp(rb))
                 .then_with(|| a.rel.to_lowercase().cmp(&b.rel.to_lowercase()))
@@ -229,7 +226,7 @@ impl Disk {
         ranked
             .into_iter()
             .take(HITS)
-            .map(|(_, _, hit)| hit)
+            .map(|(_, _, _, hit)| hit)
             .collect()
     }
 }
@@ -266,7 +263,7 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         dirs(t.path(), &["a", "B", ".git", "node_modules", "target"]);
         fs::write(t.path().join("f"), "").unwrap();
-        assert_eq!(Disk::default().children(&root_of(&t)), ["a", "B"]);
+        assert_eq!(*Disk::default().children(&root_of(&t)), ["a", "B"]);
     }
 
     #[test]
@@ -381,10 +378,10 @@ mod tests {
         let disk = Disk::default();
         let root = root_of(&t);
         assert_eq!(rels(&disk.search(&root, "vt", &flat)), ["vtp"]);
-        assert_eq!(disk.children(&root), ["vtp"]);
+        assert_eq!(*disk.children(&root), ["vtp"]);
         dirs(t.path(), &["vt2"]);
         disk.forget_folders();
-        assert_eq!(disk.children(&root), ["vt2", "vtp"]);
+        assert_eq!(*disk.children(&root), ["vt2", "vtp"]);
         assert_eq!(rels(&disk.search(&root, "vt", &flat)), ["vtp"], "walk kept");
         disk.forget_search();
         assert_eq!(rels(&disk.search(&root, "vt", &flat)), ["vt2", "vtp"]);

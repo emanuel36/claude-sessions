@@ -1,12 +1,10 @@
 //! Words, numbers, bars and styles the sidebar and the landing page share.
 
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::Span;
+use ratatui::text::{Line, Span};
 
-use crate::ui::line::cells;
+use crate::ui::line::{cell_len, cells, push, start, width_of, ELBOW, INDENT};
 
-/// The shortest delay a redraw timer is given (see [`next_tick`]).
-pub const MIN_TICK: f64 = 0.05;
 /// While a session works the screen redraws `FPS` times a second, a spinner frame each time.
 pub const FPS: u32 = 8;
 /// Fixed English names, not the locale's, so the screens read the same everywhere.
@@ -29,8 +27,6 @@ const RED: f64 = 85.0;
 pub const INK: Style = Style::new();
 /// ANSI green.
 pub const GREEN: Style = Style::new().fg(Color::Green);
-/// ANSI blue.
-pub const BLUE: Style = Style::new().fg(Color::Blue);
 /// ANSI magenta.
 pub const MAGENTA: Style = Style::new().fg(Color::Magenta);
 /// Palette grey 244.
@@ -112,21 +108,6 @@ pub fn remaining(seconds: f64) -> String {
     }
 }
 
-/// Seconds until the next redraw: the next whole second, or the next frame when animating.
-///
-/// A delay shorter than [`MIN_TICK`] would be dropped by a one-shot timer that has already
-/// passed it by the time it starts, which ends a redraw loop for good; it waits for the step
-/// after instead. A `per_second` of 0 counts as 1.
-pub fn next_tick(now: f64, per_second: u32) -> f64 {
-    let step = 1.0 / f64::from(per_second.max(1));
-    let delay = step - now.rem_euclid(step);
-    if delay >= MIN_TICK {
-        delay
-    } else {
-        delay + step
-    }
-}
-
 /// How long a session has waited, as the sidebar shows it; empty under a minute.
 pub fn waiting_label(seconds: f64) -> String {
     if seconds < 60.0 {
@@ -168,12 +149,65 @@ pub fn fit(text: &str, width: usize) -> String {
     out
 }
 
+/// Ends a line with `value` against the right edge.
+pub(crate) fn right(line: &mut Line<'static>, value: &str, style: Style, content: usize) {
+    let used = cell_len(line).saturating_sub(1) + width_of(value);
+    push(line, " ".repeat(content.saturating_sub(used)), INK);
+    push(line, value, style);
+}
+
+/// A `•` line: the mark, a title cut to fit, and a value on the right.
+pub(crate) struct Bullet<'a> {
+    /// The character before the title, such as `•` or a spinner frame.
+    pub(crate) mark: char,
+    /// The mark's style.
+    pub(crate) mark_style: Style,
+    /// The text after the mark, cut with `…` to the room the value leaves.
+    pub(crate) title: &'a str,
+    /// The title's style.
+    pub(crate) title_style: Style,
+    /// The text flush right; empty for none, which gives the title the whole width.
+    pub(crate) value: &'a str,
+    /// The value's style.
+    pub(crate) value_style: Style,
+    /// The style of the line's margin and gaps.
+    pub(crate) base: Style,
+    /// The cells between the margins.
+    pub(crate) content: usize,
+}
+
+impl Bullet<'_> {
+    /// The styled line.
+    pub(crate) fn line(&self) -> Line<'static> {
+        let mut line = start(self.base);
+        push(&mut line, format!("{} ", self.mark), self.mark_style);
+        let taken = if self.value.is_empty() {
+            0
+        } else {
+            width_of(self.value) + 1
+        };
+        let room = self.content.saturating_sub(2 + taken);
+        push(&mut line, fit(self.title, room), self.title_style);
+        if !self.value.is_empty() {
+            right(&mut line, self.value, self.value_style, self.content);
+        }
+        line
+    }
+}
+
+/// The start of a `⎿` line, or of the lines after it, which only indent.
+pub(crate) fn elbow(first: bool, base: Style) -> Line<'static> {
+    let mut line = start(base);
+    push(&mut line, if first { ELBOW } else { INDENT }, SUBTLE);
+    line
+}
+
 /// A bar cell: a line through the middle of the cell, level with the text, so stacked bars
 /// have a gap between them.
 pub const BAR: &str = "━";
 
 /// The style of a quota bar's filled cells: Claude's orange, then yellow, then red.
-pub fn bar_style(pct: f64) -> Style {
+fn bar_style(pct: f64) -> Style {
     if pct >= RED {
         ERROR
     } else if pct >= AMBER {
@@ -198,21 +232,23 @@ pub fn bar(pct: f64, cells: usize) -> Vec<Span<'static>> {
         .collect()
 }
 
-/// The units [`age`] counts in: below each limit (seconds), the unit's length and suffix. Each
-/// limit is a whole number of the next unit, so a change of unit falls on a multiple of it.
-const AGE_UNITS: [(f64, f64, &str); 4] = [
+/// The units [`age`] counts in: below each limit (seconds), the unit's length and suffix; past
+/// the last limit it counts in [`AGE_WEEKS`]. Each limit is a whole number of the next unit, so
+/// a change of unit falls on a multiple of it.
+const AGE_UNITS: [(f64, f64, &str); 3] = [
     (3600.0, 60.0, "m"),
     (86400.0, 3600.0, "h"),
     (100.0 * 86400.0, 86400.0, "d"),
-    (f64::INFINITY, 7.0 * 86400.0, "w"),
 ];
+/// The unit [`age`] counts in past the last of [`AGE_UNITS`]: its length and suffix.
+const AGE_WEEKS: (f64, &str) = (7.0 * 86400.0, "w");
 
 /// The unit's length and suffix [`age`] uses for something `seconds` old.
 fn age_unit(seconds: f64) -> (f64, &'static str) {
     AGE_UNITS
         .iter()
         .find(|(limit, ..)| seconds < *limit)
-        .map_or((7.0 * 86400.0, "w"), |&(_, unit, suffix)| (unit, suffix))
+        .map_or(AGE_WEEKS, |&(_, unit, suffix)| (unit, suffix))
 }
 
 /// How long ago, in four cells at most: `5m`, `3h`, `12d` or `40w`.
@@ -230,13 +266,10 @@ pub fn age_period(seconds: f64) -> f64 {
     age_unit(seconds).0
 }
 
-/// An integer with a comma between thousands, as `4,210`.
-pub fn thousands(n: i64) -> String {
-    let digits = n.unsigned_abs().to_string();
-    let mut out = String::with_capacity(digits.len() + digits.len() / 3 + 1);
-    if n < 0 {
-        out.push('-');
-    }
+/// A count with a comma between thousands, as `4,210`.
+pub fn thousands(n: u64) -> String {
+    let digits = n.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
     for (i, digit) in digits.chars().enumerate() {
         if i > 0 && (digits.len() - i).is_multiple_of(3) {
             out.push(',');
@@ -252,13 +285,9 @@ mod tests {
 
     use crate::ui::line::cells;
     use crate::ui::words::{
-        age, age_period, bar, bar_style, fit, floor_div, money, next_tick, remaining, span,
-        thousands, waiting_label, CLAUDE, CURRENT, ERROR, MASCOT, STRONG, SUBTLE, WARNING,
+        age, age_period, bar, bar_style, fit, floor_div, money, remaining, span, thousands,
+        waiting_label, CLAUDE, CURRENT, ERROR, MASCOT, STRONG, SUBTLE, WARNING,
     };
-
-    fn near(a: f64, b: f64, eps: f64) -> bool {
-        (a - b).abs() < eps
-    }
 
     #[test]
     fn bar_fills_by_rounding_and_colours_by_level() {
@@ -308,7 +337,6 @@ mod tests {
         assert_eq!(thousands(23), "23");
         assert_eq!(thousands(1_234_567), "1,234,567");
         assert_eq!(thousands(0), "0");
-        assert_eq!(thousands(-1000), "-1,000");
     }
 
     #[test]
@@ -331,21 +359,6 @@ mod tests {
     fn waiting_label_switches_to_hours() {
         assert_eq!(waiting_label(3599.0), "59m");
         assert_eq!(waiting_label(7300.0), "2h");
-    }
-
-    #[test]
-    fn next_tick_waits_for_the_next_second_but_never_almost_nothing() {
-        assert!(near(next_tick(10.25, 1), 0.75, 1e-9));
-        // a delay of a few microseconds would end the redraw loop, so it waits for the second
-        // after
-        assert!(near(next_tick(10.999_999_9, 1), 1.000_000_1, 1e-6));
-        assert_eq!(next_tick(10.0, 1), 1.0);
-    }
-
-    #[test]
-    fn next_tick_can_wake_on_the_next_frame() {
-        assert!(near(next_tick(10.03, 8), 0.095, 1e-9));
-        assert_eq!(next_tick(10.0, 8), 0.125);
     }
 
     #[test]

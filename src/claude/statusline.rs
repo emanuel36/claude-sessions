@@ -28,9 +28,9 @@ use crate::core::store::{self, Sink};
 use crate::process;
 
 /// The account's usage windows, as the status line input names them.
-pub const WINDOWS: [&str; 2] = ["five_hour", "seven_day"];
+const WINDOWS: [&str; 2] = ["five_hour", "seven_day"];
 /// Claude Code cancels a status line that runs past its next update anyway.
-pub const CHAIN_TIMEOUT: Duration = Duration::from_secs(5);
+const CHAIN_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// How much of a usage window is used, and when the window resets.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -61,7 +61,7 @@ fn text(value: Option<&Value>) -> Option<&str> {
 /// `cost` (USD) and `api_duration` (seconds Claude spent answering) are `None` until known;
 /// `model` is the display name or else the id, `None` until known; `added` and `removed` lines
 /// are 0 until known. A fraction of a line is dropped and a negative count is 0.
-pub fn parse(data: &Value) -> Usage {
+fn parse(data: &Value) -> Usage {
     let cost = |key| number(get(data, &["cost", key]));
     // A float-to-int `as` saturates, and maps a negative to 0
     let lines = |key| cost(key).map_or(0, |n| n as u64);
@@ -80,7 +80,7 @@ pub fn parse(data: &Value) -> Usage {
 ///
 /// A window needs both a used percentage and a reset time; `resets_at` in the input is a Unix
 /// timestamp.
-pub fn parse_limits(data: &Value) -> BTreeMap<String, Quota> {
+fn parse_limits(data: &Value) -> BTreeMap<String, Quota> {
     WINDOWS
         .iter()
         .filter_map(|name| {
@@ -106,22 +106,16 @@ pub fn load_limits(now: f64) -> BTreeMap<String, Quota> {
 }
 
 pub(crate) fn load_limits_in(dir: &Path, now: f64) -> BTreeMap<String, Quota> {
-    let Ok(bytes) = fs::read(dir.join(LIMITS_FILE)) else {
-        return BTreeMap::new();
-    };
-    let Ok(saved) = serde_json::from_slice::<Value>(&bytes) else {
-        return BTreeMap::new();
-    };
-    WINDOWS
-        .iter()
-        .filter_map(|name| {
-            let window = saved.get(name)?;
-            let quota = Quota {
-                pct: number(window.get("pct"))?,
-                resets_at: number(window.get("resets_at"))?,
-            };
-            (quota.resets_at > now).then(|| ((*name).to_owned(), quota))
-        })
+    // Entry by entry, so one bad window does not drop the others
+    let saved: BTreeMap<String, Value> = fs::read(dir.join(LIMITS_FILE))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default();
+    saved
+        .into_iter()
+        .filter(|(name, _)| WINDOWS.contains(&name.as_str()))
+        .filter_map(|(name, value)| Some((name, serde_json::from_value::<Quota>(value).ok()?)))
+        .filter(|(_, quota)| quota.resets_at > now)
         .collect()
 }
 
@@ -161,7 +155,7 @@ pub fn saved_statusline_path() -> PathBuf {
 }
 
 /// Returns the command of the user's own status line, or `None` if there is none.
-pub fn saved_command() -> Option<String> {
+fn saved_command() -> Option<String> {
     saved_command_in(&saved_statusline_path())
 }
 
@@ -178,7 +172,7 @@ pub(crate) fn saved_command_in(path: &Path) -> Option<String> {
 /// # Errors
 ///
 /// Fails if the records directory is unusable, or the limits or the record cannot be written.
-pub fn record_usage(data: &Value, now: f64) -> io::Result<()> {
+fn record_usage(data: &Value, now: f64) -> io::Result<()> {
     record_usage_in(&paths::runtime_dir()?, &journal::append, data, now)
 }
 
@@ -208,7 +202,7 @@ fn record_session_usage(dir: &Path, journal: Sink<'_>, data: &Value, now: f64) -
     let before = record.usage.as_ref().and_then(|u| u.cost);
     let usage = parse(data);
     record.usage = Some(usage.clone());
-    store::write_in(dir, &record, journal)?;
+    store::write_in(dir, &record, Some(record.status), journal)?;
     if usage.cost.is_some() && usage.cost != before {
         journal(&JournalEvent {
             t: now,
@@ -233,7 +227,7 @@ fn record_session_usage(dir: &Path, journal: Sink<'_>, data: &Value, now: f64) -
 /// # Errors
 ///
 /// Fails if the command cannot start or the output cannot be written.
-pub fn print_statusline(raw: &[u8], data: &Value, out: &mut dyn Write) -> io::Result<()> {
+fn print_statusline(raw: &[u8], data: &Value, out: &mut dyn Write) -> io::Result<()> {
     print_statusline_with(saved_command().as_deref(), raw, data, out, CHAIN_TIMEOUT)
 }
 
@@ -548,6 +542,18 @@ mod tests {
     }
 
     #[test]
+    fn load_limits_drops_only_the_window_it_cannot_read() {
+        let dir = TempDir::new().unwrap();
+        let saved = json!({
+            "five_hour": {"pct": 40, "resets_at": 900},
+            "seven_day": {"pct": "40", "resets_at": 900},
+        });
+        fs::write(dir.path().join(LIMITS_FILE), saved.to_string()).unwrap();
+        let loaded = load_limits_in(dir.path(), 0.0);
+        assert_eq!(loaded.keys().collect::<Vec<_>>(), ["five_hour"]);
+    }
+
+    #[test]
     fn save_limits_keeps_the_higher_use_of_the_same_window() {
         let dir = TempDir::new().unwrap();
         let five = |pct, resets| limits(&[("five_hour", quota(pct, resets))]);
@@ -599,7 +605,7 @@ mod tests {
             status_since: 7.0,
             ..new_record("s1")
         };
-        write_in(dir.path(), &before, &|_| {}).unwrap();
+        write_in(dir.path(), &before, None, &|_| {}).unwrap();
         record(dir.path(), &status_input(), 100.0);
         let after = read_in(dir.path(), "s1").unwrap();
         assert_eq!(
@@ -624,7 +630,7 @@ mod tests {
             status_since: 7.0,
             ..new_record("s1")
         };
-        write_in(dir.path(), &rec, &|_| {}).unwrap();
+        write_in(dir.path(), &rec, None, &|_| {}).unwrap();
         let first = record(dir.path(), &status_input(), 100.0);
         let second = record(dir.path(), &status_input(), 101.0);
         assert_eq!(first.len(), 1);
@@ -635,7 +641,7 @@ mod tests {
     #[test]
     fn cost_events_carry_lines_and_model() {
         let dir = TempDir::new().unwrap();
-        write_in(dir.path(), &new_record("s1"), &|_| {}).unwrap();
+        write_in(dir.path(), &new_record("s1"), None, &|_| {}).unwrap();
         let mut data = status_input();
         data["cost"] =
             json!({"total_cost_usd": 1.0, "total_lines_added": 10, "total_lines_removed": 2});
@@ -657,7 +663,7 @@ mod tests {
     #[test]
     fn no_cost_yet_logs_nothing() {
         let dir = TempDir::new().unwrap();
-        write_in(dir.path(), &new_record("s1"), &|_| {}).unwrap();
+        write_in(dir.path(), &new_record("s1"), None, &|_| {}).unwrap();
         let mut data = status_input();
         data["cost"] = Value::Null;
         assert!(record(dir.path(), &data, 100.0).is_empty());

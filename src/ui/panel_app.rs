@@ -16,7 +16,8 @@ use crate::claude::transcript::Titles;
 use crate::core::state::unix_now;
 use crate::term::tmux::{Cli, Runner};
 use crate::ui::folders::Scan;
-use crate::ui::pane::{self, open, picker_key, quits, App, LogOnce, Step};
+use crate::ui::pane::{self, App, LogOnce, Step};
+use crate::ui::picker::keys::{open, picker_key, quits};
 use crate::ui::picker::{self, Folder, Picker};
 use crate::ui::runtime::{Msg, Runtime, Schedule, Screen};
 use crate::ui::search::Searchable;
@@ -33,7 +34,9 @@ pub fn main_panel() -> anyhow::Result<()> {
     let mut app = Panel::new(Box::new(Cli::default()), Picker::default());
     // Reading the history takes a moment on a long one: the search line comes first
     app.update(unix_now(), &mut runtime, &mut screen);
-    (app.picker.folders, app.picker.sessions) = folders(unix_now());
+    let (folders, sessions) = folders(unix_now());
+    app.picker.folders = folders;
+    app.picker.set_sessions(sessions);
     app.update(unix_now(), &mut runtime, &mut screen);
     pane::run(&mut app, &mut runtime, &mut screen);
     Ok(())
@@ -44,15 +47,11 @@ pub fn main_panel() -> anyhow::Result<()> {
 fn folders(now: f64) -> (Vec<Folder>, Vec<Searchable>) {
     let mut history = HistoryReader::new(true);
     history.load();
-    let generation = history.generation();
     let mut usage = Reader::new();
-    let costs = &usage
-        .totals(history.sessions(), generation, now)
-        .per_session;
+    let totals = usage.totals(history.sessions(), history.generation(), now);
     let open: HashSet<String> = hook::live_sessions(now).into_iter().map(|r| r.id).collect();
     let mut scan = Scan::new(Titles::new(true));
-    let folders = scan.load(history.sessions(), generation, costs, &open);
-    (folders, scan.searchable(&open))
+    pane::folders(&history, &mut scan, &totals.per_session, &open)
 }
 
 /// The panel: the folder list, and the server it opens windows in.
@@ -89,7 +88,7 @@ impl App for Panel {
                 };
                 match self.picker.key(typed) {
                     Some(row) => {
-                        open(self.tmux.as_ref(), &row, &self.picker.folders);
+                        open(self.tmux.as_ref(), &row);
                         Step::Quit
                     }
                     None => Step::Draw,
@@ -121,7 +120,7 @@ mod tests {
     use crate::term::tmux::fake::FakeTmux;
     use crate::ui::pane::{App, Step};
     use crate::ui::panel_app::Panel;
-    use crate::ui::picker::{Folder, Picker, Root, RowKind, Session};
+    use crate::ui::picker::{Folder, Picker, Root, Row, Session};
     use crate::ui::runtime::{Msg, Runtime};
 
     const NOW: f64 = 1_700_000_000.0;
@@ -227,7 +226,7 @@ mod tests {
         let mut keys = chars("/w/api");
         keys.extend([KeyCode::Down, KeyCode::Right, KeyCode::Down, KeyCode::Left]);
         let (mut panel, _, _) = drive(&keys);
-        assert_eq!(panel.picker.selected().unwrap().kind, RowKind::Folder);
+        assert!(matches!(panel.picker.selected(), Some(Row::Folder { .. })));
         assert!(panel.picker.expanded.is_empty());
     }
 
@@ -239,7 +238,7 @@ mod tests {
             assert_eq!(steps, [Step::Draw]);
             assert_eq!(panel.picker.open, vec![root]);
             let row = panel.picker.selected().unwrap();
-            assert_eq!((row.kind, row.root), (RowKind::Root, Some(root)));
+            assert!(matches!(row, Row::Root { root: r, .. } if r == root));
             let (panel, _, _) = drive_keys(&[ctrl(c), ctrl(c)]);
             assert!(panel.picker.open.is_empty());
         }

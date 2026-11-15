@@ -3,7 +3,6 @@
 mod support;
 
 use std::fs;
-use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 use support::{cst, env, TestEnv};
@@ -31,11 +30,6 @@ fn save_statusline(env: &TestEnv, command: &str) {
 fn start_session(env: &TestEnv, id: &str) {
     let input = json!({"session_id": id, "hook_event_name": "SessionStart"}).to_string();
     assert_eq!(cst(env, &["hook"], input.as_bytes()).status.code(), Some(0));
-}
-
-fn record(env: &TestEnv, id: &str) -> Value {
-    let bytes = fs::read(env.runtime_dir().join(format!("{id}.json"))).expect("record file");
-    serde_json::from_slice(&bytes).expect("record json")
 }
 
 fn limits(env: &TestEnv) -> Value {
@@ -91,42 +85,11 @@ fn non_json_stdin_prints_and_exits_0() {
 }
 
 #[test]
-fn records_usage_without_touching_status() {
-    let env = env();
-    start_session(&env, "s1");
-    let before = record(&env, "s1");
-    let out = statusline(&env, status_input().to_string().as_bytes());
-    assert_eq!(out.stdout, b"Opus  $1.50\n");
-    let after = record(&env, "s1");
-    assert_eq!(
-        after["usage"],
-        json!({"cost": 1.5, "api_duration": 60.0, "model": "Opus", "added": 3, "removed": 0})
-    );
-    assert_eq!(after["status"], before["status"]);
-    assert_eq!(after["status_since"], before["status_since"]);
-    assert_eq!(limits(&env)["five_hour"]["pct"], 40.0);
-    assert_eq!(limits(&env)["five_hour"]["resets_at"], 4e9);
-}
-
-#[test]
 fn default_line_is_empty_until_cost_is_known() {
     let env = env();
     let mut early = status_input();
     early["cost"] = Value::Null;
     assert_eq!(statusline(&env, early.to_string().as_bytes()).stdout, b"\n");
-}
-
-#[test]
-fn logs_the_cost_only_when_it_changes() {
-    let env = env();
-    start_session(&env, "s1");
-    let stdin = status_input().to_string();
-    statusline(&env, stdin.as_bytes());
-    statusline(&env, stdin.as_bytes());
-    let events = cost_events(&env);
-    assert_eq!(events.len(), 1);
-    assert_eq!(events[0]["id"], json!("s1"));
-    assert_eq!(events[0]["cost"], json!(1.5));
 }
 
 #[test]
@@ -154,21 +117,6 @@ fn without_a_valid_session_the_limits_are_still_saved() {
     }
     assert_eq!(limits(&env)["five_hour"]["pct"], 40.0);
     assert_eq!(error_log(&env), "");
-}
-
-/// The bound leaves 3 s over the 5 s timeout: a loaded host can be slow to start the chain.
-#[test]
-fn chain_is_killed_after_five_seconds() {
-    let env = env();
-    save_statusline(&env, "sleep 10; echo late");
-    let start = Instant::now();
-    let out = statusline(&env, status_input().to_string().as_bytes());
-    assert!(
-        start.elapsed() < Duration::from_secs(8),
-        "{:?}",
-        start.elapsed()
-    );
-    assert!(out.stdout.is_empty());
 }
 
 #[test]

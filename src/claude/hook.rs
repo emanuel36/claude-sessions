@@ -25,17 +25,14 @@ use crate::term::tmux::{self, Cli, Runner};
 /// Events after which the window takes the session's folder name.
 ///
 /// Claude Code writes a session's title during its first turn: `Stop` picks it up.
-pub const NAMING_EVENTS: [&str; 3] = ["SessionStart", "UserPromptSubmit", "Stop"];
+const NAMING_EVENTS: [&str; 3] = ["SessionStart", "UserPromptSubmit", "Stop"];
 /// How a session starts when it takes the place of another in the same Claude process.
-pub const REPLACING: [&str; 2] = ["clear", "resume"];
+const REPLACING: [&str; 2] = ["clear", "resume"];
 /// A working session with no hook for this long is checked for an Esc interrupt.
 pub const QUIET_SECONDS: f64 = 3.0;
 
 /// Gives a runner for the tmux server at a socket path.
 type Binder = dyn Fn(&str) -> Box<dyn Runner>;
-
-/// A borrowed [`Binder`].
-type Bind<'a> = &'a Binder;
 
 /// What the hook needs from outside the process.
 struct Seams<'a> {
@@ -44,7 +41,7 @@ struct Seams<'a> {
     /// Where status changes are reported.
     journal: Sink<'a>,
     /// How to talk to the tmux server of a record's pane.
-    bind: Bind<'a>,
+    bind: &'a Binder,
 }
 
 /// Runs `f` with the real records directory, journal and tmux.
@@ -66,7 +63,7 @@ fn with_seams<R>(f: impl FnOnce(&Seams<'_>) -> R) -> Result<R> {
 ///
 /// Fails if the input is not JSON, or lacks a session id that can name a record or the name
 /// of the hook event.
-pub fn parse_event(input: &[u8]) -> Result<Event> {
+fn parse_event(input: &[u8]) -> Result<Event> {
     let event: Event = serde_json::from_slice(input).context("not a hook input")?;
     if !store::is_session_id(&event.session_id) {
         bail!("bad session id {:?}", event.session_id);
@@ -102,7 +99,7 @@ fn claude_pid(env: &HashMap<String, String>) -> i32 {
 /// # Errors
 ///
 /// Fails if the records directory is unusable, or the record cannot be locked or written.
-pub fn handle_event(
+fn handle_event(
     event: &Event,
     env: &HashMap<String, String>,
     now: f64,
@@ -136,7 +133,8 @@ fn handle_event_in(
         }
         return Ok(());
     }
-    let mut record = apply_event(store::read_in(s.dir, id).as_ref(), event, now);
+    let before = store::read_in(s.dir, id);
+    let mut record = apply_event(before.as_ref(), event, now);
     let pid = claude_pid(env);
     record.pid = Some(pid);
     record.pid_start = store::process_start(pid);
@@ -151,16 +149,13 @@ fn handle_event_in(
     let naming = NAMING_EVENTS.contains(&name);
     if naming {
         // A title found once stays, even after it scrolls out of the transcript's tail
-        let found = record
-            .transcript
-            .as_deref()
-            .map(title_of)
-            .unwrap_or_default();
+        let found = transcript_title(&record);
         if !found.is_empty() {
             record.title = found;
         }
     }
-    store::write_in(s.dir, &record, s.journal).context("cannot write the record")?;
+    let status = before.map(|b| b.status);
+    store::write_in(s.dir, &record, status, s.journal).context("cannot write the record")?;
     // Told under the lock, so overlapping hooks reach tmux in the order they hit the disk
     if let (true, Some(server)) = (naming, &pane_server) {
         tmux::name_window(&record, &record.title, &**server);
@@ -187,21 +182,23 @@ pub fn adopt_title(id: &str, t: &dyn Runner) {
     }
 }
 
+/// The title in a record's transcript; empty when it has none or there is no transcript.
+fn transcript_title(r: &Record) -> String {
+    r.transcript.as_deref().map(title_of).unwrap_or_default()
+}
+
 fn adopt_title_in(s: &Seams<'_>, id: &str, t: &dyn Runner) -> Result<()> {
     let lock = store::lock_in(s.dir, id).context("cannot lock the record")?;
     let Some(mut record) = store::read_in(s.dir, id) else {
         return Ok(());
     };
-    let found = record
-        .transcript
-        .as_deref()
-        .map(title_of)
-        .unwrap_or_default();
+    let found = transcript_title(&record);
     if found.is_empty() || found == record.title {
         return Ok(());
     }
     record.title = found;
-    store::write_in(s.dir, &record, s.journal).context("cannot write the record")?;
+    store::write_in(s.dir, &record, Some(record.status), s.journal)
+        .context("cannot write the record")?;
     tmux::name_window(&record, &record.title, t);
     drop(lock);
     Ok(())
@@ -267,7 +264,7 @@ fn settle_interrupted_in(s: &Seams<'_>, id: &str, now: f64) -> Option<Record> {
         return Some(current);
     }
     let settled = mark_interrupted(&current, now);
-    if let Err(e) = store::write_in(s.dir, &settled, s.journal) {
+    if let Err(e) = store::write_in(s.dir, &settled, Some(current.status), s.journal) {
         paths::log_error(&format_args!("hook: cannot settle {id}: {e}"));
     }
     Some(settled)
@@ -298,7 +295,12 @@ fn seen_in(s: &Seams<'_>, pane: &str, socket: &str, now: f64) {
         else {
             continue;
         };
-        if let Err(e) = store::write_in(s.dir, &mark_seen(&current, now), s.journal) {
+        if let Err(e) = store::write_in(
+            s.dir,
+            &mark_seen(&current, now),
+            Some(current.status),
+            s.journal,
+        ) {
             paths::log_error(&format_args!("hook: cannot mark {} seen: {e}", r.id));
         }
     }
@@ -319,7 +321,7 @@ mod tests {
 
     use crate::claude::hook::{
         adopt_title_in, claude_pid, handle_event_in, live_sessions_in, parse_event, seen_in,
-        settle_interrupted_in, Bind, Binder, Seams,
+        settle_interrupted_in, Binder, Seams,
     };
     use crate::claude::install::HOOK_TIMEOUT;
     use crate::core::journal::JournalEvent;
@@ -355,11 +357,10 @@ mod tests {
         }
 
         fn seams(&self) -> Seams<'_> {
-            let bind: Bind<'_> = &*self.bind;
             Seams {
                 dir: self.dir.path(),
                 journal: &no_journal,
-                bind,
+                bind: &*self.bind,
             }
         }
 
@@ -377,7 +378,7 @@ mod tests {
         }
 
         fn write(&self, r: &Record) {
-            write_in(self.dir.path(), r, &no_journal).expect("write record");
+            write_in(self.dir.path(), r, None, &no_journal).expect("write record");
         }
 
         /// Each call as one line: `-S <socket> <args>`.
@@ -445,6 +446,26 @@ mod tests {
             assert_eq!(claude_pid(&env(bad)), parent, "{bad:?}");
         }
         assert_eq!(claude_pid(&HashMap::new()), parent);
+    }
+
+    #[test]
+    fn hook_journals_a_status_change_once() {
+        let rig = Rig::new();
+        let seen = RefCell::new(Vec::new());
+        let journal = |e: &JournalEvent| seen.borrow_mut().push(e.status.clone());
+        let seams = Seams {
+            journal: &journal,
+            ..rig.seams()
+        };
+        let here = rig.here();
+        let mut e = event("s1", "UserPromptSubmit");
+        for name in ["UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"] {
+            e.hook_event_name = name.to_owned();
+            handle_event_in(&seams, &e, &env(&[]), 100.0, &*here).expect("handle event");
+        }
+        // A new session, then its stop: the tool events keep it working and journal nothing
+        let statuses: Vec<_> = seen.borrow().iter().flatten().cloned().collect();
+        assert_eq!(statuses, ["working", "done"]);
     }
 
     #[test]

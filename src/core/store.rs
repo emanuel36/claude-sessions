@@ -15,10 +15,10 @@ use rustix::fs::{flock, FlockOperation};
 
 use crate::core::journal::{self, JournalEvent};
 use crate::core::paths::{self, LIMITS_FILE};
-use crate::core::state::{self, unix_now, Record};
+use crate::core::state::{self, unix_now, Record, Status};
 
 /// A lock file nobody holds, whose session has no record, is deleted once this old.
-pub const STALE_LOCK_SECONDS: f64 = 60.0;
+const STALE_LOCK_SECONDS: f64 = 60.0;
 
 /// What a record file's name ends with, after the session id.
 pub(crate) const RECORD_SUFFIX: &str = ".json";
@@ -49,7 +49,7 @@ pub fn process_start(pid: i32) -> Option<u64> {
 ///
 /// A record needs both its pid and the start time it was written with: without a start time
 /// there is nothing to tell the process from another that took the pid, so it counts as dead.
-pub fn is_alive(r: &Record) -> bool {
+fn is_alive(r: &Record) -> bool {
     let (Some(pid), Some(start)) = (r.pid, r.pid_start) else {
         return false;
     };
@@ -68,10 +68,21 @@ fn parse_start(stat: &[u8]) -> Option<u64> {
 }
 
 /// The session id of a record's file name; `None` for any other file.
-fn record_id(name: Option<&str>) -> Option<&str> {
-    let name = name.filter(|&n| n != LIMITS_FILE)?;
+fn record_id(name: &str) -> Option<&str> {
+    if name == LIMITS_FILE {
+        return None;
+    }
     name.strip_suffix(RECORD_SUFFIX)
         .filter(|id| is_session_id(id))
+}
+
+/// The names of the files in `dir` that are valid UTF-8; none if it cannot be read.
+fn file_names(dir: &Path) -> impl Iterator<Item = String> {
+    fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| e.file_name().into_string().ok())
 }
 
 /// Removes the lock an ended session left behind, once no hook can still be waiting on it.
@@ -97,6 +108,13 @@ fn record_path(dir: &Path, id: &str) -> io::Result<PathBuf> {
     Ok(dir.join(format!("{id}{RECORD_SUFFIX}")))
 }
 
+/// The lock file of the record at `record`.
+fn lock_path(record: &Path) -> PathBuf {
+    let mut path = record.as_os_str().to_owned();
+    path.push(".lock");
+    path.into()
+}
+
 /// Takes the lock of a session in `dir`, waiting for whoever holds it.
 ///
 /// Hooks of parallel tool calls can overlap, so a read-modify-write of a record goes under it.
@@ -105,13 +123,11 @@ fn record_path(dir: &Path, id: &str) -> io::Result<PathBuf> {
 ///
 /// Fails if the id is not a [`is_session_id`], or the lock file cannot be opened or locked.
 pub(crate) fn lock_in(dir: &Path, id: &str) -> io::Result<Lock> {
-    let mut path = record_path(dir, id)?.into_os_string();
-    path.push(".lock");
     let file = OpenOptions::new()
         .append(true)
         .create(true)
         .mode(0o600)
-        .open(path)?;
+        .open(lock_path(&record_path(dir, id)?))?;
     loop {
         match flock(&file, FlockOperation::LockExclusive) {
             Ok(()) => return Ok(Lock { _file: file }),
@@ -129,18 +145,23 @@ pub(crate) fn read_in(dir: &Path, id: &str) -> Option<Record> {
 
 /// Writes a record atomically, so readers never see a partial file.
 ///
-/// A change of status, or a new session, also goes to `journal`, at [`state::since`]. Callers
-/// hold the lock, so the record on disk is the one this write replaces.
+/// `before` is the status of the record this write replaces, `None` for a new session; callers
+/// hold the lock, so it is the one on disk. A change of status, or a new session, also goes to
+/// `journal`, at [`state::since`].
 ///
 /// # Errors
 ///
 /// Fails if the id is not a [`is_session_id`] or the file cannot be written.
-pub(crate) fn write_in(dir: &Path, r: &Record, journal: Sink<'_>) -> io::Result<()> {
+pub(crate) fn write_in(
+    dir: &Path,
+    r: &Record,
+    before: Option<Status>,
+    journal: Sink<'_>,
+) -> io::Result<()> {
     let path = record_path(dir, &r.id)?;
-    let before = read_in(dir, &r.id);
     let data = serde_json::to_vec(r).map_err(io::Error::other)?;
     paths::write_atomic(&path, &data, None)?;
-    if before.is_none_or(|b| b.status != r.status) {
+    if before != Some(r.status) {
         let since = state::since(r);
         journal(&JournalEvent {
             t: if since != 0.0 { since } else { unix_now() },
@@ -171,9 +192,7 @@ pub(crate) fn remove_in(dir: &Path, id: &str, keep_lock: bool, journal: Sink<'_>
         Err(e) => paths::log_error(&format_args!("store: cannot remove {id}: {e}")),
     }
     if !keep_lock {
-        let mut lock = path.into_os_string();
-        lock.push(".lock");
-        match fs::remove_file(&lock) {
+        match fs::remove_file(lock_path(&path)) {
             Err(e) if e.kind() != io::ErrorKind::NotFound => {
                 paths::log_error(&format_args!("store: cannot remove lock of {id}: {e}"));
             }
@@ -188,12 +207,8 @@ pub(crate) fn remove_in(dir: &Path, id: &str, keep_lock: bool, journal: Sink<'_>
 /// without a `SessionEnd`, and would otherwise linger until the process exits. The lock stays,
 /// as on `SessionEnd`: a hook of the old session may be waiting on it.
 pub(crate) fn remove_replaced_in(dir: &Path, r: &Record, journal: Sink<'_>) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let Some(id) = record_id(name.to_str()) else {
+    for name in file_names(dir) {
+        let Some(id) = record_id(&name) else {
             continue;
         };
         if id == r.id {
@@ -216,13 +231,7 @@ pub(crate) fn remove_replaced_in(dir: &Path, r: &Record, journal: Sink<'_>) {
 /// Records of dead processes are deleted, and so are the locks ended sessions left behind.
 /// `now` is the current time as a Unix timestamp.
 pub(crate) fn load_all_in(dir: &Path, now: f64, journal: Sink<'_>) -> Vec<Record> {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return Vec::new();
-    };
-    let names: HashSet<String> = entries
-        .flatten()
-        .filter_map(|e| e.file_name().into_string().ok())
-        .collect();
+    let names: HashSet<String> = file_names(dir).collect();
     let mut records = Vec::new();
     for name in &names {
         if let Some(record) = name.strip_suffix(".lock") {
@@ -230,7 +239,7 @@ pub(crate) fn load_all_in(dir: &Path, now: f64, journal: Sink<'_>) -> Vec<Record
                 drop_stale_lock(&dir.join(name), now);
             }
         }
-        let Some(id) = record_id(Some(name)) else {
+        let Some(id) = record_id(name) else {
             continue;
         };
         let Some(record) = read_in(dir, id) else {
@@ -302,7 +311,7 @@ mod tests {
             status: Status::Done,
             ..live_record("s1")
         };
-        write_in(tmp.path(), &r, &quiet).unwrap();
+        write_in(tmp.path(), &r, None, &quiet).unwrap();
         assert_eq!(read_in(tmp.path(), "s1"), Some(r));
     }
 
@@ -322,7 +331,7 @@ mod tests {
             assert_eq!(read_in(tmp.path(), id), None, "{id:?}");
             assert!(lock_in(tmp.path(), id).is_err(), "{id:?}");
             assert!(
-                write_in(tmp.path(), &new_record(id), &quiet).is_err(),
+                write_in(tmp.path(), &new_record(id), None, &quiet).is_err(),
                 "{id:?}"
             );
         }
@@ -339,12 +348,12 @@ mod tests {
     #[test]
     fn dead_sessions_are_dropped_and_deleted() {
         let tmp = TempDir::new().unwrap();
-        write_in(tmp.path(), &live_record("alive"), &quiet).unwrap();
+        write_in(tmp.path(), &live_record("alive"), None, &quiet).unwrap();
         let dead = Record {
             pid_start: Some(u64::MAX),
             ..live_record("dead")
         };
-        write_in(tmp.path(), &dead, &quiet).unwrap();
+        write_in(tmp.path(), &dead, None, &quiet).unwrap();
         let all = load_all_in(tmp.path(), 0.0, &quiet);
         assert_eq!(ids(&all), ["alive"]);
         assert_eq!(read_in(tmp.path(), "dead"), None);
@@ -359,7 +368,7 @@ mod tests {
             pid_start: None,
             ..new_record("gone")
         };
-        write_in(tmp.path(), &gone, &quiet).unwrap();
+        write_in(tmp.path(), &gone, None, &quiet).unwrap();
         assert!(load_all_in(tmp.path(), 0.0, &quiet).is_empty());
         assert_eq!(read_in(tmp.path(), "gone"), None);
     }
@@ -380,7 +389,7 @@ mod tests {
             pid_start: Some(u64::MAX),
             ..live_record("dead")
         };
-        write_in(tmp.path(), &dead, &quiet).unwrap();
+        write_in(tmp.path(), &dead, None, &quiet).unwrap();
         let events = journaled(|j| {
             load_all_in(tmp.path(), 0.0, j);
         });
@@ -409,7 +418,7 @@ mod tests {
     #[test]
     fn the_lock_of_a_live_record_is_never_swept() {
         let tmp = TempDir::new().unwrap();
-        write_in(tmp.path(), &live_record("s1"), &quiet).unwrap();
+        write_in(tmp.path(), &live_record("s1"), None, &quiet).unwrap();
         drop(lock_in(tmp.path(), "s1").unwrap());
         load_all_in(tmp.path(), 1e12, &quiet);
         assert_eq!(names(tmp.path()), ["s1.json", "s1.json.lock"]);
@@ -418,7 +427,7 @@ mod tests {
     #[test]
     fn load_all_skips_the_limits_file() {
         let tmp = TempDir::new().unwrap();
-        write_in(tmp.path(), &live_record("s1"), &quiet).unwrap();
+        write_in(tmp.path(), &live_record("s1"), None, &quiet).unwrap();
         drop(lock_in(tmp.path(), "s1").unwrap());
         fs::write(
             tmp.path().join(LIMITS_FILE),
@@ -461,7 +470,7 @@ mod tests {
                 status_since: since,
                 ..live_record(id)
             };
-            write_in(tmp.path(), &r, &quiet).unwrap();
+            write_in(tmp.path(), &r, None, &quiet).unwrap();
         }
         let all = load_all_in(tmp.path(), 0.0, &quiet);
         assert_eq!(ids(&all), ["early", "late", "done", "idle"]);
@@ -475,7 +484,7 @@ mod tests {
             status_since: 123.5,
             ..live_record("s1")
         };
-        let events = journaled(|j| write_in(tmp.path(), &r, j).unwrap());
+        let events = journaled(|j| write_in(tmp.path(), &r, None, j).unwrap());
         assert_eq!(events.len(), 1);
         assert_eq!((events[0].t, events[0].id.as_str()), (123.5, "s1"));
         assert_eq!(events[0].status.as_deref(), Some("working"));
@@ -484,7 +493,7 @@ mod tests {
     #[test]
     fn a_record_without_a_time_is_journaled_at_now() {
         let tmp = TempDir::new().unwrap();
-        let events = journaled(|j| write_in(tmp.path(), &live_record("s1"), j).unwrap());
+        let events = journaled(|j| write_in(tmp.path(), &live_record("s1"), None, j).unwrap());
         assert!(events[0].t > 1.7e9);
     }
 
@@ -495,24 +504,28 @@ mod tests {
             status: Status::Working,
             ..live_record("s1")
         };
-        write_in(tmp.path(), &first, &quiet).unwrap();
+        write_in(tmp.path(), &first, None, &quiet).unwrap();
         let same = Record {
             updated_at: 9.0,
             ..first.clone()
         };
-        assert!(journaled(|j| write_in(tmp.path(), &same, j).unwrap()).is_empty());
+        assert!(
+            journaled(|j| write_in(tmp.path(), &same, Some(Status::Working), j).unwrap())
+                .is_empty()
+        );
         let changed = Record {
             status: Status::Done,
             ..first
         };
-        let events = journaled(|j| write_in(tmp.path(), &changed, j).unwrap());
+        let events =
+            journaled(|j| write_in(tmp.path(), &changed, Some(Status::Working), j).unwrap());
         assert_eq!(events[0].status.as_deref(), Some("done"));
     }
 
     #[test]
     fn removing_a_record_ends_it_in_the_journal_and_drops_its_lock() {
         let tmp = TempDir::new().unwrap();
-        write_in(tmp.path(), &live_record("s1"), &quiet).unwrap();
+        write_in(tmp.path(), &live_record("s1"), None, &quiet).unwrap();
         drop(lock_in(tmp.path(), "s1").unwrap());
         let events = journaled(|j| remove_in(tmp.path(), "s1", false, j));
         assert_eq!(events.len(), 1);
@@ -523,7 +536,7 @@ mod tests {
     #[test]
     fn removing_can_keep_the_lock() {
         let tmp = TempDir::new().unwrap();
-        write_in(tmp.path(), &live_record("s1"), &quiet).unwrap();
+        write_in(tmp.path(), &live_record("s1"), None, &quiet).unwrap();
         drop(lock_in(tmp.path(), "s1").unwrap());
         remove_in(tmp.path(), "s1", true, &quiet);
         assert_eq!(names(tmp.path()), ["s1.json.lock"]);
@@ -556,7 +569,7 @@ mod tests {
             ..live_record("stranger")
         };
         for r in [&old, &new, &stranger] {
-            write_in(tmp.path(), r, &quiet).unwrap();
+            write_in(tmp.path(), r, None, &quiet).unwrap();
         }
         let events = journaled(|j| remove_replaced_in(tmp.path(), &new, j));
         // The scan takes the lock of every other session, as the hooks would
@@ -610,7 +623,7 @@ mod tests {
     #[test]
     fn parallel_writers_lose_no_update() {
         let tmp = TempDir::new().unwrap();
-        write_in(tmp.path(), &live_record("s1"), &quiet).unwrap();
+        write_in(tmp.path(), &live_record("s1"), None, &quiet).unwrap();
         std::thread::scope(|scope| {
             for i in 0..16 {
                 let dir = tmp.path();
@@ -621,7 +634,7 @@ mod tests {
                         agent: format!("agent{i}"),
                         kind: Waiting::Permission,
                     });
-                    write_in(dir, &r, &quiet).unwrap();
+                    write_in(dir, &r, Some(r.status), &quiet).unwrap();
                 });
             }
         });

@@ -1,11 +1,10 @@
 //! The event loop the panes run on: terminal input, inotify and a computed wake-up time.
 //!
 //! A pane's loop asks its [`Schedule`] when it must next wake up and waits on
-//! [`Runtime::next`] until then. Two threads feed the one channel it waits on, each blocked in
+//! [`Runtime::wait`] until then. Two threads feed the one channel it waits on, each blocked in
 //! a read: the terminal input thread and the inotify thread. A hidden pane has no deadline and
 //! no watches, so it sleeps until tmux sends it a key.
 
-use std::cell::Cell;
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fmt;
@@ -129,67 +128,6 @@ fn lock(watched: &Mutex<Watched>) -> MutexGuard<'_, Watched> {
     watched.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// Inotify watches on directories, read by a thread that sends [`Msg::Changed`].
-///
-/// The inotify file descriptor is shared: the reader thread owns the `Inotify` and blocks in
-/// `read_events_blocking`, while this struct keeps a `Watches` handle (inotify 0.11 hands out
-/// clones holding an `Arc` of the same descriptor) to add and remove watches from the pane's
-/// thread. `inotify_add_watch` and `inotify_rm_watch` are safe to call while another thread
-/// blocks in `read` on the same descriptor; `read_events_blocking` only toggles `O_NONBLOCK`,
-/// which those calls ignore.
-#[derive(Debug)]
-pub struct Watcher {
-    watches: Watches,
-    watched: Arc<Mutex<Watched>>,
-}
-
-impl Watcher {
-    /// Creates the inotify instance and starts the thread that reads it.
-    ///
-    /// The thread lives as long as the process, or until the channel's receiver is dropped
-    /// and one more event arrives.
-    ///
-    /// # Errors
-    ///
-    /// Fails when inotify cannot be initialised or the thread cannot be spawned.
-    fn start(tx: Sender<Feed>) -> io::Result<Self> {
-        let inotify = Inotify::init()?;
-        let watches = inotify.watches();
-        let watched = Arc::new(Mutex::new(Watched::default()));
-        let shared = Arc::clone(&watched);
-        thread::Builder::new()
-            .name("cst-inotify".into())
-            .spawn(move || read_changes(inotify, &shared, &tx))?;
-        Ok(Watcher { watches, watched })
-    }
-
-    /// Watches a directory; watching one already watched does nothing.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the directory cannot be watched, for example when it does not exist.
-    pub fn watch(&mut self, path: &Path) -> io::Result<()> {
-        let mut watched = lock(&self.watched);
-        if watched.by_path.contains_key(path) {
-            return Ok(());
-        }
-        let wd = self.watches.add(path, WATCH_MASK)?;
-        watched.by_wd.insert(wd.clone(), path.to_path_buf());
-        watched.by_path.insert(path.to_path_buf(), wd);
-        Ok(())
-    }
-
-    /// Removes every watch; events already queued for them are dropped.
-    pub fn unwatch_all(&mut self) {
-        let mut watched = lock(&self.watched);
-        for (_, wd) in watched.by_path.drain() {
-            // Fails only when the kernel already dropped the watch
-            let _ = self.watches.remove(wd);
-        }
-        watched.by_wd.clear();
-    }
-}
-
 /// Reads inotify events until the descriptor fails or nobody listens any more.
 fn read_changes(mut inotify: Inotify, watched: &Mutex<Watched>, tx: &Sender<Feed>) {
     let mut buffer = [0; EVENT_BUFFER];
@@ -237,13 +175,21 @@ fn read_input(read: &mut dyn FnMut() -> io::Result<Event>, tx: &Sender<Feed>) {
     }
 }
 
-/// The pane's event sources merged into one channel.
+/// The pane's event sources merged into one channel, and the inotify watches that feed it.
+///
+/// The inotify file descriptor is shared: the reader thread owns the `Inotify` and blocks in
+/// `read_events_blocking`, while the runtime keeps a `Watches` handle (inotify 0.11 hands out
+/// clones holding an `Arc` of the same descriptor) to add and remove watches from the pane's
+/// thread. `inotify_add_watch` and `inotify_rm_watch` are safe to call while another thread
+/// blocks in `read` on the same descriptor; `read_events_blocking` only toggles `O_NONBLOCK`,
+/// which those calls ignore.
 #[derive(Debug)]
 pub struct Runtime {
     rx: Receiver<Feed>,
-    watcher: Watcher,
+    watches: Watches,
+    watched: Arc<Mutex<Watched>>,
     /// Whether the terminal input ended: every wait from then on is [`Wake::Closed`].
-    ended: Cell<bool>,
+    ended: bool,
 }
 
 impl Runtime {
@@ -254,29 +200,43 @@ impl Runtime {
     /// Fails when inotify cannot be initialised or a thread cannot be spawned.
     pub fn start() -> io::Result<Self> {
         let (tx, rx) = mpsc::channel();
-        let watcher = Watcher::start(tx.clone())?;
+        let runtime = Runtime::with(tx.clone(), rx)?;
         thread::Builder::new()
             .name("cst-input".into())
             .spawn(move || read_input(&mut event::read, &tx))?;
-        Ok(Runtime::with(rx, watcher))
+        Ok(runtime)
     }
 
-    fn with(rx: Receiver<Feed>, watcher: Watcher) -> Self {
-        Runtime {
+    /// Creates the inotify instance and starts the thread that reads it into `tx`; the pane's
+    /// loop waits on `rx`.
+    ///
+    /// The thread lives as long as the process, or until the channel's receiver is dropped
+    /// and one more event arrives.
+    fn with(tx: Sender<Feed>, rx: Receiver<Feed>) -> io::Result<Self> {
+        let inotify = Inotify::init()?;
+        let watches = inotify.watches();
+        let watched = Arc::new(Mutex::new(Watched::default()));
+        let shared = Arc::clone(&watched);
+        thread::Builder::new()
+            .name("cst-inotify".into())
+            .spawn(move || read_changes(inotify, &shared, &tx))?;
+        Ok(Runtime {
             rx,
-            watcher,
-            ended: Cell::new(false),
-        }
+            watches,
+            watched,
+            ended: false,
+        })
     }
 
     /// A runtime with the inotify thread only, for tests that have no terminal.
     #[cfg(test)]
     pub(crate) fn headless() -> io::Result<Self> {
         let (tx, rx) = mpsc::channel();
-        Ok(Runtime::with(rx, Watcher::start(tx)?))
+        Runtime::with(tx, rx)
     }
 
-    /// Watches a directory: its entries' changes arrive as [`Msg::Changed`].
+    /// Watches a directory: its entries' changes arrive as [`Msg::Changed`]. Returns whether
+    /// it was not watched yet; watching one already watched does nothing.
     ///
     /// Watch directories, not files: a file written atomically is a new inode renamed into
     /// its directory, which a watch on the old file never sees.
@@ -284,30 +244,33 @@ impl Runtime {
     /// # Errors
     ///
     /// Fails when the directory cannot be watched, for example when it does not exist.
-    pub fn watch(&mut self, path: &Path) -> io::Result<()> {
-        self.watcher.watch(path)
+    pub fn watch(&mut self, path: &Path) -> io::Result<bool> {
+        let mut watched = lock(&self.watched);
+        if watched.by_path.contains_key(path) {
+            return Ok(false);
+        }
+        let wd = self.watches.add(path, WATCH_MASK)?;
+        watched.by_wd.insert(wd.clone(), path.to_path_buf());
+        watched.by_path.insert(path.to_path_buf(), wd);
+        Ok(true)
     }
 
-    /// Removes every watch, as a pane does when it is hidden.
+    /// Removes every watch, as a pane does when it is hidden; events already queued for them
+    /// are dropped.
     pub fn unwatch_all(&mut self) {
-        self.watcher.unwatch_all();
+        let mut watched = lock(&self.watched);
+        for (_, wd) in watched.by_path.drain() {
+            // Fails only when the kernel already dropped the watch
+            let _ = self.watches.remove(wd);
+        }
+        watched.by_wd.clear();
     }
 
     /// Waits for the next message, until `deadline` (Unix time) or forever when it is `None`.
     ///
     /// A deadline already past only takes a message that is waiting.
-    ///
-    /// Returns `None` when the deadline passes first, or when the terminal input ended.
-    pub fn next(&self, deadline: Option<f64>) -> Option<Msg> {
-        match self.wait(deadline) {
-            Wake::Msg(msg) => Some(msg),
-            Wake::Timeout | Wake::Closed => None,
-        }
-    }
-
-    /// Like [`Runtime::next`], telling a deadline that passed from a terminal that is gone.
-    pub fn wait(&self, deadline: Option<f64>) -> Wake {
-        if self.ended.get() {
+    pub fn wait(&mut self, deadline: Option<f64>) -> Wake {
+        if self.ended {
             return Wake::Closed;
         }
         let received = match deadline {
@@ -323,7 +286,7 @@ impl Runtime {
             Ok(Feed::Msg(msg)) => Wake::Msg(msg),
             Err(RecvTimeoutError::Timeout) => Wake::Timeout,
             Ok(Feed::InputEnded) | Err(RecvTimeoutError::Disconnected) => {
-                self.ended.set(true);
+                self.ended = true;
                 Wake::Closed
             }
         }
@@ -351,7 +314,7 @@ const LABEL_PERIOD: f64 = 60.0;
 const REDRAW_GAP: f64 = 0.1;
 
 /// What decides when a pane must wake up with no event.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Default)]
 pub struct Schedule {
     /// Whether the pane is on screen.
     pub visible: bool,
@@ -522,7 +485,7 @@ mod tests {
     use crate::core::paths::write_atomic;
     use crate::core::state::unix_now;
     use crate::ui::runtime::{
-        read_input, signal, MouseClicks, Msg, Runtime, Schedule, Signal, Wake, Watcher,
+        read_input, signal, MouseClicks, Msg, Runtime, Schedule, Signal, Wake,
     };
 
     fn visible() -> Schedule {
@@ -661,12 +624,12 @@ mod tests {
 
     #[test]
     fn wait_tells_a_timeout_from_a_closed_channel() {
-        let runtime = Runtime::headless().unwrap();
+        let mut runtime = Runtime::headless().unwrap();
         assert_eq!(runtime.wait(Some(unix_now() - 5.0)), Wake::Timeout);
         // Nothing feeds this channel any more: a wait with a far deadline ends at once
         let (tx, rx) = mpsc::channel();
         drop(tx);
-        let closed = Runtime::with(rx, Watcher::start(mpsc::channel().0).unwrap());
+        let mut closed = Runtime::with(mpsc::channel().0, rx).unwrap();
         let started = Instant::now();
         assert_eq!(closed.wait(Some(unix_now() + 5.0)), Wake::Closed);
         assert_eq!(closed.wait(None), Wake::Closed);
@@ -676,7 +639,7 @@ mod tests {
     #[test]
     fn the_end_of_input_closes_the_wait_though_inotify_runs() {
         let (tx, rx) = mpsc::channel();
-        let runtime = Runtime::with(rx, Watcher::start(tx.clone()).unwrap());
+        let mut runtime = Runtime::with(tx.clone(), rx).unwrap();
         let mut reads = vec![
             Err(io::Error::other("terminal gone")),
             Ok(Event::Key(KeyEvent::new(
@@ -693,25 +656,19 @@ mod tests {
     }
 
     #[test]
-    fn past_deadline_returns_at_once() {
-        let runtime = Runtime::headless().unwrap();
-        assert_eq!(runtime.next(Some(unix_now() - 5.0)), None);
-    }
-
-    #[test]
     fn watcher_reports_a_file_written_atomically() {
         let dir = TempDir::new().unwrap();
         let watched = dir.path().join("records");
         fs::create_dir(&watched).unwrap();
         let mut runtime = Runtime::headless().unwrap();
-        runtime.watch(&watched).unwrap();
-        runtime.watch(&watched).unwrap();
+        assert!(runtime.watch(&watched).unwrap());
+        assert!(!runtime.watch(&watched).unwrap(), "watched already");
         let target = watched.join("s1.json");
         write_atomic(&target, b"{}", None).unwrap();
 
         let deadline = unix_now() + 1.0;
         let mut seen = false;
-        while let Some(msg) = runtime.next(Some(deadline)) {
+        while let Wake::Msg(msg) = runtime.wait(Some(deadline)) {
             if msg == Msg::Changed(target.clone()) {
                 seen = true;
                 break;
@@ -727,7 +684,7 @@ mod tests {
         runtime.watch(dir.path()).unwrap();
         runtime.unwatch_all();
         fs::write(dir.path().join("a"), b"x").unwrap();
-        assert_eq!(runtime.next(Some(unix_now() + 0.2)), None);
+        assert_eq!(runtime.wait(Some(unix_now() + 0.2)), Wake::Timeout);
     }
 
     #[test]
@@ -741,7 +698,7 @@ mod tests {
 
         let deadline = unix_now() + 1.0;
         let mut seen = false;
-        while let Some(msg) = runtime.next(Some(deadline)) {
+        while let Wake::Msg(msg) = runtime.wait(Some(deadline)) {
             if msg == Msg::Changed(watched.clone()) {
                 seen = true;
                 break;
@@ -750,12 +707,12 @@ mod tests {
         assert!(seen, "no Changed({}) within 1 s", watched.display());
 
         fs::create_dir(&watched).unwrap();
-        runtime.watch(&watched).unwrap();
+        assert!(runtime.watch(&watched).unwrap(), "its watch went with it");
         let target = watched.join("a");
         fs::write(&target, b"x").unwrap();
         assert_eq!(
-            runtime.next(Some(unix_now() + 1.0)),
-            Some(Msg::Changed(target))
+            runtime.wait(Some(unix_now() + 1.0)),
+            Wake::Msg(Msg::Changed(target))
         );
     }
 
@@ -769,8 +726,8 @@ mod tests {
         let target = dir.path().join("a");
         fs::write(&target, b"x").unwrap();
         assert_eq!(
-            runtime.next(Some(unix_now() + 1.0)),
-            Some(Msg::Changed(target))
+            runtime.wait(Some(unix_now() + 1.0)),
+            Wake::Msg(Msg::Changed(target))
         );
     }
 }

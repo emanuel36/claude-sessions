@@ -17,15 +17,15 @@ use anyhow::{bail, Context};
 use sha2::{Digest, Sha256};
 
 /// Where releases are published, unless `CST_RELEASE_BASE` names another place.
-pub const DEFAULT_BASE: &str = "https://github.com/emanuel36/claude-sessions/releases";
+const DEFAULT_BASE: &str = "https://github.com/emanuel36/claude-sessions/releases";
 
 /// The release asset built for this machine: `cst-<arch>-unknown-linux-musl`.
-pub fn asset_name() -> String {
+fn asset_name() -> String {
     format!("cst-{}-unknown-linux-musl", std::env::consts::ARCH)
 }
 
 /// The tag in the URL `<base>/latest` redirects to, `…/releases/tag/<tag>`, if it is one.
-pub fn tag_from_url(url: &str) -> Option<&str> {
+fn tag_from_url(url: &str) -> Option<&str> {
     let (_, tag) = url.trim().rsplit_once("/tag/")?;
     valid_tag(tag).then_some(tag)
 }
@@ -53,7 +53,7 @@ fn parse_version(text: &str) -> Option<(u64, u64, u64)> {
 /// Both are compared as numbers, so `v1.10.0` is newer than `1.9.0`. When either is not
 /// `MAJOR.MINOR.PATCH`, the tag counts as newer unless it is the same release, so an
 /// unfamiliar tag is still installed, as it was before versions were compared.
-pub fn compare_release(tag: &str, version: &str) -> Ordering {
+fn compare_release(tag: &str, version: &str) -> Ordering {
     match (parse_version(tag), parse_version(version)) {
         (Some(tag), Some(version)) => tag.cmp(&version),
         _ if is_current(tag, version) => Ordering::Equal,
@@ -62,7 +62,7 @@ pub fn compare_release(tag: &str, version: &str) -> Ordering {
 }
 
 /// The SHA-256 that `sums`, in `sha256sum` format (`<hex>  <name>`), gives for the file `name`.
-pub fn checksum_for<'a>(sums: &'a str, name: &str) -> Option<&'a str> {
+fn checksum_for<'a>(sums: &'a str, name: &str) -> Option<&'a str> {
     sums.lines().find_map(|line| {
         let (hex, file) = line.split_once(' ')?;
         // `sha256sum -b` marks the name with `*`; the default with a second space
@@ -73,11 +73,8 @@ pub fn checksum_for<'a>(sums: &'a str, name: &str) -> Option<&'a str> {
 }
 
 /// The SHA-256 of `bytes`, in lowercase hex.
-pub fn sha256_hex(bytes: &[u8]) -> String {
-    Sha256::digest(bytes)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
 }
 
 /// Runs `cst update`. Returns the exit code: 0 when updated or already up to date, 1 when

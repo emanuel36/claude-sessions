@@ -1,6 +1,5 @@
 //! What a pane watches while it is on screen, and what a change it hears of makes stale.
 
-use std::collections::HashSet;
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -89,7 +88,7 @@ impl Stale {
 }
 
 /// The directories the panes read from.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 struct Dirs {
     /// The records and the limits.
     records: PathBuf,
@@ -171,13 +170,12 @@ pub fn interruptible(r: &Record) -> bool {
 }
 
 /// The directories a pane watches while it is on screen: the records, the journal and Claude
-/// Code's folder, and any other it adds, such as transcripts' folders.
+/// Code's folder, and any other it adds, such as transcripts' folders. The runtime keeps the
+/// watches; this keeps where the pane reads from.
 #[derive(Debug, Default)]
 pub struct Watches {
     /// Where the pane reads from, once it watched the roots.
     dirs: Option<Dirs>,
-    /// The directories watched now.
-    watching: HashSet<PathBuf>,
 }
 
 impl Watches {
@@ -206,15 +204,9 @@ impl Watches {
     /// Watches a directory unless it is watched; returns whether it was not.
     ///
     /// A directory that does not exist yet is tried again on the next call.
-    pub fn watch(&mut self, runtime: &mut Runtime, dir: &Path, log: &mut LogOnce) -> bool {
-        if self.watching.contains(dir) {
-            return false;
-        }
+    pub fn watch(&self, runtime: &mut Runtime, dir: &Path, log: &mut LogOnce) -> bool {
         match runtime.watch(dir) {
-            Ok(()) => {
-                self.watching.insert(dir.to_path_buf());
-                true
-            }
+            Ok(new) => new,
             Err(e) if e.kind() == io::ErrorKind::NotFound => false,
             Err(e) => {
                 let shown = dir.display();
@@ -225,24 +217,12 @@ impl Watches {
     }
 
     /// What a change at `path` makes stale, given the records last read; a watched directory
-    /// that reported itself is watched again on the next [`Watches::roots`] or
-    /// [`Watches::watch`].
-    pub fn changed(&mut self, path: &Path, records: &[Record], now: f64) -> Stale {
-        self.watching.remove(path);
+    /// that reported itself because it was deleted is watched again on the next
+    /// [`Watches::roots`] or [`Watches::watch`].
+    pub fn changed(&self, path: &Path, records: &[Record], now: f64) -> Stale {
         self.dirs
             .as_ref()
             .map_or(Stale::NONE, |dirs| dirs.touched(path, records, now))
-    }
-
-    /// Drops every watch, as a pane does when it leaves the screen.
-    pub fn clear(&mut self, runtime: &mut Runtime) {
-        runtime.unwatch_all();
-        self.watching.clear();
-    }
-
-    /// Whether nothing is watched.
-    pub fn is_empty(&self) -> bool {
-        self.watching.is_empty()
     }
 }
 

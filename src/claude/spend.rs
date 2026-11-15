@@ -2,7 +2,7 @@
 //!
 //! Claude Code reports one running cost per session, under the model of its main conversation,
 //! though subagents may run on other models. The transcripts (the session's own and its
-//! subagents') record each reply's model and tokens; priced with [`price`], they give the share
+//! subagents') record each reply's model and tokens; priced by model, they give the share
 //! of each model, which splits the reported cost. The prices only weigh the models against each
 //! other, so the reported total never changes.
 
@@ -12,6 +12,7 @@ use std::io::{self, BufRead, BufReader, Seek, SeekFrom};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
+use memchr::memmem;
 use serde::{Deserialize, Serialize};
 
 use crate::claude::transcript::transcript_path_in;
@@ -23,7 +24,7 @@ pub const STORED_SPEND: &str = "spend.json";
 
 /// A model's dollars per million tokens: input, output, cache write and cache read.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Price {
+struct Price {
     pub input: f64,
     pub output: f64,
     pub cache_write: f64,
@@ -69,7 +70,7 @@ fn base_id(model: &str) -> &str {
 }
 
 /// Returns the price of a model id: its own, else the newest of its family, else none.
-pub fn price(model: &str) -> Option<Price> {
+fn price(model: &str) -> Option<Price> {
     let id = base_id(model);
     if let Some((_, p)) = PRICES.iter().find(|(known, _)| *known == id) {
         return Some(*p);
@@ -82,7 +83,7 @@ pub fn price(model: &str) -> Option<Price> {
 }
 
 /// Returns the name Claude Code shows for a model id: `claude-opus-5-5` is `Opus 5.5`.
-pub fn display_name(model: &str) -> String {
+fn display_name(model: &str) -> String {
     let id = base_id(model);
     let mut parts = id.split('-');
     let Some(family) = parts.next().filter(|f| !f.is_empty()) else {
@@ -157,9 +158,7 @@ struct Usage {
 /// several lines, its model and its tokens.
 fn reply_of(line: &[u8]) -> Option<(Option<String>, String, Tokens)> {
     // Most lines carry no usage: skip them before parsing
-    if !line.windows(7).any(|w| w == b"\"usage\"") {
-        return None;
-    }
+    memmem::find(line, b"\"usage\"")?;
     let parsed: Line = serde_json::from_slice(line).ok()?;
     let message = parsed.message?;
     let model = message.model?;
@@ -288,8 +287,8 @@ impl ModelSpend {
     }
 
     /// Returns an estimator over the config folder `config` that keeps nothing on disk.
-    #[doc(hidden)]
-    pub fn in_dir(config: PathBuf) -> Self {
+    #[cfg(test)]
+    pub(crate) fn in_dir(config: PathBuf) -> Self {
         ModelSpend {
             stored: false,
             config: Some(config),
@@ -364,7 +363,7 @@ impl ModelSpend {
         let readings = self
             .readings
             .get_or_insert_with(|| Self::load(stored, &stored_path));
-        let mut tokens: HashMap<String, Tokens> = HashMap::new();
+        let mut dollars: HashMap<String, f64> = HashMap::new();
         for path in session_files(&config, id, cwd) {
             let opened = File::open(&path).and_then(|f| Ok((f.metadata()?, f)));
             let Ok((meta, mut file)) = opened else {
@@ -378,16 +377,12 @@ impl ModelSpend {
                 .or_insert_with(|| Reading::start(id.clone()));
             self.changed |= reading.catch_up(&mut file, &meta, id);
             for (model, t) in &reading.tokens {
-                tokens.entry(model.clone()).or_default().add(*t);
+                if let Some(p) = price(model) {
+                    *dollars.entry(display_name(model)).or_default() += t.dollars(p);
+                }
             }
             if self.stored {
                 self.used.insert(path);
-            }
-        }
-        let mut dollars: HashMap<String, f64> = HashMap::new();
-        for (model, t) in tokens {
-            if let Some(p) = price(&model) {
-                *dollars.entry(display_name(&model)).or_default() += t.dollars(p);
             }
         }
         dollars.retain(|_, d| *d > 0.0);
@@ -398,8 +393,8 @@ impl ModelSpend {
 /// A session's transcript, and its subagents' under `<session id>/subagents/`.
 fn session_files(config: &Path, id: &str, cwd: &str) -> Vec<PathBuf> {
     let main = transcript_path_in(config, id, cwd);
-    let mut files = vec![main.clone()];
     let subagents = main.with_extension("").join("subagents");
+    let mut files = vec![main];
     if let Ok(entries) = fs::read_dir(subagents) {
         let mut found: Vec<PathBuf> = entries
             .filter_map(|e| e.ok().map(|e| e.path()))
