@@ -365,24 +365,21 @@ pub fn picker_key(key: &KeyEvent) -> Option<picker::Key> {
 /// A create row's folder, and any missing parent, is created first, as is the folder of a
 /// session found that was deleted; when that fails, the failure goes to the error log and
 /// nothing starts.
-pub fn open(tmux: &dyn Runner, row: &picker::Row, folders: &[picker::Folder]) {
-    open_with(tmux, row, folders, &paths::process_env);
+pub fn open(tmux: &dyn Runner, row: &picker::Row) {
+    open_with(tmux, row, &paths::process_env);
 }
 
 /// [`open`], logging to the state directory `env` names.
-fn open_with(
-    tmux: &dyn Runner,
-    row: &picker::Row,
-    folders: &[picker::Folder],
-    env: paths::Lookup<'_>,
-) {
-    if matches!(row.kind, picker::RowKind::Create | picker::RowKind::Hit) {
-        if let Err(e) = std::fs::create_dir_all(&row.path) {
-            paths::log_error_with(env, &format_args!("cannot create {}: {e}", row.path));
+fn open_with(tmux: &dyn Runner, row: &picker::Row, env: paths::Lookup<'_>) {
+    if let picker::Row::Create { path, .. } | picker::Row::Hit { path, .. } = row {
+        if let Err(e) = std::fs::create_dir_all(path) {
+            paths::log_error_with(env, &format_args!("cannot create {path}: {e}"));
             return;
         }
     }
-    let command = picker::command(row, folders);
+    let Some(command) = picker::command(row) else {
+        return;
+    };
     let mut args = vec!["new-window"];
     args.extend(command.iter().map(String::as_str));
     tmux.run(&args);
@@ -433,7 +430,7 @@ mod tests {
     use crate::core::paths::ERROR_LOG;
     use crate::term::tmux::fake::FakeTmux;
     use crate::ui::pane::{open, open_with, own_window, picker_key, quits, sight, LogOnce, Sight};
-    use crate::ui::picker::{Key, Root, Row, RowKind};
+    use crate::ui::picker::{Key, Root, Row};
     use crate::ui::runtime::Msg;
 
     /// Answers each call with the next of `answers`, then with nothing.
@@ -569,10 +566,20 @@ mod tests {
 
     /// A row that creates the folder `path`, then starts a session in it.
     fn create_row(path: &std::path::Path) -> Row {
-        Row {
-            kind: RowKind::Create,
+        Row::Create {
+            root: Root::New,
             path: path.to_string_lossy().into_owned(),
-            ..Row::default()
+            label: String::new(),
+        }
+    }
+
+    /// A session found in the folder `path`, whose id is `id`.
+    fn hit_row(path: &std::path::Path) -> Row {
+        Row::Hit {
+            index: 0,
+            path: path.to_string_lossy().into_owned(),
+            id: "id".into(),
+            more_below: false,
         }
     }
 
@@ -581,7 +588,7 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let path = t.path().join("Documents/Meu-Projeto");
         let tmux = FakeTmux::silent();
-        open(&tmux, &create_row(&path), &[]);
+        open(&tmux, &create_row(&path));
         assert!(path.is_dir());
         let want = ["new-window", "-c", &path.to_string_lossy(), "claude"];
         assert_eq!(tmux.calls(), [want.map(str::to_owned).to_vec()]);
@@ -595,7 +602,7 @@ mod tests {
         let state = t.path().join("state");
         let env = |key: &str| (key == "CST_STATE_DIR").then(|| state.clone().into_os_string());
         let tmux = FakeTmux::silent();
-        open_with(&tmux, &create_row(&path), &[], &env);
+        open_with(&tmux, &create_row(&path), &env);
         assert!(tmux.calls().is_empty());
         let log = std::fs::read_to_string(state.join(ERROR_LOG)).unwrap();
         assert!(log.contains(&*path.to_string_lossy()), "{log}");
@@ -605,14 +612,8 @@ mod tests {
     fn a_hit_in_a_deleted_folder_creates_it_and_resumes() {
         let t = tempfile::tempdir().unwrap();
         let path = t.path().join("gone/Projeto");
-        let row = Row {
-            kind: RowKind::Hit,
-            id: "id".into(),
-            path: path.to_string_lossy().into_owned(),
-            ..Row::default()
-        };
         let tmux = FakeTmux::silent();
-        open(&tmux, &row, &[]);
+        open(&tmux, &hit_row(&path));
         assert!(path.is_dir());
         let want = [
             "new-window",
@@ -630,14 +631,8 @@ mod tests {
         std::fs::write(&path, "").unwrap();
         let state = t.path().join("state");
         let env = |key: &str| (key == "CST_STATE_DIR").then(|| state.clone().into_os_string());
-        let row = Row {
-            kind: RowKind::Hit,
-            id: "id".into(),
-            path: path.to_string_lossy().into_owned(),
-            ..Row::default()
-        };
         let tmux = FakeTmux::silent();
-        open_with(&tmux, &row, &[], &env);
+        open_with(&tmux, &hit_row(&path), &env);
         assert!(tmux.calls().is_empty());
         let log = std::fs::read_to_string(state.join(ERROR_LOG)).unwrap();
         assert!(log.contains(&*path.to_string_lossy()), "{log}");

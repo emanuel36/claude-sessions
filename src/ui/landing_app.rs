@@ -19,7 +19,7 @@ use crate::term::tmux::{Cli, Runner};
 use crate::ui::folders::Scan;
 use crate::ui::landing;
 use crate::ui::pane::{self, open, own_window, picker_key, resets, App, Shell, Step, WINDOW_PAUSE};
-use crate::ui::picker::{self, Picker, Root, RowKind};
+use crate::ui::picker::{self, Picker, Root, Row};
 use crate::ui::runtime::{signal, Msg, Runtime, Schedule, Screen, Signal};
 use crate::ui::stats::Stats;
 use crate::ui::usage::Reader;
@@ -78,11 +78,10 @@ fn ages(picker: &mut Picker) -> Vec<f64> {
         .iter()
         .flat_map(|f| std::iter::once(f.last).chain(f.sessions.iter().map(|s| s.last)));
     let mut out: Vec<f64> = folders.collect();
-    let found = picker
-        .shown()
-        .into_iter()
-        .filter(|r| r.kind == RowKind::Hit);
-    let hits = found.filter_map(|r| r.session.and_then(|i| picker.sessions().get(i)));
+    let hits = picker.shown().into_iter().filter_map(|r| match r {
+        Row::Hit { index, .. } => picker.sessions().get(index),
+        _ => None,
+    });
     out.extend(hits.map(|s| s.last));
     out
 }
@@ -194,7 +193,7 @@ impl Landing {
             picker::Key::Char(_) | picker::Key::Backspace => return false,
             _ => {
                 if let Some(row) = self.picker.key(typed) {
-                    open(self.tmux.as_ref(), &row, &self.picker.folders);
+                    open(self.tmux.as_ref(), &row);
                 }
             }
         }
@@ -204,20 +203,28 @@ impl Landing {
     /// Whether the selected row is an entry or a folder of its tree.
     fn on_tree(&mut self) -> bool {
         let row = self.picker.selected();
-        row.is_some_and(|r| matches!(r.kind, RowKind::Root | RowKind::Dir))
+        matches!(row, Some(Row::Root { .. } | Row::Dir { .. }))
     }
 
     /// Enter while searching: see [`Landing::key`].
     fn enter_searching(&mut self) {
-        let row = self.picker.selected();
-        match row.as_ref().map(|r| (r.kind, r.root)) {
-            Some((RowKind::Root, _) | (RowKind::Dir, Some(Root::New))) => {
+        match self.picker.selected() {
+            Some(
+                Row::Root { .. }
+                | Row::Dir {
+                    root: Root::New, ..
+                },
+            ) => {
                 self.picker.key(picker::Key::Enter);
             }
-            Some((RowKind::Dir, Some(Root::Open)) | (RowKind::Create | RowKind::Hit, _)) => {
-                if let Some(row) = row {
-                    open(self.tmux.as_ref(), &row, &self.picker.folders);
+            Some(
+                row @ (Row::Dir {
+                    root: Root::Open, ..
                 }
+                | Row::Create { .. }
+                | Row::Hit { .. }),
+            ) => {
+                open(self.tmux.as_ref(), &row);
                 self.end_search();
             }
             // The text stays, filtering the list; the walk read for it does not
@@ -261,8 +268,7 @@ impl Landing {
     /// Reads the history's folders again.
     fn load_folders(&mut self) {
         // The cursor is an index: the rows may change under it, so it follows the row instead
-        let identity = |r: &picker::Row| (r.kind, r.path.clone(), r.id.clone());
-        let before = self.picker.selected().map(|r| identity(&r));
+        let before = self.picker.selected();
         let costs = self.shell.stats.totals.as_ref().map(|t| &t.per_session);
         let (folders, sessions) = pane::folders(
             &self.shell.history,
@@ -277,7 +283,7 @@ impl Landing {
                 .picker
                 .shown()
                 .iter()
-                .position(|r| identity(r) == before);
+                .position(|r| r.same_line(&before));
             self.picker.cursor = at.unwrap_or(self.picker.cursor);
         }
     }
@@ -337,7 +343,8 @@ mod tests {
     use crate::ui::folders::Scan;
     use crate::ui::landing_app::{ages, labels, open_sessions, Landing};
     use crate::ui::pane::{App, LogOnce, Step};
-    use crate::ui::picker::{Folder, Picker, Root, RowKind, Session};
+    use crate::ui::picker::tests::hit_id;
+    use crate::ui::picker::{Folder, Picker, Root, Row, Session};
     use crate::ui::runtime::{Msg, Runtime};
     use crate::ui::search::Searchable;
     use crate::ui::stats::Stats;
@@ -407,12 +414,13 @@ mod tests {
         press(page, runtime, &keys);
     }
 
+    /// The session id of a hit row.
     #[test]
     fn enter_while_searching_opens_a_disk_folder_at_once() {
         let (_t, home, mut page, calls, mut runtime) = home_page();
         press(&mut page, &mut runtime, &[KeyCode::Char('o')]);
         search(&mut page, &mut runtime, "pro");
-        assert_eq!(page.picker.selected().unwrap().kind, RowKind::Dir);
+        assert!(matches!(page.picker.selected(), Some(Row::Dir { .. })));
         press(&mut page, &mut runtime, &[KeyCode::Enter]);
         let dir = format!("{home}/projects");
         assert_eq!(
@@ -428,7 +436,7 @@ mod tests {
         let (t, home, mut page, calls, mut runtime) = home_page();
         press(&mut page, &mut runtime, &[KeyCode::Char('o')]);
         search(&mut page, &mut runtime, "notes");
-        assert_eq!(page.picker.selected().unwrap().kind, RowKind::Create);
+        assert!(matches!(page.picker.selected(), Some(Row::Create { .. })));
         press(&mut page, &mut runtime, &[KeyCode::Enter]);
         let dir = format!("{home}/notes");
         assert_eq!(
@@ -445,7 +453,13 @@ mod tests {
         press(&mut page, &mut runtime, &[KeyCode::Char('n')]);
         search(&mut page, &mut runtime, "pro");
         let picked = page.picker.selected().unwrap();
-        assert_eq!((picked.kind, picked.root), (RowKind::Dir, Some(Root::New)));
+        assert!(matches!(
+            picked,
+            Row::Dir {
+                root: Root::New,
+                ..
+            }
+        ));
         press(&mut page, &mut runtime, &[KeyCode::Enter]);
         assert!(page.searching);
         assert_eq!(page.picker.query, "");
@@ -472,7 +486,7 @@ mod tests {
         let dir = t.path().join("deleted").to_string_lossy().into_owned();
         page.picker.set_sessions(linkedin_sessions(1, &dir));
         search(&mut page, &mut runtime, "linkedin");
-        assert_eq!(page.picker.selected().unwrap().kind, RowKind::Hit);
+        assert!(matches!(page.picker.selected(), Some(Row::Hit { .. })));
         press(&mut page, &mut runtime, &[KeyCode::Enter]);
         assert_eq!(
             calls.calls(),
@@ -488,7 +502,13 @@ mod tests {
         page.picker.set_sessions(linkedin_sessions(12, "/w/cv"));
         search(&mut page, &mut runtime, "linkedin");
         let shown = page.picker.shown();
-        assert_eq!(shown.iter().filter(|r| r.kind == RowKind::Hit).count(), 10);
+        assert_eq!(
+            shown
+                .iter()
+                .filter(|r| matches!(r, Row::Hit { .. }))
+                .count(),
+            10
+        );
     }
 
     #[test]
@@ -546,13 +566,57 @@ mod tests {
         page.shell.stale.history = true;
         page.reload(NOW);
         search(&mut page, &mut runtime, "linkedin");
-        while page.picker.selected().map(|r| r.id) != Some("s1".into()) {
+        while page.picker.selected().and_then(hit_id).as_deref() != Some("s1") {
             press(&mut page, &mut runtime, &[KeyCode::Down]);
         }
         write(&[("s1", 1000), ("s2", 2000), ("s3", 3000)]);
         page.shell.stale.history = true;
         page.reload(NOW);
-        assert_eq!(page.picker.selected().unwrap().id, "s1");
+        assert_eq!(
+            page.picker.selected().and_then(hit_id).as_deref(),
+            Some("s1")
+        );
+    }
+
+    #[test]
+    fn a_reload_keeps_the_cursor_on_its_session_when_the_sessions_move() {
+        let (t, _, mut page, _, _) = home_page();
+        let (config, state) = (t.path().join("config"), t.path().join("state"));
+        std::fs::create_dir_all(&config).unwrap();
+        let project = t.path().join("projects");
+        let write = |sessions: &[(&str, i64)]| {
+            let lines: Vec<String> = (sessions.iter())
+                .map(|(id, at)| {
+                    serde_json::json!({
+                        "sessionId": id, "project": project, "timestamp": at, "display": id
+                    })
+                    .to_string()
+                })
+                .collect();
+            std::fs::write(config.join("history.jsonl"), lines.join("\n") + "\n").unwrap();
+        };
+        write(&[("s1", 1000), ("s2", 2000), ("s3", 3000)]);
+        page.scan = Scan::in_dir(Titles::new(false), config.clone());
+        page.shell.history = HistoryReader::with_dirs(false, config.clone(), state);
+        page.shell.usage = Reader::in_dir(t.path().join("journal"));
+        page.records = Box::new(|_| Vec::new());
+        page.shell.stale.history = true;
+        page.reload(NOW);
+        page.picker
+            .expanded
+            .insert(project.to_string_lossy().into_owned());
+        let on_s2 = |r: &Row| matches!(r, Row::Session { id, .. } if id == "s2");
+        page.picker.cursor = page.picker.shown().iter().position(on_s2).unwrap();
+        // A newer session goes first and pushes s2 down a row
+        write(&[("s1", 1000), ("s2", 2000), ("s3", 3000), ("s4", 4000)]);
+        page.shell.stale.history = true;
+        page.reload(NOW);
+        let selected = page.picker.selected().unwrap();
+        assert!(on_s2(&selected), "{selected:?}");
+        assert!(
+            matches!(selected, Row::Session { index: 2, .. }),
+            "{selected:?}"
+        );
     }
 
     #[test]
@@ -569,7 +633,7 @@ mod tests {
             let shown = page.picker.shown();
             shown
                 .iter()
-                .any(|r| r.kind == RowKind::Dir && r.label == format!("{name}/"))
+                .any(|r| matches!(r, Row::Dir { label, .. } if *label == format!("{name}/")))
         };
         assert!(!listed(&mut page, "later"));
         std::fs::create_dir(t.path().join("later")).unwrap();
@@ -598,8 +662,11 @@ mod tests {
         press(&mut page, &mut runtime, &[KeyCode::Char('o')]);
         let found = |page: &mut Landing| -> Vec<String> {
             let shown = page.picker.shown();
-            let hits = shown.into_iter().filter(|r| r.kind == RowKind::Dir);
-            hits.map(|r| r.label).collect()
+            let label = |r| match r {
+                Row::Dir { label, .. } => Some(label),
+                _ => None,
+            };
+            shown.into_iter().filter_map(label).collect()
         };
         search(&mut page, &mut runtime, "pro");
         assert_eq!(found(&mut page), ["projects"]);
@@ -629,7 +696,7 @@ mod tests {
         page.records = Box::new(|_| Vec::new());
         press(&mut page, &mut runtime, &[KeyCode::Char('o')]);
         search(&mut page, &mut runtime, "w");
-        while page.picker.selected().unwrap().kind != RowKind::Folder {
+        while !matches!(page.picker.selected(), Some(Row::Folder { .. })) {
             press(&mut page, &mut runtime, &[KeyCode::Down]);
         }
         press(&mut page, &mut runtime, &[KeyCode::Enter]);
@@ -638,7 +705,7 @@ mod tests {
             let shown = page.picker.shown();
             shown
                 .iter()
-                .any(|r| r.kind == RowKind::Dir && r.label == "wiki")
+                .any(|r| matches!(r, Row::Dir { label, .. } if label == "wiki"))
         };
         assert!(!listed(&mut page));
         std::fs::create_dir(t.path().join("wiki")).unwrap();
@@ -656,7 +723,7 @@ mod tests {
         press(&mut page, &mut runtime, &[KeyCode::Esc]);
         assert_eq!(page.picker.anchor, None);
         page.picker.cursor = 3;
-        assert_eq!(page.picker.selected().unwrap().kind, RowKind::Folder);
+        assert!(matches!(page.picker.selected(), Some(Row::Folder { .. })));
         let keys = [KeyCode::Char('/'), KeyCode::Backspace];
         press(&mut page, &mut runtime, &keys);
         assert_eq!(page.picker.cursor, 3);
@@ -693,11 +760,11 @@ mod tests {
             press(&mut page, &mut runtime, &[KeyCode::Char(c)]);
             assert_eq!(page.picker.open, vec![root]);
             let row = page.picker.selected().unwrap();
-            assert_eq!((row.kind, row.root), (RowKind::Root, Some(root)));
+            assert!(matches!(row, Row::Root { root: r, .. } if r == root));
             assert_eq!(page.picker.query, "");
             press(&mut page, &mut runtime, &[KeyCode::Char(c)]);
             assert!(page.picker.open.is_empty());
-            assert_eq!(page.picker.selected().unwrap().path, "/w/api");
+            assert_eq!(page.picker.selected().unwrap().path(), "/w/api");
             assert_eq!(calls.calls(), Vec::<Vec<String>>::new());
         }
     }
@@ -716,10 +783,8 @@ mod tests {
         // The text typed searches the tree opened: "no" names a folder to create
         assert_eq!(page.picker.anchor, Some((Root::New, home.clone())));
         let row = page.picker.selected().unwrap();
-        assert_eq!(
-            (row.kind, row.path),
-            (RowKind::Create, format!("{home}/no"))
-        );
+        assert!(matches!(row, Row::Create { .. }));
+        assert_eq!(row.path(), format!("{home}/no"));
         // Outside a search too
         press(&mut page, &mut runtime, &[KeyCode::Esc]);
         page.handle(ctrl('o'), NOW, &mut runtime);
@@ -756,8 +821,12 @@ mod tests {
         assert_eq!(page.picker.query, "web");
         assert!(!page.searching);
         assert_eq!(calls.calls(), Vec::<Vec<String>>::new());
-        let shown = page.picker.shown().into_iter();
-        let history: Vec<_> = shown.filter(|r| r.root.is_none()).map(|r| r.path).collect();
+        let shown = page.picker.shown();
+        let history: Vec<_> = shown
+            .iter()
+            .filter(|r| r.root().is_none())
+            .map(Row::path)
+            .collect();
         assert_eq!(history, ["/w/web"]);
     }
 
