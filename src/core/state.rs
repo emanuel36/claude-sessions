@@ -388,6 +388,20 @@ pub fn since(r: &Record) -> f64 {
     }
 }
 
+/// Where a status is listed: what needs the user first, then what runs, then the rest.
+///
+/// Finished, idle and unknown statuses share the last place, so looking at a finished session
+/// (which makes it idle) never moves it.
+pub fn urgency(status: Status) -> u8 {
+    if NEEDS_YOU.contains(&status) {
+        0
+    } else if matches!(status, Status::Working | Status::Shell) {
+        1
+    } else {
+        2
+    }
+}
+
 /// Orders sessions by status, in declaration order, then the ones in that status longest first.
 fn sort_key(r: &Record) -> (u8, f64) {
     (r.status as u8, since(r))
