@@ -9,7 +9,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
 use serde::Deserialize;
 
-use crate::core::state::{self, Record, Status, NEEDS_YOU, TIMED};
+use crate::core::state::{self, Record, Status, TIMED};
 use crate::term::tmux::{self, Pane};
 use crate::ui::line::{cells, finish, push, rjust, start, truncate, width_of, BULLET, ELBOW_CELLS};
 use crate::ui::stats::{stats_lines, Stats};
@@ -100,25 +100,11 @@ pub fn load_entries(records: &[Record], panes: &[Pane], socket: &str) -> Vec<Ent
         .collect()
 }
 
-/// Where a status is listed: what needs the user first, then what runs, then the rest.
-///
-/// Finished, idle and unknown statuses share the last place, so looking at a finished session
-/// (which makes it idle) never moves it.
-fn urgency(status: Status) -> u8 {
-    if NEEDS_YOU.contains(&status) {
-        0
-    } else if matches!(status, Status::Working | Status::Shell) {
-        1
-    } else {
-        2
-    }
-}
-
 /// The entries in the order the sidebar lists them: by urgency, then by window.
 fn ordered(entries: &[Entry]) -> Vec<&Entry> {
     let mut out: Vec<&Entry> = entries.iter().collect();
     // A stable sort keeps the window order within each place
-    out.sort_by_key(|e| urgency(e.status));
+    out.sort_by_key(|e| state::urgency(e.status));
     out
 }
 

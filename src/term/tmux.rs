@@ -292,7 +292,8 @@ pub fn windows_of(records: &[Record], panes: &[Pane], socket: &str) -> Vec<Windo
     let mut slot: HashMap<&str, usize> = HashMap::new();
     // The session in a window's first pane: (pane index, record)
     let mut leaders: HashMap<&str, (u32, &Record)> = HashMap::new();
-    // Records arrive most urgent first, so the first one in a window leads it
+    // Records arrive most urgent first, so the first one in a window leads it, unless a later
+    // one ranks higher in the sidebar: a lead still working outranks a teammate that finished
     for r in records {
         let Some(m) = r
             .mux
@@ -305,14 +306,22 @@ pub fn windows_of(records: &[Record], panes: &[Pane], socket: &str) -> Vec<Windo
             continue;
         };
         let id = found.window_id.as_str();
-        slot.entry(id).or_insert_with(|| {
-            windows.push(Window {
-                window_id: id.to_owned(),
-                lead: r.clone(),
-                leader: None,
-            });
-            windows.len() - 1
-        });
+        match slot.get(id) {
+            Some(&i) => {
+                let lead = &mut windows[i].lead;
+                if state::urgency(r.status) < state::urgency(lead.status) {
+                    *lead = r.clone();
+                }
+            }
+            None => {
+                slot.insert(id, windows.len());
+                windows.push(Window {
+                    window_id: id.to_owned(),
+                    lead: r.clone(),
+                    leader: None,
+                });
+            }
+        }
         match leaders.get(id) {
             Some((index, _)) if *index <= found.index => {}
             _ => {
@@ -826,6 +835,26 @@ mod tests {
         );
         assert_eq!(by["@1"].lead.status, Status::Permission);
         assert_eq!(by["@2"].head().id, "early");
+    }
+
+    #[test]
+    fn a_working_session_outranks_a_finished_teammate() {
+        let listed = [
+            pane("%2", "@1", 2, 1, false, "a"),
+            pane("%3", "@1", 3, 1, false, "a"),
+            pane("%4", "@1", 4, 1, false, "a"),
+        ];
+        let s = "/s/claude";
+        // Most urgent first, as the store lists them: a finished teammate before the lead
+        let records = [
+            at("mate", Status::Done, "%3", s),
+            at("lead", Status::Working, "%2", s),
+            at("idle", Status::Idle, "%4", s),
+        ];
+        let windows = windows_of(&records, &listed, s);
+        assert_eq!(windows[0].lead.id, "lead");
+        let asked = [at("ask", Status::Input, "%4", s), records[1].clone()];
+        assert_eq!(windows_of(&asked, &listed, s)[0].lead.id, "ask");
     }
 
     #[test]
