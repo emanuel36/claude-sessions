@@ -17,6 +17,7 @@ use crate::ui::search::{self, Hit, Searchable};
 use crate::ui::tree::{self, Disk};
 
 mod draw;
+pub mod keys;
 
 pub use crate::ui::picker::draw::{
     entry_hints, hints, hints_line, list_lines, placeholder, screen, search_box, ENTRY_KEYS,
