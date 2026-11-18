@@ -330,6 +330,18 @@ pub fn apply_event(record: Option<&Record>, event: &Event, now: f64) -> Record {
         _ => {}
     }
 
+    follow_pending(&mut r);
+    r.updated_at = now;
+    // Hooks keep coming while a session waits (notifications, subagents), so how long it has
+    // been in its status is kept apart from when it last changed
+    if record.is_none_or(|old| old.status != r.status) || r.status_since == 0.0 {
+        r.status_since = now;
+    }
+    r
+}
+
+/// Sets the status from the open prompts: waiting while there is one, else as it was.
+fn follow_pending(r: &mut Record) {
     if !r.pending.is_empty() {
         r.status = if r.pending.iter().any(|p| p.kind == Waiting::Permission) {
             Status::Permission
@@ -340,13 +352,28 @@ pub fn apply_event(record: Option<&Record>, event: &Event, now: f64) -> Record {
         // The last open prompt went away (a subagent stopped) and the turn goes on
         r.status = Status::Working;
     }
-    r.updated_at = now;
-    // Hooks keep coming while a session waits (notifications, subagents), so how long it has
-    // been in its status is kept apart from when it last changed
-    if record.is_none_or(|old| old.status != r.status) || r.status_since == 0.0 {
-        r.status_since = now;
+}
+
+/// Settles an approval known only from a notification, which the user gave elsewhere: the
+/// session showed it for a teammate, whose own hooks report the answer. The session's own
+/// approvals come with a hook of their own.
+///
+/// Returns `None` when the session has no such approval.
+pub fn mark_answered(r: &Record, now: f64) -> Option<Record> {
+    let notified = Pending {
+        agent: NOTIFIED.to_owned(),
+        kind: Waiting::Permission,
+    };
+    if !r.pending.contains(&notified) {
+        return None;
     }
-    r
+    let mut answered = r.clone();
+    done_waiting(&mut answered.pending, NOTIFIED);
+    follow_pending(&mut answered);
+    if answered.status != r.status {
+        answered.status_since = now;
+    }
+    Some(answered)
 }
 
 /// Settles a finished session the user looked at as idle; callers check it is finished.
@@ -425,8 +452,9 @@ mod tests {
     use proptest::prelude::*;
 
     use crate::core::state::{
-        apply_event, mark_interrupted, mark_seen, new_record, project, since, sort_key,
-        BackgroundTask, Event, Pending, Record, Status, Waiting, INTERRUPTIBLE, NEEDS_YOU, TIMED,
+        apply_event, mark_answered, mark_interrupted, mark_seen, new_record, project, since,
+        sort_key, BackgroundTask, Event, Pending, Record, Status, Waiting, INTERRUPTIBLE,
+        NEEDS_YOU, TIMED,
     };
 
     const NOW: f64 = 1000.0;
@@ -659,6 +687,26 @@ mod tests {
     fn stop_with_a_subagent_running_keeps_working() {
         let tasks = [("shell", "running"), ("subagent", "running")];
         assert_eq!(run(&[stop(&tasks)], None).status, Status::Working);
+    }
+
+    #[test]
+    fn answered_drops_only_a_notified_prompt() {
+        let working = run(&[event("UserPromptSubmit")], None);
+        let notified = run(&[notification("permission_prompt")], Some(working.clone()));
+        let answered = mark_answered(&notified, NOW + 5.0).expect("a notified prompt");
+        assert_eq!(answered.status, Status::Working);
+        assert_eq!(answered.status_since, NOW + 5.0);
+        assert!(answered.pending.is_empty());
+        // The session's own prompt stays open
+        let both = run(&[tool("PermissionRequest", "Bash")], Some(notified));
+        let kept = mark_answered(&both, NOW + 5.0).expect("a notified prompt");
+        assert_eq!((kept.status, kept.status_since), (Status::Permission, NOW));
+        assert_eq!(kept.pending, [pending("main", Waiting::Permission)]);
+        let asked = run(&[tool("PermissionRequest", "Bash")], Some(working.clone()));
+        assert_eq!(mark_answered(&asked, NOW + 5.0), None);
+        let elicited = run(&[notification("elicitation_dialog")], Some(working.clone()));
+        assert_eq!(mark_answered(&elicited, NOW + 5.0), None);
+        assert_eq!(mark_answered(&working, NOW + 5.0), None);
     }
 
     #[test]

@@ -45,6 +45,20 @@ pub fn process_start(pid: i32) -> Option<u64> {
     parse_start(&stat)
 }
 
+/// Returns a process's command line from `/proc`; empty when it is gone.
+pub fn process_cmdline(pid: &str) -> Vec<String> {
+    let Ok(bytes) = fs::read(format!("/proc/{pid}/cmdline")) else {
+        return Vec::new();
+    };
+    let text = String::from_utf8_lossy(&bytes);
+    let mut argv: Vec<String> = text.split('\0').map(str::to_owned).collect();
+    // The command line ends with a NUL, so the split leaves an empty piece
+    if argv.last().is_some_and(String::is_empty) {
+        argv.pop();
+    }
+    argv
+}
+
 /// Tells whether the Claude process behind a record still runs, and is the same one.
 ///
 /// A record needs both its pid and the start time it was written with: without a start time
