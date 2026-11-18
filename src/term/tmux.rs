@@ -11,6 +11,7 @@ use std::time::Duration;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::core::state::{self, Mux, Record, Status};
+use crate::core::store;
 use crate::process::run_capped;
 
 /// A hook makes up to 5 tmux calls; together they must stay under its 10 s timeout.
@@ -90,16 +91,7 @@ struct Proc;
 
 impl Procs for Proc {
     fn cmdline(&self, pid: &str) -> Vec<String> {
-        let Ok(bytes) = std::fs::read(format!("/proc/{pid}/cmdline")) else {
-            return Vec::new();
-        };
-        let text = String::from_utf8_lossy(&bytes);
-        let mut argv: Vec<String> = text.split('\0').map(str::to_owned).collect();
-        // The command line ends with a NUL, so the split leaves an empty piece
-        if argv.last().is_some_and(String::is_empty) {
-            argv.pop();
-        }
-        argv
+        store::process_cmdline(pid)
     }
 
     fn children(&self, pid: &str) -> Vec<String> {

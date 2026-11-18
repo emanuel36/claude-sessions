@@ -17,7 +17,8 @@ use crate::claude::transcript::{title_of, turn_end, TurnEnd};
 use crate::core::journal;
 use crate::core::paths;
 use crate::core::state::{
-    apply_event, by_urgency, mark_interrupted, mark_seen, Event, Record, Status, INTERRUPTIBLE,
+    apply_event, by_urgency, mark_answered, mark_interrupted, mark_seen, Event, Record, Status,
+    INTERRUPTIBLE,
 };
 use crate::core::store::{self, Sink};
 use crate::term::tmux::{self, Cli, Runner};
@@ -30,6 +31,10 @@ const NAMING_EVENTS: [&str; 3] = ["SessionStart", "UserPromptSubmit", "Stop"];
 const REPLACING: [&str; 2] = ["clear", "resume"];
 /// A working session with no hook for this long is checked for an Esc interrupt.
 pub const QUIET_SECONDS: f64 = 3.0;
+/// Events of a teammate whose tool ran, which a prompt its lead showed may have held up.
+const TOOL_DONE_EVENTS: [&str; 2] = ["PostToolUse", "PostToolUseFailure"];
+/// The flag that gives a teammate's Claude process the session that leads it.
+const LEAD_FLAG: &str = "--parent-session-id";
 
 /// Gives a runner for the tmux server at a socket path.
 type Binder = dyn Fn(&str) -> Box<dyn Runner>;
@@ -42,6 +47,8 @@ struct Seams<'a> {
     journal: Sink<'a>,
     /// How to talk to the tmux server of a record's pane.
     bind: &'a Binder,
+    /// The session leading the teammate a Claude process runs, by its pid.
+    lead: &'a dyn Fn(i32) -> Option<String>,
 }
 
 /// Runs `f` with the real records directory, journal and tmux.
@@ -53,6 +60,7 @@ fn with_seams<R>(f: impl FnOnce(&Seams<'_>) -> R) -> Result<R> {
         dir: &dir,
         journal: &journal::append,
         bind: &|socket| Box::new(Cli::at(socket)),
+        lead: &lead_of,
     };
     Ok(f(&seams))
 }
@@ -89,6 +97,16 @@ fn claude_pid(env: &HashMap<String, String>) -> i32 {
         .filter(|p| p.bytes().all(|b| b.is_ascii_digit()))
         .and_then(|p| p.parse().ok())
         .unwrap_or_else(|| i32::try_from(std::os::unix::process::parent_id()).unwrap_or(0))
+}
+
+/// The session leading the teammate that the Claude process `pid` runs; `None` when it is not
+/// a teammate.
+fn lead_of(pid: i32) -> Option<String> {
+    let argv = store::process_cmdline(&pid.to_string());
+    let at = argv.iter().position(|a| a == LEAD_FLAG)?;
+    argv.get(at + 1)
+        .filter(|id| store::is_session_id(id))
+        .cloned()
 }
 
 /// Applies one hook event to its session record and tells tmux.
@@ -154,13 +172,18 @@ fn handle_event_in(
             record.title = found;
         }
     }
-    let status = before.map(|b| b.status);
+    let status = before.as_ref().map(|b| b.status);
     store::write_in(s.dir, &record, status, s.journal).context("cannot write the record")?;
     // Told under the lock, so overlapping hooks reach tmux in the order they hit the disk
     if let (true, Some(server)) = (naming, &pane_server) {
         tmux::name_window(&record, &record.title, &**server);
     }
     drop(lock);
+    if let (Some(before), true) = (&before, TOOL_DONE_EVENTS.contains(&name)) {
+        if let Some(lead) = (s.lead)(pid) {
+            settle_answered_in(s, &lead, before.updated_at, now);
+        }
+    }
     if name == "SessionStart"
         && event
             .source
@@ -170,6 +193,26 @@ fn handle_event_in(
         store::remove_replaced_in(s.dir, &record, s.journal);
     }
     Ok(())
+}
+
+/// Settles the prompt a teammate's lead showed for it, once the teammate's tool ran: a prompt is
+/// answered in the lead's pane, but the hook that follows is the teammate's.
+///
+/// Only a prompt that showed while the teammate was quiet in that tool, since its hook at
+/// `quiet_since`, counts; one that showed while it kept going can be another teammate's.
+fn settle_answered_in(s: &Seams<'_>, lead: &str, quiet_since: f64, now: f64) {
+    let Ok(_lock) = store::lock_in(s.dir, lead) else {
+        return;
+    };
+    let Some(current) = store::read_in(s.dir, lead).filter(|c| c.status_since > quiet_since) else {
+        return;
+    };
+    let Some(answered) = mark_answered(&current, now) else {
+        return;
+    };
+    if let Err(e) = store::write_in(s.dir, &answered, Some(current.status), s.journal) {
+        paths::log_error(&format_args!("hook: cannot settle {lead}: {e}"));
+    }
 }
 
 /// Gives a session the title its transcript holds now, and its window the name: Claude Code
@@ -361,6 +404,7 @@ mod tests {
                 dir: self.dir.path(),
                 journal: &no_journal,
                 bind: &*self.bind,
+                lead: &|_| None,
             }
         }
 
@@ -466,6 +510,46 @@ mod tests {
         // A new session, then its stop: the tool events keep it working and journal nothing
         let statuses: Vec<_> = seen.borrow().iter().flatten().cloned().collect();
         assert_eq!(statuses, ["working", "done"]);
+    }
+
+    #[test]
+    fn a_teammate_going_on_settles_the_prompt_its_lead_showed() {
+        let rig = Rig::new();
+        let lead = |_: i32| Some("lead".to_owned());
+        let seams = Seams {
+            lead: &lead,
+            ..rig.seams()
+        };
+        let here = rig.here();
+        let mate = |name: &str, now: f64| {
+            let e = event("mate", name);
+            handle_event_in(&seams, &e, &env(&[]), now, &*here).expect("handle event");
+        };
+        let notified = |since: f64| Record {
+            status: Status::Permission,
+            pending: vec![Pending {
+                agent: "notification".to_owned(),
+                kind: Waiting::Permission,
+            }],
+            status_since: since,
+            ..live_record("lead")
+        };
+        let lead = || rig.read("lead").expect("lead record");
+        // Idle when the prompt showed, then going on: the prompt is another teammate's
+        mate("Stop", 100.0);
+        rig.write(&notified(110.0));
+        mate("PreToolUse", 120.0);
+        mate("PostToolUse", 130.0);
+        assert_eq!(lead(), notified(110.0));
+        // Quiet in a tool from before the prompt showed until the user answered it
+        mate("PreToolUse", 135.0);
+        rig.write(&notified(140.0));
+        mate("PostToolUse", 150.0);
+        assert_eq!(
+            (lead().status, lead().status_since),
+            (Status::Working, 150.0)
+        );
+        assert!(lead().pending.is_empty());
     }
 
     #[test]
